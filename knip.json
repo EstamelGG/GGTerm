@@ -1,0 +1,15 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": ["tests/electron-smoke.cjs", "tests/electron-tar-worker.cjs"],
+  "project": [
+    "src/**/*.{ts,tsx,css,html}!",
+    "tests/**/*.{ts,tsx,cjs}",
+    "scripts/**/*.mjs",
+    "*.{ts,mjs}"
+  ],
+  "paths": {
+    "@/*": ["src/renderer/src/*"],
+    "@renderer/*": ["src/renderer/src/*"],
+    "@shared/*": ["src/shared/*"]
+  }
+}

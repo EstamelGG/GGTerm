@@ -1,0 +1,813 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+/* 离线内置英文常规/中等/粗体，以及中文可变字体（100–900）。 */
+@import '@fontsource/jetbrains-mono/latin-400.css';
+@import '@fontsource/jetbrains-mono/latin-500.css';
+@import '@fontsource/jetbrains-mono/latin-700.css';
+@import '@fontsource-variable/noto-sans-sc';
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * GGTerm 设计 token（对照 ATerminal-Swift Support/Theme.swift）
+ * 应用强制深色，:root 即深色值；shadcn 语义变量映射到本主题。
+ */
+:root {
+  color-scheme: dark;
+
+  /* 表面层级（由深到浅）：半透明暗色叠层 —— 窗口级 vibrancy/亚克力为底，壁纸隐约透出，
+     层层加深；Linux 无窗口材质时透出的是实色窗口底（观感≈原实色主题）。
+     各层 alpha = 1 - (1 - 设计值) × --at-surface-mix（设置 → 主题色「背景透明度」滑块）：
+     mix = 1 → 设计默认层次（滑块 100%）；mix = 0 → 完全实色、挡掉窗口材质（滑块 0%）。
+     倍率保持层间相对关系，用户只在这条"实 ←→ 透"轴上平移 */
+  --at-surface-mix: 1;
+  --at-bg: rgb(13 15 17 / calc(1 - 0.6 * var(--at-surface-mix)));
+  --at-sidebar: rgb(15 17 20 / calc(1 - 0.45 * var(--at-surface-mix)));
+  --at-surface: rgb(17 19 22 / calc(1 - 0.32 * var(--at-surface-mix)));
+  --at-raised: rgb(20 23 26 / calc(1 - 0.2 * var(--at-surface-mix)));
+  /* 交互悬浮层：刻意比 raised 亮一档（透明叠层体系下小幅 delta 会被深色底吃掉，
+     需要更大亮度差才可感知；菜单项 focus:bg-hover 全强度也依赖此 token）。
+     不参与透明度缩放：交互反馈与浮层需保持固定的可读对比 */
+  --at-hover: rgb(50 55 61 / 0.9);
+  /* 菜单项高亮：白色叠加 —— 在偏亮的玻璃面板上比 bg-hover 亮灰更可读；
+     配合"无颜色过渡"使用，光标扫过即时点亮（原生菜单手感） */
+  --at-menu-hl: rgb(255 255 255 / 0.1);
+  /* 顶部导航条：刻意比 surface 亮一档且更高不透明度 —— 原值与窗口底几乎同色，
+     导航条与内容区糊成一片；提亮后与下方 bg-sidebar 内容区形成可见的层次分界 */
+  --at-chrome-bar: rgb(54 59 65 / calc(1 - 0.08 * var(--at-surface-mix)));
+
+  /* 模态面板：弹窗类用不透明底（表单/设置等内容密集，不参与透明叠层） */
+  --at-modal: rgb(18 20 22);
+
+  /* 悬浮层磨玻璃底（配合 .glass 工具类使用；菜单/气泡/Toast 等浮于内容之上的层）：
+     刻意比全部 in-flow 表面亮一档 —— 深色 UI 里玻璃感的来源是面板"发光"而非透明度；
+     alpha 0.78 + .glass 的大半径 blur（22px）配合：底下文字糊成色斑，透而不读 */
+  --at-glass: rgb(50 55 62 / 0.78);
+
+  /* 分隔线 */
+  --at-line: rgb(255 255 255 / 0.07);
+  --at-chrome-sep: rgb(255 255 255 / 0.16);
+
+  /* 文字 */
+  --at-fg: #e8eaed;
+  --at-muted: #949ba3; /* 提亮：小字号场景满足 WCAG AA（≥4.5:1） */
+
+  /* 语义色 */
+  --at-info: #4a9eff;
+  --at-warn: #eab308;
+  --at-ok: #37a563;
+  --at-danger: #e85858;
+
+  /* 终端 */
+  --at-terminal: #000;
+  /* 卡片 bezel：透明表面上托住纯黑屏幕的亮缘（略高于 line） */
+  --at-terminal-border: rgb(255 255 255 / 0.14);
+
+  /* 强调色（用户可配置，默认 #37A563；dim = ×0.78） */
+  --at-accent: #37a563;
+  --at-accent-dim: #2b814e;
+  --at-accent-rgb: 55 165 99;
+
+  /* shadcn 语义映射 */
+  --background: var(--at-bg);
+  --foreground: var(--at-fg);
+  --card: var(--at-surface);
+  --card-foreground: var(--at-fg);
+  --popover: var(--at-raised);
+  --popover-foreground: var(--at-fg);
+  --primary: var(--at-accent);
+  --primary-foreground: #ffffff;
+  --secondary: var(--at-raised);
+  --secondary-foreground: var(--at-fg);
+  --muted: var(--at-surface);
+  --muted-foreground: var(--at-muted);
+  --accent: var(--at-hover);
+  --accent-foreground: var(--at-fg);
+  --destructive: var(--at-danger);
+  --border: var(--at-line);
+  --input: var(--at-line);
+  --ring: var(--at-accent);
+  --chart-1: var(--at-accent);
+  --chart-2: #3b82f6;
+  --chart-3: #a855f7;
+  --chart-4: #eab308;
+  --chart-5: #06b6d4;
+  --sidebar: var(--at-sidebar);
+  --sidebar-foreground: var(--at-fg);
+  --sidebar-primary: var(--at-accent);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--at-hover);
+  --sidebar-accent-foreground: var(--at-fg);
+  --sidebar-border: var(--at-line);
+  --sidebar-ring: var(--at-accent);
+
+  --radius: 0.4375rem; /* 7pt，对照 Swift 表单控件圆角 */
+}
+
+.dark {
+  --background: var(--at-bg);
+  --foreground: var(--at-fg);
+  --card: var(--at-surface);
+  --card-foreground: var(--at-fg);
+  --popover: var(--at-raised);
+  --popover-foreground: var(--at-fg);
+  --primary: var(--at-accent);
+  --primary-foreground: #ffffff;
+  --secondary: var(--at-raised);
+  --secondary-foreground: var(--at-fg);
+  --muted: var(--at-surface);
+  --muted-foreground: var(--at-muted);
+  --accent: var(--at-hover);
+  --accent-foreground: var(--at-fg);
+  --destructive: var(--at-danger);
+  --border: var(--at-line);
+  --input: var(--at-line);
+  --ring: var(--at-accent);
+  --sidebar: var(--at-sidebar);
+  --sidebar-foreground: var(--at-fg);
+  --sidebar-primary: var(--at-accent);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--at-hover);
+  --sidebar-accent-foreground: var(--at-fg);
+  --sidebar-border: var(--at-line);
+  --sidebar-ring: var(--at-accent);
+}
+
+@theme inline {
+  --radius-sm: 5px;
+  --radius-md: 6px;
+  --radius-lg: 7px;
+  --radius-xl: 8px;
+
+  /*
+   * 字号刻度（全库唯一字号来源，四档；合并方向只增不减——
+   * 10px/10.5px→caption、12.5px→body、emphasis 13 并入 body）
+   */
+  --text-caption: 11px; /* 指标行、表头、hint、小文字按钮、日志行、传输徽标 */
+  --text-minor: 12px; /* mono 输入、密钥列表、路径、紧凑工具栏胶囊 */
+  --text-body: 13px; /* 表单正文、按钮、正文、设置项标签 */
+  --text-title: 15px; /* 弹窗标题 */
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  /* 等宽栈：ASCII/代码 → 内置 JetBrains Mono；CJK 字形 → 内置 Noto Sans SC。 */
+  --font-mono: 'JetBrains Mono', 'Noto Sans SC Variable', monospace;
+
+  /* GGTerm 应用 token（bg-surface、text-muted 等工具类） */
+  --color-bg: var(--at-bg);
+  --color-sidebar: var(--at-sidebar);
+  --color-surface: var(--at-surface);
+  --color-raised: var(--at-raised);
+  --color-hover: var(--at-hover);
+  --color-menu-hl: var(--at-menu-hl);
+  --color-chrome-bar: var(--at-chrome-bar);
+  --color-modal: var(--at-modal);
+  --color-line: var(--at-line);
+  --color-chrome-sep: var(--at-chrome-sep);
+  --color-fg: var(--at-fg);
+  --color-muted: var(--at-muted);
+  --color-info: var(--at-info);
+  --color-warn: var(--at-warn);
+  --color-ok: var(--at-ok);
+  --color-danger: var(--at-danger);
+  --color-terminal: var(--at-terminal);
+  --color-terminal-border: var(--at-terminal-border);
+  --color-at-accent: var(--at-accent);
+  --color-at-accent-dim: var(--at-accent-dim);
+
+  /* shadcn 语义色 */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  /* 按钮文本永不换行：容器过窄时单行折叠省略（对照 SwiftUI lineLimit(1)）；
+     适用于所有 <button> 与 role=button（胶囊按钮族 / shadcn 基础件 / TabChip 等） */
+  button,
+  [role='button'] {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-bg font-sans text-fg;
+    overflow: hidden;
+    user-select: none;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+@layer utilities {
+  .drag {
+    -webkit-app-region: drag;
+  }
+  .no-drag {
+    -webkit-app-region: no-drag;
+  }
+  /* 标签条横向滚动容器：隐藏滚动条（点击标签自动滚入可视区，见 chrome/TabChip TabScrollArea） */
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+  /* 数值滑杆（设置项）：浏览器原生 range 统一皮肤，避免各平台外观漂移。
+     进度染色不走原生渲染（Chromium 下不可靠），改为轨道背景的线性硬渐变 +
+     --slider-pct（0–100%）自定义属性；thumb 用 accent 实心圆点，与按钮族一致 */
+  .range-at {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 14px;
+    background: transparent;
+    cursor: pointer;
+    outline: none;
+  }
+  .range-at::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 9999px;
+    background-image: linear-gradient(
+      to right,
+      var(--at-accent) var(--slider-pct, 0%),
+      rgb(255 255 255 / 0.12) var(--slider-pct, 0%)
+    );
+  }
+  .range-at::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    /* 轨道 6px、thumb 14px：上移 4px 使两者垂直居中 */
+    margin-top: -4px;
+    border-radius: 9999px;
+    border: 1px solid rgb(255 255 255 / 0.35);
+    background-color: var(--at-accent);
+    box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
+    transition: transform 0.12s ease-out;
+  }
+  .range-at:active::-webkit-slider-thumb {
+    transform: scale(1.12);
+  }
+  .range-at:focus-visible {
+    box-shadow: 0 0 0 3px rgb(var(--at-accent-rgb) / 0.35);
+    border-radius: 9999px;
+  }
+  .range-at:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+  /* 悬浮层磨玻璃面板：亮底 + 顶部光泽渐变 + 顶缘镜面高光/细内描边 + 落影。
+     光泽与高光不依赖 backdrop-filter（任何环境可见）；背景采样"大模糊 + 压暗"——
+     大半径 blur 把底下文字糊成不可读色斑（防止与菜单文字"重叠"），brightness 压暗
+     保持白字对比。自带 box-shadow 与 background-image，勿再叠 shadow-* 或 bg-*；
+     in-flow 表面勿用 */
+  .glass {
+    background-color: var(--at-glass);
+    background-image: linear-gradient(to bottom, rgb(255 255 255 / 0.05), transparent 46%);
+    -webkit-backdrop-filter: blur(22px) brightness(0.82) saturate(1.3);
+    backdrop-filter: blur(22px) brightness(0.82) saturate(1.3);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.14),
+      inset 0 0 0 1px rgb(255 255 255 / 0.04),
+      0 12px 32px rgb(0 0 0 / 0.45);
+  }
+}
+
+/* 对照 Swift LatencyCellView：加载脉冲与结果数字过渡 */
+@keyframes pulse-soft {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.25;
+  }
+}
+
+.host-status-light {
+  transition:
+    background-color 600ms ease,
+    box-shadow 600ms ease,
+    opacity 600ms ease;
+}
+.host-status-light > span {
+  animation: host-light-shimmer 3.8s ease-in-out infinite;
+}
+.host-status-light[data-phase='connecting'] > span,
+.host-status-light[data-phase='reconnecting'] > span {
+  animation-duration: 1.8s;
+}
+.host-status-light[data-phase='idle'] > span {
+  animation: none;
+  opacity: 0;
+}
+@keyframes host-light-shimmer {
+  0%,
+  100% {
+    opacity: 0.12;
+  }
+  45% {
+    opacity: 0.9;
+  }
+  60% {
+    opacity: 0.65;
+  }
+  75% {
+    opacity: 0.8;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .host-status-light {
+    transition: none;
+  }
+  .host-status-light > span {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+/* 侧栏已连接主机图标：与行首指示灯同节奏（3.8s）的缓慢呼吸 */
+.conn-server-connected {
+  color: var(--at-ok);
+  animation: conn-icon-breathe 3.8s ease-in-out infinite;
+}
+@keyframes conn-icon-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .conn-server-connected {
+    animation: none;
+  }
+}
+
+/* 状态点「尝试连接中」闪烁：快速明灭（亮 → 熄 → 亮），比 pulse-soft 呼吸更醒目 */
+@keyframes state-dot-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.15;
+  }
+}
+
+/* AI 工具卡副标题走马灯：仅溢出时由 JS 挂载；位移量经 --marquee-shift 注入，
+   ease-in-out + alternate 来回滚动，首尾各留停顿（18%/82%）；悬浮暂停，减动效降级 */
+@keyframes at-marquee {
+  0%,
+  18% {
+    transform: translateX(0);
+  }
+  82%,
+  100% {
+    transform: translateX(var(--marquee-shift, 0px));
+  }
+}
+.at-marquee-box:hover .at-marquee {
+  animation-play-state: paused;
+}
+.at-marquee {
+  animation: at-marquee 12s ease-in-out infinite alternate;
+}
+@media (prefers-reduced-motion: reduce) {
+  .at-marquee {
+    animation: none;
+  }
+}
+
+/* AI 输入框「生成中」光圈（VS Code Copilot 风格）：conic 彩虹绕边框匀速流动。
+   @property 注册角度变量才能参与过渡动画；mask 挖空只留 1px 描边环 */
+@property --at-ring-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+@keyframes at-ring-spin {
+  to {
+    --at-ring-angle: 360deg;
+  }
+}
+.ai-ring-busy {
+  position: relative;
+  border-color: transparent;
+}
+.ai-ring-busy::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(
+    from var(--at-ring-angle),
+    var(--at-danger),
+    #f97316,
+    var(--at-warn),
+    var(--at-accent),
+    var(--at-info),
+    #a855f7,
+    var(--at-danger)
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  animation: at-ring-spin 4s linear infinite;
+  pointer-events: none;
+}
+
+/* AI 输入框「待审批」光圈：黄系渐变旋转 + 透明度脉冲闪烁（与工具卡黄框同语义） */
+.ai-ring-approval {
+  position: relative;
+  border-color: transparent;
+}
+.ai-ring-approval::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(
+    from var(--at-ring-angle),
+    var(--at-warn),
+    #fde047,
+    var(--at-warn),
+    #fde047,
+    var(--at-warn)
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  animation:
+    at-ring-spin 4s linear infinite,
+    at-ring-blink 1s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+/* 输入区上方「查看审批项」：黄色呼吸 */
+.ai-approval-jump {
+  animation: ai-approval-breathe 1.8s ease-in-out infinite;
+}
+@keyframes ai-approval-breathe {
+  0%,
+  100% {
+    opacity: 0.72;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--at-warn) 35%, transparent);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--at-warn) 18%, transparent);
+  }
+}
+@keyframes at-ring-blink {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.35;
+  }
+}
+
+@keyframes latency-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+    transform-origin: left center;
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* AI Markdown 代码高亮（rehype-highlight → highlight.js token 类；暗色可读配色） */
+.hljs-comment,
+.hljs-quote {
+  color: #8b949e;
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-doctag {
+  color: #ff7b72;
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-addition {
+  color: #a5d6ff;
+}
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-link {
+  color: #79c0ff;
+}
+.hljs-title,
+.hljs-section,
+.hljs-function,
+.hljs-title.function_ {
+  color: #d2a8ff;
+}
+.hljs-attr,
+.hljs-attribute,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-params {
+  color: #ffa657;
+}
+.hljs-type,
+.hljs-class,
+.hljs-built_in,
+.hljs-title.class_ {
+  color: #ffa657;
+}
+.hljs-meta,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class {
+  color: #7ee787;
+}
+.hljs-deletion {
+  color: #ff7b72;
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 700;
+}
+
+/* ---------------- AI 拓扑图（React Flow）状态视觉 ----------------
+   颜色语义（全应用唯一约定，别处不得另起一套）：
+     绿 = 此刻已连接 / 琥珀 = 进行中 / 红 = 连接失败 / 灰 = 未连接
+   动效语义：
+     流动虚线 = 建链中 · 数据包流光 = 已连接且正在操作 · 旋转虚线环 = 握手中
+     呼吸光环 = AI 正在操作 · 外圈进度环 = 断开已多久（5 分钟走完即归灰）
+   类名由 TopologyCanvas 生成：topo-edge-{state} / topo-packet /
+   topo-ring-state / topo-ring-active / topo-ring-settling / topo-countdown-ring */
+
+/* 状态切换不跳变：颜色/线宽/透明度统一过渡 */
+.topo-edge {
+  stroke-linecap: round;
+  transition:
+    stroke 0.35s ease,
+    stroke-width 0.35s ease,
+    opacity 0.35s ease;
+}
+
+/* healthy 已连接：主题色实线 */
+.topo-edge.topo-edge-healthy {
+  stroke: var(--at-accent);
+  stroke-width: 1.6;
+  opacity: 0.6;
+}
+
+/* working 操作中：实线提亮 + 数据包流光 */
+.topo-edge.topo-edge-working {
+  stroke: var(--at-accent);
+  stroke-width: 2;
+  opacity: 1;
+}
+@keyframes topo-packet {
+  to {
+    stroke-dashoffset: -96;
+  }
+}
+.topo-packet {
+  fill: none;
+  stroke: var(--at-accent);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 16 80;
+  filter: drop-shadow(0 0 3px var(--at-accent));
+  pointer-events: none;
+  animation: topo-packet 2.8s linear infinite;
+}
+
+/* dialing 建链中：琥珀流动虚线 */
+@keyframes topo-flow {
+  to {
+    stroke-dashoffset: -12;
+  }
+}
+.topo-edge.topo-edge-dialing {
+  stroke: var(--at-warn);
+  stroke-width: 1.6;
+  stroke-dasharray: 7 5;
+  opacity: 0.9;
+  animation: topo-flow 1.8s linear infinite;
+}
+
+/* retrying 重连中：同样琥珀流动，但更快 + 明暗呼吸（暗示反复尝试） */
+@keyframes topo-edge-breathe {
+  50% {
+    opacity: 0.5;
+  }
+}
+.topo-edge.topo-edge-retrying {
+  stroke: var(--at-warn);
+  stroke-width: 1.6;
+  stroke-dasharray: 7 5;
+  animation:
+    topo-flow 1.2s linear infinite,
+    topo-edge-breathe 2.8s ease-in-out infinite;
+}
+
+/* failed 连接失败：红虚线（断掉的链路值得被看见） */
+.topo-edge.topo-edge-failed {
+  stroke: var(--at-danger);
+  stroke-width: 1.4;
+  stroke-dasharray: 4 5;
+  opacity: 0.5;
+}
+
+/* closed 已断开：灰虚线（主动断开，安静退场） */
+.topo-edge.topo-edge-closed {
+  stroke: var(--at-muted);
+  stroke-width: 1.4;
+  stroke-dasharray: 4 5;
+  opacity: 0.3;
+}
+
+/* 握手旋转虚线环（旋转周期由 HostNode 内联 animationDuration 决定） */
+@keyframes topo-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.topo-ring-state {
+  animation: topo-spin 2.4s linear infinite;
+}
+
+/* 淡入/淡出：状态环与光环的出现、消失都是渐变的，不突然开关 */
+@keyframes topo-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes topo-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* AI 操作光环：进入淡入 → 半径 + 亮度呼吸；结束转 settling 淡出后再移除 */
+@keyframes topo-node-breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.12);
+  }
+}
+.topo-ring-active {
+  box-shadow: 0 0 12px rgb(var(--at-accent-rgb) / 0.2);
+  animation:
+    topo-fade-in 0.4s ease-out backwards,
+    topo-node-breathe 2.4s 0.4s ease-in-out infinite;
+}
+.topo-ring-settling {
+  animation: topo-fade-out 0.45s ease-in forwards;
+}
+
+/* 断开倒计时环：环从满到空（负 delay 由 CountdownRing 对齐已流逝时间，刷新不重置） */
+@keyframes topo-countdown {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: 302;
+  }
+}
+.topo-countdown-ring {
+  animation: topo-countdown 300s linear forwards;
+}
+
+/* 退场：倒计时环走完 → 整节点/整连线淡出，之后由数据层移除（LEAVE_FADE_MS 对齐 450ms） */
+@keyframes topo-leave {
+  to {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+}
+.topo-node-leaving {
+  animation: topo-leave 0.45s ease-in forwards;
+}
+.topo-edge.topo-edge-leaving {
+  animation: topo-fade-out 0.45s ease-in forwards;
+}
+
+/* 入场渐入（布局位移改由 TopologyCanvas 逐帧插值：节点与连线同帧更新，不会脱节重绘） */
+.react-flow__node,
+.react-flow__edge {
+  animation: topo-fade-in 0.35s ease-out;
+}
+
+/* 点击节点聚焦（TopologyCanvas）：被点节点、它的入边出边、边另一端保持常态，其余淡化 */
+.topo-dim {
+  opacity: 0.28;
+}
+/* 抬到节点之上的连线不吃指针，否则它的命中带会挡住节点点击与拖拽 */
+.react-flow__edge.topo-elevated {
+  pointer-events: none;
+}
+/* 聚焦淡化的进出都是渐变（与状态色过渡一致，不突然开关） */
+.react-flow__node,
+.react-flow__edge {
+  transition: opacity 0.25s ease;
+}
+
+/* 选中态（TopologyCanvas 给被点节点挂 .topo-selected）：图标放大一档 + 标签加粗提亮。
+   不碰圆环颜色与尺寸 —— 颜色已被状态语义占满，改尺寸会牵动整体观感。
+   图标倍率走 --topo-icon-k（节点尺寸滑杆的 sizeK），否则内联 transform 会压掉选中态 */
+.topo-icon {
+  transform: scale(var(--topo-icon-k, 1));
+  transition:
+    transform 0.2s ease,
+    filter 0.3s ease,
+    opacity 0.3s ease;
+}
+.react-flow__node.topo-selected .topo-icon {
+  transform: scale(calc(var(--topo-icon-k, 1) * 1.25));
+}
+.react-flow__node.topo-selected .topo-node-label {
+  font-weight: 700;
+  color: var(--at-fg);
+  /* 完整主机名：取消 max-w-24 的截断，标签横向展开（其余节点已淡化到 0.28，不会误读）；
+     不吃指针 —— 展开后若压到相邻节点，点击仍应落在那个节点上 */
+  max-width: none;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* 无障碍：偏好减少动效时保留颜色与线型语义，仅去掉持续动画 */
+@media (prefers-reduced-motion: reduce) {
+  .topo-edge.topo-edge-dialing,
+  .topo-edge.topo-edge-retrying,
+  .topo-packet,
+  .topo-ring-state,
+  .topo-ring-active,
+  .topo-countdown-ring,
+  .react-flow__node,
+  .react-flow__edge {
+    animation: none;
+  }
+}

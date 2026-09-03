@@ -1,0 +1,68 @@
+name: Release
+
+# 手动触发：GitHub → Actions → Release → Run workflow（选分支/ commit，输入可留空）。
+# 输入留空时取 package.json 的 version 拼成 tag（v1.0.0），并在本次运行的 commit 上打 tag。
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号（如 1.0.0，可带 v 前缀；留空则用 package.json 的 version）'
+        required: false
+        type: string
+
+permissions:
+  contents: write # 建 Release + 上传安装包都靠 GITHUB_TOKEN
+
+env:
+  ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
+  ELECTRON_BUILDER_BINARIES_MIRROR: https://github.com/electron-userland/electron-builder-binaries/releases/download/
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Create release for tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          wanted="${INPUT_VERSION#v}"
+          tag="v${wanted:-$version}"
+          if [ "$tag" != "v$version" ]; then
+            echo "::error::tag $tag 与 package.json 的 version $version 不一致（先把 package.json 改成 $wanted 再发布）"
+            exit 1
+          fi
+          # tag 不存在时由 gh 在本次运行的 commit 上创建；已存在则复用
+          gh release view "$tag" >/dev/null 2>&1 ||
+            gh release create "$tag" --target "$GITHUB_SHA" --generate-notes --title "$tag"
+
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            flags: --mac --arm64 -c.mac.identity=-
+          - os: windows-latest
+            flags: --win
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build renderer / main
+        run: npm run build
+      - name: Package and publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EP_GH_IGNORE_TIME: 'true'
+        run: npx electron-builder ${{ matrix.flags }} --publish always

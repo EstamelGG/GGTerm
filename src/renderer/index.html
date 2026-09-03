@@ -1,0 +1,58 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>GGTerm</title>
+    <!-- https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    />
+    <style>
+      /* 静态启动画面：React 挂载前先绘制（避免长时间黑屏感知），挂载后由 #root 内容替换 */
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background-color: transparent;
+      }
+      #splash {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: rgb(18 20 22 / 0.72);
+        font-family:
+          -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+        font-size: 13px;
+        color: #8b929a;
+        z-index: 2147483647;
+      }
+      #splash .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background-color: #37a563;
+        margin-right: 8px;
+        animation: splash-pulse 0.9s ease-in-out infinite alternate;
+      }
+      @keyframes splash-pulse {
+        from {
+          opacity: 1;
+        }
+        to {
+          opacity: 0.25;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <div id="splash">
+      <span class="dot"></span><span>GGTerm</span>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

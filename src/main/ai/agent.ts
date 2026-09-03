@@ -1,0 +1,390 @@
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { join } from 'node:path'
+import {
+  ToolLoopAgent,
+  convertToModelMessages,
+  isToolUIPart,
+  pruneMessages,
+  stepCountIs,
+  tool,
+  toUIMessageStream
+} from 'ai'
+import type { LanguageModel, ToolApprovalStatus, ToolSet, UIMessageChunk } from 'ai'
+import type { ZodType } from 'zod'
+import type { AiSessionSummary, AiUIMessage } from '../../shared/types'
+import { errorMessage } from '../../shared/error'
+
+/**
+ * 进程内 agent 运行时（AI SDK v7 原生形态）：
+ *   每会话一个 ToolLoopAgent（工具闭包持有 sessionId），UIMessage 即持久化格式，
+ *   convertToModelMessages 生成上下文，toUIMessageStream(originalMessages) 产出 UI 流片；
+ *   审批走 SDK toolApproval（user-approval 结束本次流，渲染层 Chat 写回响应后续跑）；
+ *   同一步多工具的并发由「资源锁键」控制：同键按 tool call / 卡片顺序 FIFO，无键直行（SDK 默认 Promise.all）。
+ * 不依赖 electron：模型/工具/存储目录/审批门全部注入，可在 vitest 中独立验证。
+ */
+
+/* ---------------- 依赖注入 ---------------- */
+
+export interface ToolInvocation {
+  sessionId: string
+  toolCallId: string
+  /** 回合中断信号（用户取消生成时置位；轮询等待据此提前返回） */
+  signal?: AbortSignal
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- handler 入参形状由各工具的 zod schema 约束
+export interface AgentTool<T = any> {
+  name: string
+  description?: string
+  parameters: ZodType<T>
+  /** 资源锁键：同键调用在本会话内 FIFO，省略/返回 null = 直行（只读或纯计算）。策略见 tools/index.ts */
+  lockKey?: (input: T) => string | null
+  handler: (args: T, invocation: ToolInvocation) => Promise<unknown>
+}
+
+export interface AgentDeps {
+  storageDir: string
+  /** 每次调用解析模型（BYOK 绑定/密钥变化即时生效；未配置时抛错） */
+  getModel: () => LanguageModel
+  tools: AgentTool[]
+  instructions: string
+  /** 工具审批门（SDK ToolApprovalStatus：not-applicable/approved/denied/user-approval）；
+   *  SDK 在首次评估与审批续跑时会对同一 toolCall 重复调用，toolCallId 供调用方去重审计日志 */
+  gate?: (
+    sessionId: string,
+    toolCall: { toolName: string; input: unknown; toolCallId?: string }
+  ) => ToolApprovalStatus | Promise<ToolApprovalStatus>
+  onLog?: (message: string) => void
+}
+
+let deps: AgentDeps | null = null
+
+export function initAgent(d: AgentDeps): void {
+  deps = d
+  mkdirSync(d.storageDir, { recursive: true })
+  purgeLegacySessions(d.storageDir)
+}
+
+/** 旧版 AiChatMessage（thinking/toolCall）与 UIMessage 不兼容：启动时直接清空旧文件 */
+function purgeLegacySessions(dir: string): void {
+  if (!existsSync(dir)) return
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith('.json')) continue
+    const path = join(dir, name)
+    try {
+      const raw = JSON.parse(readFileSync(path, 'utf8')) as { messages?: Array<{ parts?: Array<{ type?: string }> }> }
+      const legacy = (raw.messages ?? []).some((m) =>
+        (m.parts ?? []).some((p) => p.type === 'thinking' || p.type === 'toolCall')
+      )
+      if (legacy) rmSync(path, { force: true })
+    } catch {
+      rmSync(path, { force: true })
+    }
+  }
+}
+
+function requireDeps(): AgentDeps {
+  if (!deps) throw new Error('agent not initialized: call initAgent() first')
+  return deps
+}
+
+/* ---------------- 会话存储 ---------------- */
+
+export interface AgentSessionRecord {
+  id: string
+  title: string
+  /** 上次生成标题时的用户消息数（engine 据此决定何时刷新标题） */
+  titledAt: number
+  createdAt: number
+  updatedAt: number
+  messages: AiUIMessage[]
+}
+
+/** 进行中回合：done 置位后本会话可开启新回合 */
+interface Turn {
+  controller: AbortController
+  done: boolean
+}
+
+/**
+ * 同会话资源锁队列（按 key 分道）。SDK 同一步用 Promise.all 同时调用 execute，
+ * enqueue 顺序 = map 顺序 = 模型 tool call / UI 卡片顺序 —— 同键据此保序，无键直行。
+ * 同一主机的文件读写与连接生命周期共用 host:<id>，因此不会与 connect 的拆链重拨竞态。
+ */
+class ToolSerialQueue {
+  private tails = new Map<string, Promise<void>>()
+  run<T>(key: string | null, fn: () => Promise<T>): Promise<T> {
+    if (!key) return fn()
+    const tail = this.tails.get(key) ?? Promise.resolve()
+    const next = tail.then(fn, fn)
+    const gap = next.then(
+      () => undefined,
+      () => undefined
+    )
+    this.tails.set(key, gap)
+    // 链尾自清：排空后不保留该 key（会话长期存活，避免 Map 无界增长）
+    void gap.then(() => {
+      if (this.tails.get(key) === gap) this.tails.delete(key)
+    })
+    return next
+  }
+}
+
+interface Session extends AgentSessionRecord {
+  agent: ToolLoopAgent | null
+  turn: Turn | null
+  toolQueue: ToolSerialQueue
+}
+
+const sessions = new Map<string, Session>()
+
+const sessionPath = (id: string): string => join(requireDeps().storageDir, `${id}.json`)
+
+function readRecord(path: string): AgentSessionRecord | null {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as AgentSessionRecord
+  } catch {
+    return null
+  }
+}
+
+function persist(s: Session): void {
+  s.updatedAt = Date.now()
+  const { id, title, titledAt, createdAt, updatedAt, messages } = s
+  const p = sessionPath(s.id)
+  writeFileSync(`${p}.tmp`, JSON.stringify({ id, title, titledAt, createdAt, updatedAt, messages }))
+  renameSync(`${p}.tmp`, p)
+}
+
+function toSummary(s: AgentSessionRecord): AiSessionSummary {
+  return { id: s.id, title: s.title, createdAt: s.createdAt, updatedAt: s.updatedAt }
+}
+
+/** 取运行中会话；不存在则从磁盘恢复（重启/切换会话后懒加载） */
+function ensureSession(id: string): Session {
+  let s = sessions.get(id)
+  if (s) return s
+  const record = readRecord(sessionPath(id))
+  if (!record) throw new Error(`AI session not found: ${id}`)
+  s = { ...record, agent: null, turn: null, toolQueue: new ToolSerialQueue() }
+  sessions.set(id, s)
+  return s
+}
+
+export function createAgentSession(): AiSessionSummary {
+  const now = Date.now()
+  const s: Session = {
+    id: randomUUID(),
+    title: '',
+    titledAt: 0,
+    createdAt: now,
+    updatedAt: now,
+    messages: [],
+    agent: null,
+    turn: null,
+    toolQueue: new ToolSerialQueue()
+  }
+  sessions.set(s.id, s)
+  persist(s)
+  return toSummary(s)
+}
+
+export function listAgentSessions(): AiSessionSummary[] {
+  const dir = requireDeps().storageDir
+  if (!existsSync(dir)) return []
+  return readdirSync(dir)
+    .filter((n) => n.endsWith('.json'))
+    .map((n) => sessions.get(n.slice(0, -5)) ?? readRecord(join(dir, n)))
+    .filter((r): r is AgentSessionRecord => r !== null)
+    .map(toSummary)
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+export function deleteAgentSession(id: string): void {
+  abortTurn(id)
+  sessions.delete(id)
+  rmSync(sessionPath(id), { force: true })
+}
+
+export function getAgentSession(id: string): AgentSessionRecord {
+  return ensureSession(id)
+}
+
+export function setAgentTitle(id: string, title: string): void {
+  const s = ensureSession(id)
+  s.title = title
+  s.titledAt = s.messages.filter((m) => m.role === 'user').length
+  persist(s)
+}
+
+export function abortTurn(sessionId: string): void {
+  sessions.get(sessionId)?.turn?.controller.abort()
+}
+
+/* ---------------- agent 构建 ---------------- */
+
+/** 单回合步数上限：ops 场景一轮可能含多次 execute/poll，给足余量 */
+const MAX_STEPS = 50
+
+/** 序列化为单行紧凑文本并截断（日志条目单行展示） */
+function forLog(v: unknown, max = 4000): string {
+  const s = typeof v === 'string' ? v : (JSON.stringify(v) ?? String(v))
+  return s.length > max ? `${s.slice(0, max)}…` : s
+}
+
+function toolSetFor(s: Session): ToolSet {
+  return Object.fromEntries(
+    requireDeps().tools.map((t) => [
+      t.name,
+      tool<unknown, unknown, Record<string, unknown>>({
+        description: t.description ?? '',
+        inputSchema: t.parameters as ZodType<unknown>,
+        // 经会话队列串行：同一步多 tool 按卡片顺序执行，避免同路径读写删竞态
+        execute: (input, { toolCallId, abortSignal }) =>
+          s.toolQueue.run(t.lockKey?.(input) ?? null, async () => {
+            if (abortSignal?.aborted) {
+              const err = new Error('Interrupted')
+              err.name = 'AbortError'
+              throw err
+            }
+            return t.handler(input, { sessionId: s.id, toolCallId, signal: abortSignal })
+          })
+      })
+    ])
+  )
+}
+
+function agentFor(s: Session): ToolLoopAgent {
+  if (s.agent) return s.agent
+  const d = requireDeps()
+  s.agent = new ToolLoopAgent({
+    model: d.getModel(),
+    instructions: d.instructions,
+    tools: toolSetFor(s),
+    stopWhen: stepCountIs(MAX_STEPS),
+    toolApproval: ({ toolCall }) => d.gate?.(s.id, toolCall) ?? 'not-applicable',
+    // 每次调用重新解析模型：BYOK 绑定/密钥变化下一回合即时生效
+    prepareCall: (call) => ({ ...call, model: d.getModel() })
+  })
+  return s.agent
+}
+
+/* ---------------- 回合执行 ---------------- */
+
+/**
+ * 发起回合：messages 为渲染层 Chat 的完整历史（末尾为新用户消息，或含审批响应的 assistant 消息）。
+ * 立即持久化输入，返回本回合的 UI 流片流（单消费者）；收尾（onEnd）持久化最终消息。
+ */
+export function startTurn(
+  sessionId: string,
+  messages: AiUIMessage[]
+): ReadableStream<UIMessageChunk> {
+  const s = ensureSession(sessionId)
+  if (s.turn && !s.turn.done) throw new Error('session is busy: a turn is already running')
+  s.messages = messages
+  persist(s)
+  const turn: Turn = { controller: new AbortController(), done: false }
+  s.turn = turn
+  return new ReadableStream<UIMessageChunk>({
+    start: (ctrl) =>
+      runTurn(s, turn, (chunk) => {
+        if (!chunk) turn.done = true
+        chunk ? ctrl.enqueue(chunk) : ctrl.close()
+      })
+  })
+}
+
+async function runTurn(
+  s: Session,
+  turn: Turn,
+  push: (chunk: UIMessageChunk | null) => void
+): Promise<void> {
+  const d = requireDeps()
+  const isContinuation = s.messages.at(-1)?.role === 'assistant'
+  let error: string | undefined
+  try {
+    const agent = agentFor(s)
+    const history = await convertToModelMessages(s.messages, {
+      tools: agent.tools,
+      ignoreIncompleteToolCalls: true
+    })
+    const result = await agent.stream({
+      // 思维链只保留最后一条消息（审批续跑需回传同回合 reasoning），历史思维链剔除
+      messages: pruneMessages({ messages: history, reasoning: 'before-last-message' }),
+      abortSignal: turn.controller.signal,
+      onToolExecutionStart: ({ toolCall }) =>
+        d.onLog?.(`Tool ${toolCall.toolName} input: ${forLog(toolCall.input)}`),
+      onToolExecutionEnd: ({ toolCall, toolOutput }) =>
+        d.onLog?.(
+          `Tool ${toolCall.toolName} ${toolOutput.type === 'tool-error' ? `failed: ${errorMessage(toolOutput.error)}` : `output: ${forLog(toolOutput.output)}`}`
+        )
+    })
+    const ui = toUIMessageStream<ToolSet, AiUIMessage>({
+      stream: result.stream,
+      tools: agent.tools,
+      originalMessages: s.messages,
+      generateMessageId: randomUUID,
+      messageMetadata: ({ part }) =>
+        part.type === 'start' && !isContinuation ? { createdAt: Date.now() } : undefined,
+      onError: (err) => (error = errorMessage(err)),
+      onEnd: ({ messages }) => finalize(s, messages, error)
+    })
+    for await (const chunk of ui) push(chunk)
+  } catch (err) {
+    // 流建立前失败（模型未配置/历史校验失败）：以流内错误告知渲染层，输入已持久化
+    const message = errorMessage(err)
+    push({ type: 'error', errorText: message })
+    finalize(s, s.messages, message)
+  } finally {
+    push(null)
+  }
+}
+
+/** 回合收尾：中断/出错后仍在执行态的工具卡标记中断；回合错误并入错误工具卡或写消息元数据；落盘 */
+function finalize(s: Session, messages: AiUIMessage[], error: string | undefined): void {
+  let last = messages.at(-1)
+  if (last?.role !== 'assistant' && error) {
+    last = { id: randomUUID(), role: 'assistant', parts: [], metadata: { createdAt: Date.now() } }
+    messages = [...messages, last]
+  }
+  if (last?.role === 'assistant') {
+    last.parts = last.parts.map((p) =>
+      isToolUIPart(p) && (p.state === 'input-streaming' || p.state === 'input-available')
+        ? { ...p, state: 'output-error', input: p.input, errorText: 'Interrupted' }
+        : p
+    )
+    if (error) {
+      // 工具失败后模型未能恢复时，回合错误并入最后一张错误工具卡（同文案去重），
+      // 不写 metadata，避免卡片 + 底部红框重复展示；无错误卡（纯模型/流失败）才落 metadata
+      let target = -1
+      let same = false
+      for (let i = last.parts.length - 1; i >= 0; i--) {
+        const p = last.parts[i]
+        if (isToolUIPart(p) && p.state === 'output-error') {
+          target = i
+          same = p.errorText === error
+          break
+        }
+      }
+      if (target < 0) {
+        last.metadata = { createdAt: Date.now(), ...last.metadata, error }
+      } else if (!same) {
+        last.parts = last.parts.map((p, i) => {
+          if (i !== target || !isToolUIPart(p) || p.state !== 'output-error') return p
+          return { ...p, errorText: p.errorText ? `${p.errorText}\n${error}` : error }
+        })
+      }
+    }
+  }
+  s.messages = messages
+  persist(s)
+}

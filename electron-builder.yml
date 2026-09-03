@@ -1,0 +1,72 @@
+appId: com.estamelgg.ggterm
+productName: GGTerm
+directories:
+  buildResources: build
+# 签名前给本 app 的入口二进制写入唯一 Mach-O UUID（LC_UUID）。
+# 不写的话它会和 node_modules 里的 dev Electron（以及任何同版本 Electron 应用）共用同一个
+# UUID，导致 macOS 本地网络隐私把授权判给 com.github.Electron，app 连不上局域网/本地虚拟机。
+# Apple 官方 TN3179 明确要求「主可执行文件的 UUID 必须唯一」。详见 scripts/afterPack.cjs
+afterPack: ./scripts/afterPack.cjs
+# 只打包运行所需：out 产物 + resources + 生产依赖（由 electron-builder 按 dependencies 解析）
+files:
+  - out/**
+  - resources/**
+  - package.json
+  - '!**/.vscode/*'
+  - '!src{,/**/*}'
+  - '!tests{,/**/*}'
+  - '!docs{,/**/*}'
+  - '!refer{,/**/*}'
+  - '!scripts{,/**/*}'
+  - '!AGENTS.md'
+  - '!knip.json'
+  - '!vitest.config.ts'
+  - '!components.json'
+  - '!**/*.{tsbuildinfo,map}'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+# node-pty 为原生模块（.node 二进制），必须解压到 asar 外才能被 require 加载
+asarUnpack:
+  - node_modules/node-pty/**
+win:
+  executableName: GGTerm
+nsis:
+  artifactName: ${name}-${version}-setup.${ext}
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: always
+mac:
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
+    NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
+    # macOS Sequoia+ 本地网络隐私：无此描述时访问局域网/虚拟机网段会被静默拒绝
+    NSLocalNetworkUsageDescription: GGTerm needs local network access to connect to hosts on your LAN, including local virtual machines.
+  notarize: false
+dmg:
+  artifactName: ${name}-${version}.${ext}
+linux:
+  target:
+    - AppImage
+    - snap
+    - deb
+  maintainer: electronjs.org
+  category: Utility
+appImage:
+  artifactName: ${name}-${version}.${ext}
+npmRebuild: false
+# 发布保护：ASAR 完整性校验 + 禁止从 asar 外加载应用代码；顺带关掉常见调试入口
+electronFuses:
+  runAsNode: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+# 推 tag（v*）时由 .github/workflows/release.yml 触发的打包任务把安装包传到 GitHub Release。
+# 只是上传产物：本项目没有引入 electron-updater，release 不作为自动更新源。
+publish:
+  provider: github
+  owner: EstamelGG
+  repo: ATerminal
+  releaseType: release
