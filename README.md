@@ -1,6 +1,16 @@
-# scaffold-tmp
+# GGterm
 
 An Electron application with React and TypeScript
+
+## Screenshots
+
+![Hosts](image-2.png)
+
+![Terminal](image-3.png)
+
+![Agent](image.png)
+
+![Agent](image-1.png)
 
 ## Recommended IDE Setup
 
