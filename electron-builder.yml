@@ -63,10 +63,8 @@ electronFuses:
   enableNodeCliInspectArguments: false
   enableEmbeddedAsarIntegrityValidation: true
   onlyLoadAppFromAsar: true
-# 推 tag（v*）时由 .github/workflows/release.yml 触发的打包任务把安装包传到 GitHub Release。
-# 只是上传产物：本项目没有引入 electron-updater，release 不作为自动更新源。
 publish:
   provider: github
   owner: EstamelGG
-  repo: ATerminal
+  repo: GGTerm
   releaseType: release

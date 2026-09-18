@@ -16,6 +16,9 @@ permissions:
 env:
   ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
   ELECTRON_BUILDER_BINARIES_MIRROR: https://github.com/electron-userland/electron-builder-binaries/releases/download/
+  # 打包会吃超过 2GB 堆：runner 上 Node 22 的默认老生代上限就是 2GB，electron-vite 直接 OOM
+  # （实测：本机 --max-old-space-size=2048 同样 exit 134，4096 可通过；本机 Node 24 默认 4288MB，所以本地不复现）
+  NODE_OPTIONS: --max-old-space-size=4096
 
 jobs:
   prepare:
