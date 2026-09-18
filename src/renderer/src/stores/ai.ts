@@ -32,6 +32,10 @@ interface AiState {
   sessions: AiSession[]
   activeId: string | null
   initError: string | null
+  /** 跨页面入口（主机备注「Agent 代填」等）：新建会话并直接发送，不经输入框、不需人工确认 */
+  sendInNewSession: (text: string) => Promise<void>
+  /** 要求切回对话视图的信号（自增计数，对话页判重消费一次）：列表视图下看不到刚发起的对话 */
+  viewChatRequest: number
   init: () => Promise<void>
   newSession: () => Promise<void>
   closeSession: (id: string) => void
@@ -215,6 +219,18 @@ function emptySession(summary: AiSessionSummary): AiSession {
   return { ...summary, messages: [], status: 'ready', loaded: false }
 }
 
+/** 组装并投递给指定会话：UI 显示用户原文（metadata.display），正文为经提示词层变换的 payload */
+function dispatch(id: string, text: string): void {
+  const conns = useConnectionsStore.getState().connections
+  const phases = useLinksStore.getState().byHost
+  const payload = buildPayload(
+    text,
+    conns.map((c) => ({ conn: c, phase: phases[c.id]?.phase })),
+    i18next.t
+  )
+  void chatOf(id).sendMessage({ text: payload, metadata: { createdAt: Date.now(), display: text } })
+}
+
 function patchSession(
   list: AiSession[],
   id: string,
@@ -245,6 +261,7 @@ export const useAiStore = create<AiState>((set, get) => ({
   sessions: [],
   activeId: null,
   initError: null,
+  viewChatRequest: 0,
 
   init: async () => {
     // 幂等：AI 工作台是条件挂载（切 tab 会卸载重挂），镜像已存在则不重建
@@ -340,18 +357,40 @@ export const useAiStore = create<AiState>((set, get) => ({
     const id = get().activeId
     const trimmed = text.trim()
     if (!id || !trimmed) return
-    // UI 显示用户原文（metadata.display）；正文为经提示词层变换的 payload（/命令展开 + @主机资产上下文）
-    const conns = useConnectionsStore.getState().connections
-    const phases = useLinksStore.getState().byHost
-    const payload = buildPayload(
-      trimmed,
-      conns.map((c) => ({ conn: c, phase: phases[c.id]?.phase })),
-      i18next.t
+    dispatch(id, trimmed)
+  },
+
+  /**
+   * 新建会话并直接发送（主机备注「Agent 代填」等页面外入口）：不经输入框、不需人工确认。
+   * 与 newSession 同策略——已有完全空的会话先复用，避免堆积空会话。
+   */
+  sendInNewSession: async (text) => {
+    const trimmed = text.trim()
+    if (!trimmed) return
+    // 先举旗让对话页切回对话视图（列表视图下消息发出去也看不到）；页面未挂载过则本就默认对话视图
+    set((s) => ({ viewChatRequest: s.viewChatRequest + 1 }))
+    // 对话页可能还没挂载过：先水合镜像，空会话复用判断才可靠（已水合则立即返回）
+    await get().init()
+    const empty = get().sessions.find(
+      (s) => s.loaded && !s.title.trim() && s.messages.length === 0 && !isBusy(s)
     )
-    void chatOf(id).sendMessage({
-      text: payload,
-      metadata: { createdAt: Date.now(), display: trimmed }
-    })
+    if (empty) {
+      get().activate(empty.id)
+      dispatch(empty.id, trimmed)
+      return
+    }
+    try {
+      const s = await window.aterm.ai.createSession()
+      set((state) => ({
+        sessions: [...state.sessions, { ...emptySession(s), loaded: true }],
+        activeId: s.id,
+        initError: null
+      }))
+      dispatch(s.id, trimmed)
+    } catch (err) {
+      // 建会话失败：不改 activeId，错误由对话页空态展示
+      set({ initError: String(err instanceof Error ? err.message : err) })
+    }
   },
 
   cancel: () => {

@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { NotebookPen, X } from 'lucide-react'
+import { Bot, NotebookPen, X } from 'lucide-react'
 import type { ServerNote } from '@shared/types'
 import { errorMessage } from '@shared/error'
+import { useAiStore } from '@/stores/ai'
 import { useConnectionsStore } from '@/stores/connections'
+import { useSessionStore } from '@/stores/session'
 import { Button } from '@/components/form/Buttons'
 import { ATNumberField, ATTextArea, ATTextField } from '@/components/form/Fields'
 import { DialogShell } from '@/components/ui/DialogShell'
@@ -148,6 +150,8 @@ export function NoteEditorDialog({
   const { t } = useTranslation()
   const setNote = useConnectionsStore((s) => s.setNote)
   const connections = useConnectionsStore((s) => s.connections)
+  const setTab = useSessionStore((s) => s.setTab)
+  const sendInNewSession = useAiStore((s) => s.sendInNewSession)
   const current = connections.find((c) => c.id === hostId)
 
   const [purpose, setPurpose] = useState(note?.purpose ?? '')
@@ -239,6 +243,18 @@ export function NoteEditorDialog({
     setOther(n?.other ?? '')
   }
 
+  /**
+   * Agent 代填：按当前界面语言取提示词，新建一个会话直接发给 agent（不经输入框、不需人工确认），
+   * 会话就绪后再切到 AI 页——对话页挂载时镜像已有会话，不会和它的 init 抢 state。
+   * 先关本弹窗：它是 portal 到 body 的模态，留着会盖住对话页。
+   */
+  const handoffToAgent = (): void => {
+    onDismiss()
+    void sendInNewSession(t('conn.note.agentPrompt', { name: hostName, host: hostAddress })).then(
+      () => setTab({ kind: 'ai' })
+    )
+  }
+
   return (
     <DialogShell
       open
@@ -257,9 +273,22 @@ export function NoteEditorDialog({
       }
     >
       <div className="flex max-h-[62vh] flex-col overflow-y-auto py-0.5 pr-3">
-        {/* meta：名称 / 主机（对照 vscode #meta 表） */}
+        {/* meta：名称 / 主机（对照 vscode #meta 表）；名称行右端 = Agent 代填入口 */}
         <div className="mb-3 flex flex-col gap-0.5 border-b border-line pb-2.5">
-          <span className="text-title font-semibold text-fg">{hostName}</span>
+          <div className="flex items-center gap-2">
+            <span className="min-w-0 flex-1 truncate text-title font-semibold text-fg">
+              {hostName}
+            </span>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={handoffToAgent}
+              className="no-drag flex shrink-0 items-center gap-1 rounded-md border border-line px-2 py-[3px] text-caption font-medium text-muted transition-colors duration-150 outline-none hover:border-at-accent/45 hover:text-at-accent focus-visible:ring-[1.5px] focus-visible:ring-at-accent/70 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
+            >
+              <Bot size={12} strokeWidth={2.2} />
+              {t('conn.note.agentFill')}
+            </button>
+          </div>
           <span className="font-mono text-minor text-muted">{hostAddress}</span>
         </div>
 

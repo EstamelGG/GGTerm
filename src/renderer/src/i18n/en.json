@@ -169,7 +169,9 @@
       "addService": "Add service",
       "svcName": "Service name",
       "svcDesc": "Description",
-      "other": "Other"
+      "other": "Other",
+      "agentFill": "Agent fill",
+      "agentPrompt": "Connect to host {{name}} ({{host}}), read its existing note first, then probe the host and call edit_note to fill in the structured note: purpose, other NICs, internet access, container services (containers and images), CPU cores, memory, disk, open ports, services, other. The note is a snapshot of the current state — record only the present state, never an operation history."
     },
     "col": {
       "name": "Name",

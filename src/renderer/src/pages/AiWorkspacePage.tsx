@@ -1611,6 +1611,15 @@ export function AiWorkspacePage(): React.JSX.Element {
     void init()
   }, [init])
 
+  /* 外部入口（主机备注「Agent 代填」等）发起的对话：列表视图下切回对话视图，否则看不到刚发出的消息。
+     渲染期调整（与本文件其他判重同套路），挂载时视为已消费，不影响正常进入页面时的视图 */
+  const viewChatRequest = useAiStore((s) => s.viewChatRequest)
+  const [seenViewChatRequest, setSeenViewChatRequest] = useState(viewChatRequest)
+  if (viewChatRequest !== seenViewChatRequest) {
+    setSeenViewChatRequest(viewChatRequest)
+    setView('chat')
+  }
+
   useEffect(() => {
     const el = scrollRef.current
     if (el && following) el.scrollTop = el.scrollHeight
