@@ -42,6 +42,9 @@ import {
  *   颜色：绿 = 此刻已连接 / 琥珀 = 进行中 / 红 = 连接失败 / 灰 = 已断开
  *   动效：流动虚线 = 正在建链 · 数据包流光 = 已连且正在操作 · 旋转虚线环 = 握手中
  *         呼吸光环 = AI 正在对本机操作 · 外圈进度环 = 断开已多久（走完即淡出退场）
+ *   审批：操作在等人工确认时，数据包流光与呼吸光环一并转琥珀（与审批卡黄框同语义）——
+ *         线型与线宽跟默认操作态一致，只换颜色 + 加强光晕，免得与「正在建链」的流动虚线撞语义；
+ *         审批叠加的判定见 topology/useTopologyGraph.ts。
  *   信息密度：原因/次数/断开时刻等细节只在点击节点后的左下角气泡出现，不占用常驻视觉
  *   点击聚焦：被点节点的连线抬到无关节点之上（但仍低于自己的两端节点），其余节点与边淡化
  *   选中：被点节点图标放大一档 + host 标签加粗提亮（不动圆环颜色与尺寸，避开状态色语义）
@@ -132,6 +135,16 @@ function CircleHandles(): React.JSX.Element {
 /** 中心节点（本机）圆底：不透明深色（避免连线从半透明底透出），与白色主机节点区分主客 */
 const CIRCLE_BG = 'rgb(20 23 26)' /* = --at-raised 去透明 */
 
+/**
+ * AI 操作光环（连线的同源信号）：操作中 = 蓝色呼吸；等人工审批 = 琥珀呼吸（与审批卡黄框同语义）；
+ * 结束淡出时保持等待期的配色，但只走 fade-out —— 颜色不该在淡出途中再跳一次。
+ */
+function ringOf(data: TopoNodeData): { cls: string; border: string } {
+  const border = data.pending ? 'border-warn' : 'border-info'
+  if (data.settling) return { cls: 'topo-ring-settling', border }
+  return { cls: data.pending ? 'topo-ring-pending' : 'topo-ring-active', border }
+}
+
 /** 时刻 → HH:mm:ss（断开/失败发生点） */
 function clockOf(ts: number): string {
   const d = new Date(ts)
@@ -172,6 +185,7 @@ function CountdownRing({ since, color }: { since: number; color: string }): Reac
 /** 主机节点：OS 图标 + 名称；圆环颜色即状态，细节在左下角气泡（点击节点后出现） */
 function HostNode({ data }: NodeProps<Node<TopoNodeData>>): React.JSX.Element {
   const look = NODE_LOOK[data.state]
+  const ring = ringOf(data)
   const d = (data.jump ? 26 : 34) * data.sizeK
   return (
     <div
@@ -193,10 +207,10 @@ function HostNode({ data }: NodeProps<Node<TopoNodeData>>): React.JSX.Element {
           />
         )}
 
-        {/* 内圈：AI 操作呼吸光环（进入淡入，结束淡出后再移除） */}
+        {/* 内圈：AI 操作呼吸光环（进入淡入，结束淡出后再移除；等人工审批时转琥珀） */}
         {data.active && (
           <span
-            className={`${data.settling ? 'topo-ring-settling' : 'topo-ring-active'} pointer-events-none absolute -inset-1 rounded-full border border-at-info`}
+            className={`${ring.cls} pointer-events-none absolute -inset-1 rounded-full border ${ring.border}`}
           />
         )}
 
@@ -263,11 +277,11 @@ function NodeBubble({ data }: { data: TopoNodeData }): React.JSX.Element {
         <span className="text-caption text-muted">{t(`ai.topo.state.${data.state}`)}</span>
       </div>
       {attempt != null && (
-        <div className="mt-0.5 text-caption text-at-warn">
+        <div className="mt-0.5 text-caption text-warn">
           {t('ai.topo.attempt', { n: attempt })}
         </div>
       )}
-      {reason && <div className="mt-0.5 text-caption break-words text-at-danger/90">{reason}</div>}
+      {reason && <div className="mt-0.5 text-caption break-words text-danger/90">{reason}</div>}
       {since != null && (
         <div className="mt-0.5 text-caption text-muted/80">
           {t('ai.topo.since')} {clockOf(since)}
@@ -290,6 +304,7 @@ function NodeBubble({ data }: { data: TopoNodeData }): React.JSX.Element {
 /** 中心节点：本机 + AI 图标；本机操作时呼吸光环 */
 function CenterNode({ data }: NodeProps<Node<TopoNodeData>>): React.JSX.Element {
   const { t } = useTranslation()
+  const ring = ringOf(data)
   const d = 46 * data.sizeK
   return (
     <div className="flex cursor-default flex-col items-center">
@@ -297,7 +312,7 @@ function CenterNode({ data }: NodeProps<Node<TopoNodeData>>): React.JSX.Element 
         <CircleHandles />
         {data.active && (
           <span
-            className={`${data.settling ? 'topo-ring-settling' : 'topo-ring-active'} pointer-events-none absolute -inset-1 rounded-full border border-at-info`}
+            className={`${ring.cls} pointer-events-none absolute -inset-1 rounded-full border ${ring.border}`}
           />
         )}
         <div
@@ -317,7 +332,7 @@ function CenterNode({ data }: NodeProps<Node<TopoNodeData>>): React.JSX.Element 
   )
 }
 
-/** 拓扑边：直线（圆心连圆心）+ 状态样式类；working 叠加一层数据包流光 */
+/** 拓扑边：直线（圆心连圆心）+ 状态样式类；working/pending 各叠一层数据包流光 */
 function TopoEdge({
   id,
   sourceX,
@@ -330,6 +345,7 @@ function TopoEdge({
   const state: EdgeState = data?.state ?? 'closed'
   const leaving = data?.leaving ?? false
   const gradientId = `topo-${useId().replace(/:/g, '')}`
+  // pending 走 CSS 里的琥珀实色（不套渐变）：等审批要一眼分辨，不能再掺青色进去
   const colorful = state === 'working' || state === 'healthy'
   const stroke = colorful ? `url(#${gradientId})` : undefined
   return (
@@ -357,6 +373,7 @@ function TopoEdge({
       {state === 'working' && !leaving && (
         <path d={path} className="topo-packet" style={{ stroke }} />
       )}
+      {state === 'pending' && !leaving && <path d={path} className="topo-packet topo-packet-pending" />}
     </>
   )
 }
@@ -382,8 +399,16 @@ const EDGE_TYPES = {
   )
 }
 
-/** 图例行：六种边态（= 六种展示态，working 为已连接且操作中） */
-const LEGEND_ROWS: EdgeState[] = ['healthy', 'working', 'dialing', 'retrying', 'failed', 'closed']
+/** 图例行：六种链路展示态 + 两个活动叠加态（working 操作中 / pending 等人工审批） */
+const LEGEND_ROWS: EdgeState[] = [
+  'healthy',
+  'working',
+  'pending',
+  'dialing',
+  'retrying',
+  'failed',
+  'closed'
+]
 
 /** 图例色样：与真实边共用同一套 CSS 类，杜绝图例与实际表现漂移 */
 function LegendSwatch({ k }: { k: EdgeState }): React.JSX.Element {

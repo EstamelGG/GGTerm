@@ -592,8 +592,11 @@
    动效语义：
      流动虚线 = 建链中 · 数据包流光 = 已连接且正在操作 · 旋转虚线环 = 握手中
      呼吸光环 = AI 正在操作 · 外圈进度环 = 断开已多久（5 分钟走完即归灰）
-   类名由 TopologyCanvas 生成：topo-edge-{state} / topo-packet /
-   topo-ring-state / topo-ring-active / topo-ring-settling / topo-countdown-ring */
+     审批：操作在等人工确认 = 数据包与呼吸光环一并转琥珀（topo-edge-pending /
+     topo-packet-pending / topo-ring-pending），与审批卡的黄框同语义；线型不变，只换色 + 加强光晕，
+     免得与「建链中」的流动虚线撞语义
+   类名由 TopologyCanvas 生成：topo-edge-{state} / topo-packet / topo-packet-pending /
+   topo-ring-state / topo-ring-active / topo-ring-pending / topo-ring-settling / topo-countdown-ring */
 
 /* 状态切换不跳变：颜色/线宽/透明度统一过渡 */
 .topo-edge {
@@ -631,6 +634,40 @@
   filter: drop-shadow(0 0 3px var(--at-accent));
   pointer-events: none;
   animation: topo-packet 2.8s linear infinite;
+}
+
+/* pending 等人工审批：琥珀实线（线型与 working 一致，只换色）+ 呼吸式外发光 */
+@keyframes topo-edge-approve {
+  50% {
+    opacity: 0.55;
+  }
+}
+.topo-edge.topo-edge-pending {
+  stroke: var(--at-warn);
+  stroke-width: 2;
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--at-warn) 55%, transparent));
+  animation: topo-edge-approve 2.6s ease-in-out infinite;
+}
+
+/* 等审批的数据包：放慢 + 短划（"停在这儿等你"，不是"正在跑"）+ 琥珀光晕一呼一吸 */
+@keyframes topo-packet-approve {
+  0%,
+  100% {
+    opacity: 0.6;
+    filter: drop-shadow(0 0 2px color-mix(in srgb, var(--at-warn) 60%, transparent));
+  }
+  50% {
+    opacity: 1;
+    filter: drop-shadow(0 0 8px var(--at-warn));
+  }
+}
+.topo-packet.topo-packet-pending {
+  stroke: var(--at-warn);
+  /* 12 + 84 = 96：与 topo-packet 的关键帧位移同一周期长度，循环处不跳格 */
+  stroke-dasharray: 12 84;
+  animation:
+    topo-packet 4.2s linear infinite,
+    topo-packet-approve 2.6s ease-in-out infinite;
 }
 
 /* dialing 建链中：琥珀流动虚线 */
@@ -724,6 +761,24 @@
     topo-fade-in 0.4s ease-out backwards,
     topo-node-breathe 2.4s 0.4s ease-in-out infinite;
 }
+/* 等人工审批光环：琥珀呼吸 + 更亮的光晕（与连线上那枚琥珀数据包同源信号） */
+@keyframes topo-node-approve {
+  0%,
+  100% {
+    opacity: 0.4;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(1.08);
+  }
+}
+.topo-ring-pending {
+  box-shadow: 0 0 14px color-mix(in srgb, var(--at-warn) 35%, transparent);
+  animation:
+    topo-fade-in 0.4s ease-out backwards,
+    topo-node-approve 2.6s 0.4s ease-in-out infinite;
+}
 .topo-ring-settling {
   animation: topo-fade-out 0.45s ease-in forwards;
 }
@@ -802,12 +857,19 @@
 @media (prefers-reduced-motion: reduce) {
   .topo-edge.topo-edge-dialing,
   .topo-edge.topo-edge-retrying,
+  .topo-edge.topo-edge-pending,
   .topo-packet,
+  .topo-packet.topo-packet-pending,
   .topo-ring-state,
   .topo-ring-active,
+  .topo-ring-pending,
   .topo-countdown-ring,
   .react-flow__node,
   .react-flow__edge {
     animation: none;
+  }
+  /* 待审批的琥珀光晕去掉呼吸后仍需保留静态外发光（颜色即语义） */
+  .topo-packet.topo-packet-pending {
+    filter: drop-shadow(0 0 6px var(--at-warn));
   }
 }

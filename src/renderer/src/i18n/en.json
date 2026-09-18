@@ -596,6 +596,7 @@
         "retrying": "Reconnecting",
         "healthy": "Connected",
         "working": "Working",
+        "pending": "Awaiting approval",
         "failed": "Failed",
         "closed": "Disconnected"
       },

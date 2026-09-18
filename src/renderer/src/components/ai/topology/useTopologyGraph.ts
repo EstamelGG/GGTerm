@@ -12,6 +12,8 @@ import { layoutTopology } from './layout'
  * 两轴（互不派生，各自独立订阅）：
  *   ① 链路 links    —— 主进程 HostLink 是唯一权威（phase + 进入时刻 + 重试次数 + 失败原因）
  *   ② 活动 activity —— AI 工具执行中（叠加光环/数据包动效，可发生在建连期）
+ *      活动上再叠一层「等人工审批」：审批卡未决期间连线/光环转琥珀（见 awaiting），
+ *      人工审批写回后 sendAutomaticallyWhen 续跑 —— 新回合以 start 流片开篇，据此撤销待审批态。
  *
  * 上图规则（按需上图，不是资产全景）：
  * - 只画「本次运行内发生过连接动作」的主机（成功/失败/已断开都算，来源 = links 键集）；
@@ -41,8 +43,30 @@ const LEAVE_FADE_MS = 450
  */
 export type DisplayState = 'dialing' | 'retrying' | 'healthy' | 'failed' | 'closed'
 
-/** 边视觉态：由链上目标的展示态 + 活动叠加派生 */
-export type EdgeState = 'healthy' | 'working' | 'dialing' | 'retrying' | 'failed' | 'closed'
+/**
+ * 边视觉态：由链上目标的展示态 + 活动叠加派生。
+ * - working 已连接且 AI 正在操作（蓝色数据包流光）
+ * - pending 已连接且该操作在等人工审批（琥珀流光 + 呼吸光晕）—— 与审批卡黄框同语义
+ */
+export type EdgeState =
+  | 'healthy'
+  | 'working'
+  | 'pending'
+  | 'dialing'
+  | 'retrying'
+  | 'failed'
+  | 'closed'
+
+/** 处在「人工审批未决」状态的边视觉态权重（同一段边被多条链共享时取高者） */
+const EDGE_ACT_RANK: Record<EdgeState, number> = {
+  pending: 2,
+  working: 1,
+  healthy: 0,
+  dialing: 0,
+  retrying: 0,
+  failed: 0,
+  closed: 0
+}
 
 /** 状态聚合优先级（共享跳板节点/边取最优，数字小者胜） */
 const STATE_RANK: Record<DisplayState, number> = {
@@ -70,6 +94,8 @@ export interface TopoNodeData extends Record<string, unknown> {
   state: DisplayState
   /** AI 正在操作（叠加光环；链路上叠加数据包动效） */
   active: boolean
+  /** 该主机上至少有一个工具调用在等人工审批（光环转琥珀呼吸；连线的数据包转琥珀） */
+  pending: boolean
   /** 活动正在淡出（CSS 过渡） */
   settling: boolean
   /** 倒计时环走完、正在淡出（CSS topo-node-leaving） */
@@ -92,6 +118,8 @@ export interface TopoEdgeData extends Record<string, unknown> {
 interface ActivityEntry {
   /** 并发中的工具数（同主机多工具时按最后一个结束收尾） */
   count: number
+  /** 并发中「等人工审批」的工具数（>0 即琥珀态；审批决定后归零） */
+  pending: number
   since: number
   /** 淡出中（CSS 过渡结束后移除） */
   settling: boolean
@@ -123,6 +151,7 @@ function sameNodeData(a: TopoNodeData, b: TopoNodeData): boolean {
     a.label === b.label &&
     a.state === b.state &&
     a.active === b.active &&
+    a.pending === b.pending &&
     a.settling === b.settling &&
     a.leaving === b.leaving &&
     a.jump === b.jump &&
@@ -227,9 +256,13 @@ function linkStateOf(phase: LinkPhase): DisplayState {
   }
 }
 
-/** 边视觉态：目标展示态 + 活动（已连接且操作中 → 数据包动效） */
-function edgeStateOf(display: DisplayState, active: boolean): EdgeState {
-  if (active && display === 'healthy') return 'working'
+/**
+ * 边视觉态：目标展示态 + 活动（已连接且操作中 → 数据包动效；操作在等人工审批 → 琥珀数据包）。
+ * 展示态优先：链路一旦不在 healthy（建连中/断开/失败），审批态不再作为边的视觉，
+ * 但节点光环仍由节点自己的 active/pending 决定 —— 审批未决与链路掉线可以同时成立。
+ */
+function edgeStateOf(display: DisplayState, active: boolean, pending: boolean): EdgeState {
+  if (active && display === 'healthy') return pending ? 'pending' : 'working'
   return display
 }
 
@@ -268,11 +301,25 @@ export function useTopologyGraph(
     }
   }, [])
 
-  /* ---------- 轴②：AI 活动（正交于链路；最短 3s + 淡出） ---------- */
+  /* ---------- 轴②：AI 活动（正交于链路；最短 3s + 淡出）
+     审批叠加：gate 判成 user-approval 时 SDK 在 tool-input-available 之后紧跟
+     tool-approval-request（isAutomatic 缺省），并就此结束本次回合（等用户作答）——
+     所以等待态必须跨回合存活，回合收尾的清理要放过这些调用（见 turn-end 分支）。
+     渲染层写回响应后 sendAutomaticallyWhen 续跑，新回合以 start 流片开篇 ——
+     据「回合重启 ⇒ 上一轮的待审批都已被应答」撤销琥珀态（tool-approval-response
+     只在自动放行/自动拦截那条流里出现，人工审批续跑的流里没有这个流片）。 ---------- */
   useEffect(() => {
-    const targets = new Map<string, string>() // sessionId + toolCallId → 主机
+    /** 工具调用的全局标识（sessionId 是 UUID，不含分隔符） */
+    const callKey = (sessionId: string, toolCallId: string): string =>
+      `${sessionId}\u0000${toolCallId}`
+    const ownsKey = (key: string, sessionId: string): boolean => key.startsWith(`${sessionId}\u0000`)
+    const targets = new Map<string, string>() // callKey → 主机（'CENTER' 或 hostId）
     const entries = new Map<string, ActivityEntry>()
     const timers = new Map<string, ReturnType<typeof setTimeout>>()
+    /** 等人工审批的调用（callKey）：连线与光环转琥珀 */
+    const awaiting = new Set<string>()
+    /** approvalId → callKey：tool-approval-response 只带 approvalId，需回查是哪个调用 */
+    const approvals = new Map<string, string>()
     const publish = (): void => setActivity(Object.fromEntries(entries))
     const clearTimer = (key: string): void => {
       clearTimeout(timers.get(key))
@@ -299,16 +346,63 @@ export function useTopologyGraph(
       const entry = entries.get(key)
       entries.set(key, {
         count: (entry?.count ?? 0) + 1,
+        // 审批请求可能先于 begin（execute 按 executionId 异步反查主机）：这里补记待审批计数
+        pending: (entry?.pending ?? 0) + (awaiting.has(callId) ? 1 : 0),
         since: entry?.count ? entry.since : performance.now(),
         settling: false
       })
       publish()
     }
+    /** 标记调用在等人工审批（主机尚未反查出来时先只记调用，begin 时补记计数） */
+    const markWaiting = (callId: string): void => {
+      if (awaiting.has(callId)) return
+      awaiting.add(callId)
+      const key = targets.get(callId)
+      const entry = key ? entries.get(key) : undefined
+      if (!key || !entry) return
+      entries.set(key, { ...entry, pending: entry.pending + 1 })
+      publish()
+    }
+    /** 撤销待审批（人工已应答）：计数归零即连线回到蓝色操作态 */
+    const clearWaiting = (callId: string): void => {
+      if (!awaiting.delete(callId)) return
+      const key = targets.get(callId)
+      const entry = key ? entries.get(key) : undefined
+      if (!key || !entry || entry.pending === 0) return
+      entries.set(key, { ...entry, pending: entry.pending - 1 })
+      publish()
+    }
+    /** 调用收尾（有结果 / 被拒绝 / 回合收尾）：计数归零后按最短展示时长转淡出 */
+    const end = (callId: string): void => {
+      const key = targets.get(callId)
+      if (!key) return
+      clearWaiting(callId)
+      targets.delete(callId)
+      const entry = entries.get(key)
+      if (!entry) return
+      const count = Math.max(0, entry.count - 1)
+      entries.set(key, { ...entry, count })
+      if (count > 0) return
+      const wait = Math.max(0, entry.since + PULSE_MIN_MS - performance.now())
+      clearTimer(key)
+      timers.set(
+        key,
+        setTimeout(() => settle(key), wait)
+      )
+    }
     const off = window.aterm.ai.onEvent((e) => {
+      /* 回合收尾 = 本轮工具调用都已有定论（有结果 / 被取消）。注意「等人工审批」的调用不在其列：
+         审批请求会直接结束本次回合（等用户作答），它的活动必须跨回合活到用户应答之后。
+         其余没收到的结果的调用（自动拦截、生成中途取消）在此收尾，否则光环与流光会一直亮着 */
+      if (e.type === 'turn-end') {
+        for (const callId of [...targets.keys()])
+          if (ownsKey(callId, e.sessionId) && !awaiting.has(callId)) end(callId)
+        return
+      }
       if (e.type !== 'chunk') return
       const c = e.chunk
+      const callId = 'toolCallId' in c ? callKey(e.sessionId, c.toolCallId) : ''
       if (c.type === 'tool-input-available') {
-        const callId = JSON.stringify([e.sessionId, c.toolCallId])
         const input = c.input as { hostId?: string; executionId?: string } | undefined
         if (input?.hostId) return begin(callId, input.hostId)
         // execute 按 executionId 操作时主机在执行记录里，异步反查
@@ -326,26 +420,36 @@ export function useTopologyGraph(
         }
         return begin(callId, 'CENTER')
       }
+      // 人工审批未决：连线/光环转琥珀。自动放行/自动拦截不打扰用户，不进等待态
+      // （两种通道都记 approvalId → 调用，随后的应答流片据此收尾）
+      if (c.type === 'tool-approval-request') {
+        approvals.set(c.approvalId, callId)
+        if (!c.isAutomatic) markWaiting(callId)
+        return
+      }
+      // 自动通道的即时应答：被拒的调用不会再有结果，直接收尾（放行的等 tool-output-*）
+      if (c.type === 'tool-approval-response') {
+        const call = approvals.get(c.approvalId)
+        if (!call) return
+        approvals.delete(c.approvalId)
+        clearWaiting(call)
+        if (!c.approved) end(call)
+        return
+      }
+      // 回合重启（人工审批写回后自动续跑）：上一轮的待审批都已被应答，撤销琥珀态
+      if (c.type === 'start') {
+        for (const call of [...awaiting]) if (ownsKey(call, e.sessionId)) clearWaiting(call)
+        for (const [approvalId, call] of [...approvals])
+          if (ownsKey(call, e.sessionId)) approvals.delete(approvalId)
+        return
+      }
       if (
         c.type !== 'tool-output-available' &&
         c.type !== 'tool-output-error' &&
         c.type !== 'tool-output-denied'
       )
         return
-      const callId = JSON.stringify([e.sessionId, c.toolCallId])
-      const key = targets.get(callId)
-      if (!key) return
-      targets.delete(callId)
-      const entry = entries.get(key)
-      if (!entry) return
-      const count = Math.max(0, entry.count - 1)
-      entries.set(key, { ...entry, count })
-      if (count > 0) return
-      const wait = Math.max(0, entry.since + PULSE_MIN_MS - performance.now())
-      timers.set(
-        key,
-        setTimeout(() => settle(key), wait)
-      )
+      end(callId)
     })
     return () => {
       off()
@@ -474,6 +578,7 @@ export function useTopologyGraph(
           label: '',
           state: 'healthy',
           active: 'CENTER' in activity,
+          pending: (activity.CENTER?.pending ?? 0) > 0,
           settling: activity.CENTER?.settling ?? false,
           leaving: false,
           jump: false,
@@ -497,7 +602,9 @@ export function useTopologyGraph(
           hostId,
           label: conn?.name || conn?.host || hostId.slice(0, 8),
           state,
+          // 计数归零后条目仍留到淡出结束（最短展示时长 + PULSE_FADE_MS）：期间保持「有活动」
           active: !!act,
+          pending: !!act && act.pending > 0,
           settling: act?.settling ?? false,
           leaving: fading[hostId] === 'out',
           jump: !leaves.has(hostId),
@@ -516,16 +623,18 @@ export function useTopologyGraph(
       const display = targetState.get(leaf)
       if (!display) continue
       const act = activity[leaf]
-      const state = edgeStateOf(display, !!act && !act.settling)
+      const pending = !!act && act.pending > 0
+      const state = edgeStateOf(display, !!act && !act.settling, pending)
       for (const [k, hostId] of chain.entries()) {
         const source = k === 0 ? 'CENTER' : chain[k - 1]
         const key = `${source}>${hostId}`
         const cur = edgeByKey.get(key)
-        // 按展示态排序去重（EdgeState 里的 working 不参与排序，故比较 display 而非 state）
+        // 按展示态排序去重（叠加态不参与展示态排序，故比较 display 而非 state），
+        // 展示态相同则取叠加态高者：等审批 > 操作中 > 无活动
         if (
           !cur ||
           STATE_RANK[display] < STATE_RANK[cur.display] ||
-          (display === cur.display && state === 'working')
+          (display === cur.display && EDGE_ACT_RANK[state] > EDGE_ACT_RANK[cur.state])
         ) {
           edgeByKey.set(key, { display, state })
         }

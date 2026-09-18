@@ -596,6 +596,7 @@
         "retrying": "重连中",
         "healthy": "已连接",
         "working": "操作中",
+        "pending": "等待审批",
         "failed": "连接失败",
         "closed": "已断开"
       },
