@@ -1,3 +1,4 @@
+import { FileReferenceChip } from '@/components/ai/FileReferenceChip'
 import { memo, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
@@ -901,6 +902,9 @@ const MessageItem = memo(function MessageItem({
     return (
       <div className="flex flex-col items-end gap-1">
         {stamp}
+        {m.metadata?.fileReferences?.map((file) => (
+          <FileReferenceChip key={JSON.stringify([file.hostId, file.path])} file={file} />
+        ))}
         {m.metadata?.hostReferences?.map((host) => (
           <span
             key={host.id}
@@ -1097,6 +1101,7 @@ function ChatComposer({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const conns = useConnectionsStore((s) => s.connections)
+  const fileAttachments = useWorkspaceStore((s) => s.fileAttachments[sessionId])
   const attachments = useWorkspaceStore((s) => s.attachments[sessionId])
   const focusedId = useWorkspaceStore((s) => s.focusedHostId)
   const focusedHost = conns.find((c) => c.id === focusedId)
@@ -1357,7 +1362,7 @@ function ChatComposer({
           )}
         >
           <div className="relative">
-            {(focusedHost || references.length > 0) && (
+            {(focusedHost || references.length > 0 || (fileAttachments?.length ?? 0) > 0) && (
               <div className="flex flex-wrap gap-1 px-2 pt-2">
                 {focusedHost && (
                   <span
@@ -1368,6 +1373,15 @@ function ChatComposer({
                     {t('ai.focusedHost')}: <span className="truncate">{focusedHost.name}</span>
                   </span>
                 )}
+                {fileAttachments?.map((file) => (
+                  <FileReferenceChip
+                    key={JSON.stringify([file.hostId, file.path])}
+                    file={file}
+                    onRemove={() =>
+                      useWorkspaceStore.getState().removeFile(sessionId, file.hostId, file.path)
+                    }
+                  />
+                ))}
                 {references.map((host) => (
                   <span
                     key={host.id}
@@ -1643,31 +1657,9 @@ export function AiWorkspacePage(): React.JSX.Element {
     useShallow((s) => Object.values(s.pending).filter((r) => r.sessionId === activeId))
   )
 
-  /** 右侧对话面板宽度（拖拽手柄可调，双击复位） */
-  const PANEL_MIN = 360
-  const PANEL_MAX = 720
-  const PANEL_DEFAULT = 460
-  const [panelWidth, setPanelWidth] = useState(PANEL_DEFAULT)
   /** 面板视图：chat = 当前会话对话；list = 全部会话列表（VS Code Copilot 风格导航） */
   const [view, setView] = useState<'chat' | 'list'>('chat')
 
-  const startPanelResize = (e: React.PointerEvent): void => {
-    e.preventDefault()
-    const startX = e.clientX
-    const startWidth = panelWidth
-    const onMove = (ev: PointerEvent): void => {
-      const next = startWidth + (startX - ev.clientX)
-      setPanelWidth(Math.min(PANEL_MAX, Math.max(PANEL_MIN, next)))
-    }
-    const onUp = (): void => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      document.body.classList.remove('select-none')
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    document.body.classList.add('select-none')
-  }
   const scrollRef = useRef<HTMLDivElement>(null)
 
   /* 滚动跟随：上翻即停止贴底（想回看历史时不被流式输出拽走），发送/切会话恢复跟随 */
@@ -1727,19 +1719,7 @@ export function AiWorkspacePage(): React.JSX.Element {
 
   return (
     <div className="flex h-full">
-      {/* 拖拽手柄：上下限 360–720px，双击复位 */}
-      <div
-        role="separator"
-        aria-orientation="vertical"
-        onPointerDown={startPanelResize}
-        onDoubleClick={() => setPanelWidth(PANEL_DEFAULT)}
-        className="z-10 w-1 shrink-0 cursor-col-resize bg-chrome-sep transition-colors hover:bg-at-accent/60"
-      />
-      {/* 右侧：对话面板（VS Code Copilot 风格：← 返回会话列表 / 列表点选进入会话） */}
-      <div
-        className="flex h-full shrink-0 flex-col"
-        style={{ width: panelWidth, maxWidth: '50vw' }}
-      >
+      <div className="flex h-full min-w-0 flex-1 flex-col">
         {/* 头部：聊天视图（← + 当前会话标题）/ 列表视图（所有会话）；右端恒为新建 */}
         <div className="flex h-10 shrink-0 items-center gap-2 border-b border-chrome-sep px-3">
           {view === 'chat' && (

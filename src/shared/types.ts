@@ -488,9 +488,21 @@ export interface SshConnectionSession extends HostLinkSnapshot {
 
 /** 消息元数据：createdAt 由发送方写入；display = 用户消息的原文（正文 text 为经提示词层展开的 payload）；
  *  error = 该回合的流内错误（回合收尾时由 main 写入并持久化） */
+export interface AiFileReference {
+  hostId: string
+  hostName: string
+  host: string
+  port: number
+  username: string
+  path: string
+  name: string
+  isDir: boolean
+}
+
 export interface AiMessageMetadata {
   createdAt: number
   display?: string
+  fileReferences?: AiFileReference[]
   hostReferences?: { id: string; name: string; host: string; port: number }[]
   error?: string
   interrupted?: boolean

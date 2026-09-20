@@ -339,7 +339,8 @@
     "measureSkippedOne": "Skipped unreadable directory \"{{name}}\"",
     "measureSkippedMany": "Skipped {{n}} unreadable directories including \"{{name}}\"",
     "calculateSize": "Calculate Size",
-    "infoRawList": "Raw Listing"
+    "infoRawList": "Raw Listing",
+    "sendToAi": "Send to AI chat"
   },
   "session": {
     "discardClose": "Discard and close",
@@ -466,7 +467,11 @@
     "commandsCommandPlaceholder": "Command, e.g. docker ps -a",
     "transferExtracting": "Extracting…",
     "transferCleaning": "Cleaning temporary files…",
-    "transferCleanupFailed": "Temporary file cleanup failed"
+    "transferCleanupFailed": "Temporary file cleanup failed",
+    "sidebar": "Global sidebar",
+    "showSidebar": "Show right sidebar",
+    "hideSidebar": "Hide right sidebar",
+    "noFocusedHost": "Open a host shell session first"
   },
   "terminalTools": {
     "search": "Search terminal output",
@@ -633,6 +638,7 @@
     "hideSidebar": "Hide AI sidebar",
     "showSidebar": "Show AI sidebar",
     "focusedHost": "Focused host",
-    "removeHostReference": "Remove host reference"
+    "removeHostReference": "Remove host reference",
+    "removeFileReference": "Remove file reference"
   }
 }

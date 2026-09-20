@@ -339,7 +339,8 @@
     "measureSkippedOne": "已跳过不可读目录 '{{name}}'",
     "measureSkippedMany": "已跳过 '{{name}}' 等 {{n}} 个不可读目录",
     "calculateSize": "计算大小",
-    "infoRawList": "原始列表"
+    "infoRawList": "原始列表",
+    "sendToAi": "发送到 AI 对话"
   },
   "session": {
     "discardClose": "放弃并关闭",
@@ -466,7 +467,11 @@
     "commandsCommandPlaceholder": "命令，如：docker ps -a",
     "transferExtracting": "正在解压…",
     "transferCleaning": "正在清理临时文件…",
-    "transferCleanupFailed": "临时文件清理失败"
+    "transferCleanupFailed": "临时文件清理失败",
+    "sidebar": "全局侧边栏",
+    "showSidebar": "显示右侧边栏",
+    "hideSidebar": "折叠右侧边栏",
+    "noFocusedHost": "请先进入主机 Shell 会话"
   },
   "terminalTools": {
     "search": "搜索终端输出",
@@ -633,6 +638,7 @@
     "hideSidebar": "折叠 AI 侧栏",
     "showSidebar": "显示 AI 侧栏",
     "focusedHost": "当前主机",
-    "removeHostReference": "移除主机引用"
+    "removeHostReference": "移除主机引用",
+    "removeFileReference": "移除文件引用"
   }
 }

@@ -260,7 +260,7 @@ export const useSftpStore = create<SftpStoreState>((set, get) => {
 
     ensureStarted: (hostId) => {
       if (pane(hostId).started) return
-      patch(hostId, { ...EMPTY_PANE, started: true })
+      patch(hostId, { ...EMPTY_PANE, started: true, transfers: pane(hostId).transfers })
       void connectAndList(hostId)
     },
 
@@ -268,7 +268,9 @@ export const useSftpStore = create<SftpStoreState>((set, get) => {
       window.aterm.sftp.stop(hostId)
       set((s) => {
         const panes = { ...s.panes }
-        delete panes[hostId]
+        const transfers = panes[hostId]?.transfers ?? []
+        if (transfers.length) panes[hostId] = { ...EMPTY_PANE, transfers }
+        else delete panes[hostId]
         return { panes }
       })
     },
@@ -466,7 +468,7 @@ export const useSftpStore = create<SftpStoreState>((set, get) => {
 
     applyTransferEvent: (e) => {
       const p = pane(e.hostId)
-      if (!p.started) return
+      if (!p.started && !p.transfers.some((tr) => tr.id === e.transfer.id)) return
       const t = e.transfer
       const exists = p.transfers.some((x) => x.id === t.id)
       const transfers = exists
@@ -478,7 +480,7 @@ export const useSftpStore = create<SftpStoreState>((set, get) => {
           ]
       patch(e.hostId, { transfers })
       // 上传完成 → 刷新已展开目录（对照 uploadItem 末尾的按需 load）
-      if (t.direction === 'up' && t.status === 'done') {
+      if (p.started && t.direction === 'up' && t.status === 'done') {
         for (const dir of new Set([p.root, ...p.expanded])) {
           void load(e.hostId, dir)
         }

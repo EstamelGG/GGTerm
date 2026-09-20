@@ -28,12 +28,13 @@ import { usePrefsStore } from '@/stores/prefs'
 import { useShallow } from 'zustand/react/shallow'
 import { applyAccent, applyBgTransparency, applyUiScale } from '@/lib/accent'
 import { applyTerminalFontSize } from '@/terminal/registry'
+import { ActivityRail } from '@/components/activity/ActivityRail'
 import { useWorkspaceStore } from '@/stores/workspace'
 import ConnectionPage from '@/pages/ConnectionPage'
 import { useHumanInputStore } from '@/stores/humanInput'
 
 /** 终端页/主机页 lazy 分包：xterm、monaco 等重依赖移出首包（页面加载后实例照常常驻） */
-const AiWorkspacePage = lazy(() => import('./pages/AiWorkspacePage'))
+
 const HostSessionPage = lazy(() =>
   import('./pages/HostSessionPage').then((m) => ({ default: m.HostSessionPage }))
 )
@@ -63,8 +64,8 @@ function App(): React.JSX.Element {
   )
   const aiBusy = useAiStore((s) => s.sessions.some(isBusy))
   const aiNeedsInput = useHumanInputStore((s) => Object.keys(s.pending).length > 0)
-  const aiOpen = useWorkspaceStore((s) => s.aiOpen)
-  const setAiOpen = useWorkspaceStore((s) => s.setAiOpen)
+  const sidebarOpen = useWorkspaceStore((s) => s.sidebarOpen)
+  const setSidebarOpen = useWorkspaceStore((s) => s.setSidebarOpen)
   /** 日志面板开关态：非 macOS 用顶部按钮呼出（那里没有常驻菜单栏） */
   const logOpen = useLogStore((s) => s.open)
 
@@ -317,11 +318,11 @@ function App(): React.JSX.Element {
         <div className="relative ml-1.5">
           <IconButton
             variant="toolbar"
-            icon={aiOpen ? PanelRightClose : PanelRightOpen}
-            title={t(aiOpen ? 'ai.hideSidebar' : 'ai.showSidebar')}
-            aria-expanded={aiOpen}
-            selected={aiOpen}
-            onClick={() => setAiOpen(!aiOpen)}
+            icon={sidebarOpen ? PanelRightClose : PanelRightOpen}
+            title={t(sidebarOpen ? 'activity.hideSidebar' : 'activity.showSidebar')}
+            aria-expanded={sidebarOpen}
+            selected={sidebarOpen}
+            onClick={() => setSidebarOpen(!sidebarOpen)}
           />
           {(aiBusy || aiNeedsAttention || aiNeedsInput) && (
             <span
@@ -366,11 +367,7 @@ function App(): React.JSX.Element {
             </Suspense>
           </ConnectionPage>
         </div>
-        <aside className={cn('h-full shrink-0', !aiOpen && 'hidden')} aria-label={t('ai.title')}>
-          <Suspense fallback={null}>
-            <AiWorkspacePage />
-          </Suspense>
-        </aside>
+        <ActivityRail />
       </main>
 
       {/* 关闭主机确认（对照 confirmCloseSession 偏好） */}

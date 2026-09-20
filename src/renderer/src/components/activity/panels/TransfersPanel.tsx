@@ -1,6 +1,8 @@
 import { useTranslation } from 'react-i18next'
 import { ArrowDown, ArrowUp, Ban, Loader2, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useConnectionsStore } from '@/stores/connections'
+import { useSessionStore } from '@/stores/session'
 import { useSftpStore } from '@/stores/sftp'
 import { IconButton } from '@/components/ui/IconButton'
 import { Button } from '@/components/form/Buttons'
@@ -8,7 +10,7 @@ import { fmtSpeed } from '../format'
 import type { SftpTransferMirror } from '@shared/types'
 
 /**
- * 文件传输面板（活动栏，仅 SSH 会话页）：当前主机传输列表 + 进度条 + 取消。
+ * 文件传输面板（全局活动栏）：全局主机传输列表 + 进度条 + 取消。
  * 镜像数据全部来自 sftp store（事件驱动，无需拉取）。
  */
 
@@ -33,10 +35,12 @@ function barColor(s: SftpTransferMirror['status']): string {
 function TransferRow({
   t,
   hostId,
+  hostName,
   tr
 }: {
   t: ReturnType<typeof useTranslation>['t']
   hostId: string
+  hostName: string
   tr: SftpTransferMirror
 }): React.JSX.Element {
   const totalFiles = tr.totalFiles
@@ -52,6 +56,9 @@ function TransferRow({
 
   return (
     <div className="flex flex-col gap-1.5 rounded-lg px-2 py-2 transition-colors hover:bg-hover/30">
+      <span className="truncate text-caption text-muted" title={hostId}>
+        {hostName}
+      </span>
       <div className="flex items-center gap-1.5">
         {tr.direction === 'up' ? (
           <ArrowUp size={10} strokeWidth={2.6} className="shrink-0 text-danger" />
@@ -151,11 +158,23 @@ function TransferRow({
   )
 }
 
-export function TransfersPanel({ hostId }: { hostId: string }): React.JSX.Element {
+export function TransfersPanel(): React.JSX.Element {
   const { t } = useTranslation()
-  const transfers = useSftpStore((s) => s.panes[hostId]?.transfers ?? [])
+  const panes = useSftpStore((s) => s.panes)
+  const connections = useConnectionsStore((s) => s.connections)
+  const hosts = useSessionStore((s) => s.hosts)
+  const transfers = Object.entries(panes).flatMap(([hostId, pane]) =>
+    pane.transfers.map((tr) => ({
+      hostId,
+      tr,
+      hostName:
+        connections.find((c) => c.id === hostId)?.name ??
+        hosts.find((h) => h.id === hostId)?.title ??
+        hostId
+    }))
+  )
   const clearFinished = useSftpStore((s) => s.clearFinished)
-  const hasFinished = transfers.some((tr) => tr.status !== 'running')
+  const hasFinished = transfers.some(({ tr }) => tr.status !== 'running' && !tr.cleanup)
 
   return (
     <div className="flex flex-col gap-2">
@@ -164,7 +183,7 @@ export function TransfersPanel({ hostId }: { hostId: string }): React.JSX.Elemen
           variant="text"
           title={t('activity.transfersClear')}
           disabled={!hasFinished}
-          onClick={() => clearFinished(hostId)}
+          onClick={() => clearFinished()}
         />
         <div className="flex-1" />
         <Button
@@ -177,8 +196,14 @@ export function TransfersPanel({ hostId }: { hostId: string }): React.JSX.Elemen
         <p className="py-8 text-center text-minor text-muted/60">{t('activity.transfersEmpty')}</p>
       ) : (
         <div className="flex flex-col">
-          {transfers.map((tr) => (
-            <TransferRow key={tr.id} t={t} hostId={hostId} tr={tr} />
+          {transfers.map(({ hostId, hostName, tr }) => (
+            <TransferRow
+              key={`${hostId}:${tr.id}`}
+              t={t}
+              hostId={hostId}
+              hostName={hostName}
+              tr={tr}
+            />
           ))}
         </div>
       )}

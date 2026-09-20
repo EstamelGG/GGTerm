@@ -1,3 +1,7 @@
+import { useAiStore } from '@/stores/ai'
+import { useSessionStore } from '@/stores/session'
+import { useWorkspaceStore } from '@/stores/workspace'
+import { errorMessage } from '@shared/error'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -299,6 +303,38 @@ export function SftpPane({
           return
         }
         onOpenFile(e)
+      },
+      onSendToAi: (entry) => {
+        const host = useSessionStore.getState().hosts.find((h) => h.id === hostId)
+        if (!host) return
+        const reference = {
+          hostId,
+          hostName: host.title,
+          host: host.conn.host,
+          port: host.conn.port,
+          username: host.conn.username,
+          path: entry.path,
+          name: entry.name,
+          isDir: entry.isDir
+        }
+        const attach = (id: string): void => {
+          useWorkspaceStore.getState().attachFile(id, reference)
+          useAiStore.setState((s) => ({ viewChatRequest: s.viewChatRequest + 1 }))
+        }
+        const activeId = useAiStore.getState().activeId
+        if (activeId) attach(activeId)
+        else {
+          useWorkspaceStore.getState().setAiOpen(true)
+          void useAiStore
+            .getState()
+            .init()
+            .then(() => {
+              const ai = useAiStore.getState()
+              if (ai.activeId) attach(ai.activeId)
+              else onToast(ai.initError ?? t('ai.loading'))
+            })
+            .catch((err) => onToast(errorMessage(err)))
+        }
       },
       onInfo: (e) => setInfoEntry(e),
       onRename: (e) =>

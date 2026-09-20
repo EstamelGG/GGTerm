@@ -26,10 +26,10 @@ export function CommandsPanel({ hostId }: { hostId: string }): React.JSX.Element
   const [cmdText, setCmdText] = useState('')
 
   const focusedShell = host?.shells.find((s) => s.id === host.focusShellId) ?? host?.shells[0]
-  const runnable = focusedShell !== undefined
+  const runnable = host?.phase === 'connected' && focusedShell?.status === 'connected'
 
   const run = (command: string): void => {
-    if (!focusedShell) return
+    if (!focusedShell || !runnable) return
     const payload = command.endsWith('\n') ? command : `${command}\n`
     window.aterm.shells.input(hostId, focusedShell.id, payload)
   }

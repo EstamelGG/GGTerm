@@ -40,7 +40,7 @@ const sentText = (call: unknown[]): string => {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  useWorkspaceStore.setState({ aiOpen: false })
+  useWorkspaceStore.setState({ sidebarOpen: false })
   useSessionStore.setState({ tab: { kind: 'connections' } })
   useAiStore.setState({ sessions: [], activeId: null, initError: null })
   ai = {
@@ -83,7 +83,7 @@ it('creates a new session, sends the note prompt at once and opens the AI sideba
   expect(text).toContain('10.0.0.1:22')
   expect(useAiStore.getState().activeId).toBe('new-1')
   expect(onDismiss).toHaveBeenCalled()
-  await waitFor(() => expect(useWorkspaceStore.getState().aiOpen).toBe(true))
+  await waitFor(() => expect(useWorkspaceStore.getState().sidebarOpen).toBe(true))
   expect(useSessionStore.getState().tab).toEqual({ kind: 'connections' })
 })
 

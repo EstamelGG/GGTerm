@@ -8,6 +8,7 @@ import {
   type TreeApi
 } from 'react-arborist'
 import {
+  Bot,
   ChevronRight,
   ClipboardCopy,
   Copy,
@@ -28,6 +29,7 @@ import {
   Trash2,
   Upload
 } from 'lucide-react'
+import { IconButton } from '@/components/ui/IconButton'
 import { fileVisual } from './fileVisual'
 import type { SftpEntry } from '@shared/types'
 import { canMove, parentPath } from '@shared/sftpPath'
@@ -50,6 +52,7 @@ import { listedEntries, useSftpStore, type SftpPaneState } from '@/stores/sftp'
  */
 
 export interface SftpTreeActions {
+  onSendToAi: (entry: SftpEntry) => void
   onOpenFile: (entry: SftpEntry) => void
   onInfo: (entry: SftpEntry) => void
   onRename: (entry: SftpEntry) => void
@@ -572,7 +575,7 @@ function SftpRow({
 /** 行内容：箭头位（loading 换转圈）/图标位/名称 */
 function SftpNode({ node, style, dragHandle }: NodeRendererProps<TreeDatum>): React.JSX.Element {
   const { t } = useTranslation()
-  const { hostId, overDir } = useContext(TreeContext)
+  const { hostId, overDir, actions } = useContext(TreeContext)
   const entry = node.data.entry
   const loading = useSftpStore((s) => {
     const p = s.panes[hostId]
@@ -644,7 +647,7 @@ function SftpNode({ node, style, dragHandle }: NodeRendererProps<TreeDatum>): Re
       ref={dragHandle}
       style={{ ...style, paddingLeft: Number(style.paddingLeft ?? 0) + 8 }}
       className={cn(
-        'relative flex h-full w-full cursor-pointer select-none items-center gap-1 pr-2 transition-colors duration-75',
+        'group relative flex h-full w-full cursor-pointer select-none items-center gap-1 pr-2 transition-colors duration-75',
         isDropTarget ? 'bg-at-accent/15' : isSelected ? 'bg-hover' : 'hover:bg-hover/70'
       )}
     >
@@ -703,6 +706,18 @@ function SftpNode({ node, style, dragHandle }: NodeRendererProps<TreeDatum>): Re
           <span className="text-caption text-muted/70"> -&gt; {entry.linkTarget}</span>
         ) : null}
       </span>
+      <IconButton
+        icon={Bot}
+        frame={20}
+        title={t('sftp.sendToAi')}
+        className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+        onPointerDown={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation()
+          actions.onSendToAi(entry)
+        }}
+      />
     </div>
   )
 }
@@ -719,6 +734,10 @@ function RowMenu({
   const dir = entry.isDir ? entry.path : parentPath(entry.path)
   return (
     <ContextMenuContent className="w-44 border-line">
+      <ContextMenuItem onClick={() => actions.onSendToAi(entry)}>
+        <Bot />
+        {t('sftp.sendToAi')}
+      </ContextMenuItem>
       {!entry.isDir && (
         <ContextMenuItem onClick={() => actions.onOpenFile(entry)}>
           <SquarePen />

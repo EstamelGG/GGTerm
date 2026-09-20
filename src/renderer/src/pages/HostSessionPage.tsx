@@ -20,7 +20,6 @@ import { TabChip, TabScrollArea } from '@/components/chrome/TabChip'
 import { TerminalPane } from '@/components/terminal/TerminalPane'
 import { WorkspacePane } from '@/components/terminal/WorkspacePane'
 import { SftpPane } from '@/components/sftp/SftpPane'
-import { ActivityRail } from '@/components/activity/ActivityRail'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 /** monaco 核心 ~4MB：首个文件标签页出现时才加载（之后常驻，实例不销毁） */
@@ -92,7 +91,6 @@ export function HostSessionPage({
   const [width, setWidth] = useState(() => loadWidth())
   const rootRef = useRef<HTMLDivElement>(null)
   const [bounds, setBounds] = useState({ width: 980, height: 540 })
-  const [dockWidth, setDockWidth] = useState(0)
   const widthPreviewRef = useRef<HTMLDivElement>(null)
   // 上部编辑区高度（竖向 splitter；null = 均分）
   const [editorH, setEditorH] = useState<number | null>(() => loadEditorH())
@@ -105,7 +103,7 @@ export function HostSessionPage({
       setBounds({ width: root.clientWidth, height: root.clientHeight })
     )
   }, [])
-  const maxSftpWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, bounds.width - 40 - dockWidth - 361))
+  const maxSftpWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, bounds.width - 361))
   const effectiveWidth = Math.min(width, maxSftpWidth)
   // Reserve both tab rows and the divider in addition to the terminal viewport.
   const maxEditorH = Math.max(EDITOR_H_MIN, bounds.height - SHELL_H_MIN - 81)
@@ -363,13 +361,6 @@ export function HostSessionPage({
           )}
         </div>
       </div>
-
-      {/* 右侧活动栏：性能 / 文件传输 / 快捷指令（点击向左展开 dock） */}
-      <ActivityRail
-        hostId={host.id}
-        maxWidth={Math.max(240, bounds.width - 40 - MIN_WIDTH - 361)}
-        onWidthChange={setDockWidth}
-      />
 
       {/* 关闭未保存文件确认 */}
       {pendingCloseFile && (
