@@ -138,6 +138,7 @@
     "latencyUnreachable": "不可达",
     "viaJump": "通过跳板访问",
     "viaJumpHint": "查看跳板",
+    "locateInList": "在右侧列表中定位 {{name}}",
     "locateInGroups": "在目录中定位 {{name}}",
     "note": {
       "title": "主机备注",

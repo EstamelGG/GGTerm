@@ -86,6 +86,7 @@ export function ConnectionTable({
   onDelete,
   onToast,
   onLocate,
+  reveal,
   selectedIds,
   onToggleSelect,
   onToggleSelectAll
@@ -106,6 +107,7 @@ export function ConnectionTable({
   onToast: (text: string) => void
   /** 点击主机名 → 左侧目录定位该主机 */
   onLocate: (c: HostConnection) => void
+  reveal?: { id: string; n: number } | null
   /** 多选状态（父层持有；导出/删除按钮在工具栏） */
   selectedIds: Set<string>
   onToggleSelect: (id: string) => void
@@ -400,6 +402,27 @@ export function ConnectionTable({
   const visibleConnections = connections.slice(windowStart, endExclusive)
   const topSpacer = rowTop(windowStart)
   const bottomSpacer = Math.max(0, totalH - rowTop(endExclusive))
+
+  const lastTableReveal = useRef<typeof reveal>(null)
+  useEffect(() => {
+    if (!reveal || lastTableReveal.current === reveal) return
+    const index = connections.findIndex((c) => c.id === reveal.id)
+    if (index < 0) return
+    const raf = requestAnimationFrame(() => {
+      const container = scrollRef.current
+      if (!container) return
+      lastTableReveal.current = reveal
+      const top = index * ROW_STRIDE + (expandedIndex >= 0 && index > expandedIndex ? expandedH : 0)
+      container.scrollTo({
+        top: Math.max(0, top - (container.clientHeight - ROW_STRIDE) / 2),
+        behavior: 'smooth'
+      })
+      setJumpHighlight({ ids: [reveal.id] })
+      if (jumpTimer.current) clearTimeout(jumpTimer.current)
+      jumpTimer.current = setTimeout(() => setJumpHighlight(null), 3000)
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [reveal, connections, expandedIndex, expandedH])
 
   /* ---------------- 列宽布局 ---------------- */
 

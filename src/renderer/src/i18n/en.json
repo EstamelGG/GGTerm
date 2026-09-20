@@ -138,6 +138,7 @@
     "latencyUnreachable": "Unreachable",
     "viaJump": "Accessed via jump host",
     "viaJumpHint": "Show jumpserver",
+    "locateInList": "Locate {{name}} in the host list",
     "locateInGroups": "Locate {{name}} in groups",
     "note": {
       "title": "Server Note",

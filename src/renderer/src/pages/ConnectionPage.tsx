@@ -74,6 +74,7 @@ export default function ConnectionPage({
   const [pick, setPick] = useState<SidebarPick>({ kind: 'all' })
   /** 左侧目录定位请求：表格主机名点击 → { id, n }（n 递增使重复点击同一主机也重新滚动） */
   const [reveal, setReveal] = useState<{ id: string; n: number } | null>(null)
+  const [tableReveal, setTableReveal] = useState<{ id: string; n: number } | null>(null)
   const [search, setSearch] = useState('')
   const [sortColumn, setSortColumn] = useState<SortColumn>('createdAt')
   const [sortAscending, setSortAscending] = useState(true)
@@ -209,6 +210,14 @@ export default function ConnectionPage({
     setReveal((prev) => ({ id: c.id, n: (prev?.id === c.id ? prev.n : 0) + 1 }))
   }, [])
 
+  const locateInTable = useCallback((c: HostConnection): void => {
+    if (!filtered.some((item) => item.id === c.id)) {
+      setSearch('')
+      setPick(c.groupId ? { kind: 'group', id: c.groupId } : { kind: 'ungrouped' })
+    }
+    setTableReveal((prev) => ({ id: c.id, n: (prev?.n ?? 0) + 1 }))
+  }, [filtered])
+
   /** 全选/取消全选：作用域 = 当前可见行（搜索/分组过滤后） */
   const toggleSelectAll = useCallback((next: boolean): void => {
     setSelectedRaw((prev) => {
@@ -290,6 +299,7 @@ export default function ConnectionPage({
           connections={connections}
           groups={groups}
           reveal={reveal}
+          onLocate={locateInTable}
           onNewConnection={(gid) => setForm({ kind: 'create', groupId: gid })}
           onNewGroup={(parentId) => setGroupEditor({ kind: 'create', parentId })}
           onRenameGroup={(g) => setGroupEditor({ kind: 'edit', group: g })}
@@ -429,6 +439,7 @@ export default function ConnectionPage({
             onDelete={setDeleteTarget}
             onToast={onToast}
             onLocate={locateConn}
+            reveal={tableReveal}
             selectedIds={selectedIds}
             onToggleSelect={toggleSelect}
             onToggleSelectAll={toggleSelectAll}

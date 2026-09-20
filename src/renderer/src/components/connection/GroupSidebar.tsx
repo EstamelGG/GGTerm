@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronRight, ChevronsDownUp, Copy, FolderPlus, Pencil, Plug, Plus, RotateCw, Server, ServerPlus, Trash2 } from 'lucide-react'
+import { ChevronRight, ChevronsDownUp, Copy, Crosshair, FolderPlus, Pencil, Plug, Plus, RotateCw, Server, ServerPlus, Trash2 } from 'lucide-react'
 import type { HostConnection, HostGroup } from '@shared/types'
 import { cn } from '@/lib/utils'
 import { hexToCss } from '@/lib/theme'
@@ -61,6 +61,7 @@ export function GroupSidebar({
   onConnect,
   onEdit,
   onCopyAddress,
+  onLocate,
   onDelete
 }: {
   pick: SidebarPick
@@ -78,6 +79,7 @@ export function GroupSidebar({
   onConnect: (c: HostConnection) => void
   onEdit: (c: HostConnection) => void
   onCopyAddress: (c: HostConnection) => void
+  onLocate: (c: HostConnection) => void
   onDelete: (c: HostConnection) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
@@ -206,6 +208,7 @@ export function GroupSidebar({
                   onConnect={onConnect}
                   onEdit={onEdit}
                   onCopyAddress={onCopyAddress}
+                  onLocate={onLocate}
                   onDelete={onDelete}
                 />
               ))}
@@ -279,6 +282,7 @@ export function GroupSidebar({
               onConnect={onConnect}
               onEdit={onEdit}
               onCopyAddress={onCopyAddress}
+              onLocate={onLocate}
               onDelete={onDelete}
             />
           ))}
@@ -481,6 +485,7 @@ function ConnRow({
   onConnect,
   onEdit,
   onCopyAddress,
+  onLocate,
   onDelete
 }: {
   conn: HostConnection
@@ -490,8 +495,10 @@ function ConnRow({
   onConnect: (c: HostConnection) => void
   onEdit: (c: HostConnection) => void
   onCopyAddress: (c: HostConnection) => void
+  onLocate: (c: HostConnection) => void
   onDelete: (c: HostConnection) => void
 }): React.JSX.Element {
+  const { t } = useTranslation()
   const [hovering, setHovering] = useState(false)
   // 与主机行首指示灯同源的链路状态：已连接 → 图标绿色缓慢呼吸
   const phase = useLinksStore((s) => s.byHost[conn.id]?.phase)
@@ -500,8 +507,9 @@ function ConnRow({
   return (
     <ContextMenu onOpenChange={setMenuOpen}>
       <ContextMenuTrigger asChild>
-        <button
-          type="button"
+        <div
+          role="button"
+          tabIndex={0}
           title={conn.name}
           data-host-id={conn.id}
           draggable
@@ -517,6 +525,13 @@ function ConnRow({
           onMouseEnter={() => setHovering(true)}
           onMouseLeave={() => setHovering(false)}
           onClick={onSelect}
+          onKeyDown={(e) => {
+            if (e.target !== e.currentTarget) return
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              onSelect()
+            }
+          }}
           onDoubleClick={() => onConnect(conn)}
         >
           <Guides depth={depth} />
@@ -535,7 +550,19 @@ function ConnRow({
           >
             {conn.name}
           </span>
-        </button>
+          <IconButton
+            icon={Crosshair}
+            frame={18}
+            title={t('conn.locateInList', { name: conn.name })}
+            className={cn(!hovering && !selected && 'invisible')}
+            onDoubleClick={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              onSelect()
+              onLocate(conn)
+            }}
+          />
+        </div>
       </ContextMenuTrigger>
       <ConnRowMenu
         onConnect={() => onConnect(conn)}
