@@ -491,6 +491,7 @@ export interface SshConnectionSession extends HostLinkSnapshot {
 export interface AiMessageMetadata {
   createdAt: number
   display?: string
+  hostReferences?: { id: string; name: string; host: string; port: number }[]
   error?: string
   interrupted?: boolean
   contextCompressed?: boolean

@@ -2,10 +2,17 @@ import { OverflowTabs } from '@/components/chrome/OverflowTabs'
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import i18next from 'i18next'
-import { LayoutGrid, Settings, Bot, ScrollText } from 'lucide-react'
+import {
+  LayoutGrid,
+  Settings,
+  Waypoints,
+  PanelRightClose,
+  PanelRightOpen,
+  ScrollText
+} from 'lucide-react'
 import type { HostConnection } from '@shared/types'
 import { cn } from '@/lib/utils'
-import { linkStateDot, solidDot } from '@/lib/linkPhase'
+import { linkStateDot } from '@/lib/linkPhase'
 import { hexToCss } from '@/lib/theme'
 import { IconButton } from '@/components/ui/IconButton'
 import { TabChip } from '@/components/chrome/TabChip'
@@ -21,6 +28,7 @@ import { usePrefsStore } from '@/stores/prefs'
 import { useShallow } from 'zustand/react/shallow'
 import { applyAccent, applyBgTransparency, applyUiScale } from '@/lib/accent'
 import { applyTerminalFontSize } from '@/terminal/registry'
+import { useWorkspaceStore } from '@/stores/workspace'
 import ConnectionPage from '@/pages/ConnectionPage'
 import { useHumanInputStore } from '@/stores/humanInput'
 
@@ -50,16 +58,13 @@ function App(): React.JSX.Element {
   // 主机 tab 标题按所属分组色着色（未分组沿用默认配色）
   const connections = useConnectionsStore((s) => s.connections)
   const groups = useConnectionsStore((s) => s.groups)
-  /** AI 工作区是否已挂载过：首次激活后常驻，拓扑图实例保留（渲染期调整，避免 effect 级联） */
-  const [aiMounted, setAiMounted] = useState(false)
-  if (!aiMounted && tab.kind === 'ai') setAiMounted(true)
-  const aiPendingApprovals = useAiStore((s) =>
-    s.sessions.reduce((n, sess) => n + pendingApprovals(sess.messages).length, 0)
+  const aiNeedsAttention = useAiStore((s) =>
+    s.sessions.some((session) => pendingApprovals(session.messages).length > 0)
   )
-  /** 任一 AI 会话生成中（全局可见性：切到其他页面时徽标仍提示，可点入停止） */
   const aiBusy = useAiStore((s) => s.sessions.some(isBusy))
-  /** 挂起的人工输入待办（密码/验证码）：与待审批同权重，需人处理后 Agent 才能继续 */
-  const aiPendingInput = useHumanInputStore((s) => Object.keys(s.pending).length)
+  const aiNeedsInput = useHumanInputStore((s) => Object.keys(s.pending).length > 0)
+  const aiOpen = useWorkspaceStore((s) => s.aiOpen)
+  const setAiOpen = useWorkspaceStore((s) => s.setAiOpen)
   /** 日志面板开关态：非 macOS 用顶部按钮呼出（那里没有常驻菜单栏） */
   const logOpen = useLogStore((s) => s.open)
 
@@ -163,6 +168,12 @@ function App(): React.JSX.Element {
     }
   }, [])
 
+  const openHost = (id: string): void => {
+    const state = useSessionStore.getState()
+    if (state.hosts.find((host) => host.id === id)?.shells.length === 0) state.addShell(id)
+    setTab({ kind: 'host', id })
+  }
+
   const handleConnect = (c: HostConnection): void => {
     void connect(c).catch((err) => flash(errorMessage(err)))
   }
@@ -225,15 +236,8 @@ function App(): React.JSX.Element {
         />
         <div className="w-2 shrink-0" />
         <TabChip
-          title={t('session.tabAi')}
-          icon={Bot}
-          statusColor={
-            aiPendingApprovals > 0 || aiPendingInput > 0
-              ? solidDot('var(--at-danger)')
-              : aiBusy
-                ? solidDot('var(--at-info)')
-                : undefined
-          }
+          title={t('session.tabTopology')}
+          icon={Waypoints}
           selected={tab.kind === 'ai'}
           onClick={() => setTab({ kind: 'ai' })}
         />
@@ -244,7 +248,7 @@ function App(): React.JSX.Element {
             title: host.title,
             selected: isTab(tab, { kind: 'host', id: host.id }),
             statusColor: linkStateDot(tabPhases[idx]),
-            onSelect: () => setTab({ kind: 'host', id: host.id }),
+            onSelect: () => openHost(host.id),
             content: (
               <ContextMenu key={host.id}>
                 <ContextMenuTrigger asChild>
@@ -261,7 +265,7 @@ function App(): React.JSX.Element {
                         : undefined
                       return group ? hexToCss(group.colorHex) : undefined
                     })()}
-                    onClick={() => setTab({ kind: 'host', id: host.id })}
+                    onClick={() => openHost(host.id)}
                     onClose={() => requestClose([host.id])}
                   />
                 </ContextMenuTrigger>
@@ -310,44 +314,63 @@ function App(): React.JSX.Element {
             }
           />
         </div>
+        <div className="relative ml-1.5">
+          <IconButton
+            variant="toolbar"
+            icon={aiOpen ? PanelRightClose : PanelRightOpen}
+            title={t(aiOpen ? 'ai.hideSidebar' : 'ai.showSidebar')}
+            aria-expanded={aiOpen}
+            selected={aiOpen}
+            onClick={() => setAiOpen(!aiOpen)}
+          />
+          {(aiBusy || aiNeedsAttention || aiNeedsInput) && (
+            <span
+              className={cn(
+                'pointer-events-none absolute right-0 top-0 h-1.5 w-1.5 rounded-full',
+                aiNeedsAttention || aiNeedsInput ? 'bg-danger' : 'bg-at-accent'
+              )}
+            />
+          )}
+        </div>
       </header>
 
-      {/* 主区域：连接仓库页常驻挂载（浏览器标签页式，切换仅 CSS 显隐——状态/滚动/观察器全保留），
-          其余页面按需挂载（终端实例本就存活于 registry，卸载无损） */}
-      <main className="relative min-h-0 flex-1">
-        <Suspense fallback={null}>
-          <div className={cn('absolute inset-0', tab.kind !== 'connections' && 'hidden')}>
-            <ConnectionPage
-              active={tab.kind === 'connections'}
-              perfEnabled={!(prefs?.perfMonitorDisabled ?? false)}
-              onToast={flash}
-              onConnect={handleConnect}
-            />
-          </div>
-          {/* 设置页常驻挂载（CSS 显隐）：表单状态不因切 tab 丢失 */}
-          <div className={cn('absolute inset-0', tab.kind !== 'settings' && 'hidden')}>
-            <SettingsPage onToast={flash} />
-          </div>
-          {/* AI 工作区首次激活后常驻（CSS 显隐）：拓扑图布局/视口不因切 tab 卸载重绘；
-              未激活过不挂载，保留 lazy 分包首包策略 */}
-          <div className={cn('absolute inset-0', tab.kind !== 'ai' && 'hidden')}>
-            {aiMounted && <AiWorkspacePage />}
-          </div>
-          {tab.kind === 'host' &&
-            (() => {
-              const host = hosts.find((h) => h.id === tab.id)
-              return host ? (
-                <div className="absolute inset-0">
-                  <HostSessionPage
+      <main className="flex min-h-0 flex-1 overflow-hidden">
+        <div className="min-w-0 flex-1">
+          <ConnectionPage
+            active={tab.kind === 'connections'}
+            perfEnabled={!(prefs?.perfMonitorDisabled ?? false)}
+            onToast={flash}
+            onConnect={handleConnect}
+          >
+            <Suspense fallback={null}>
+              <div className={cn('absolute inset-0', tab.kind !== 'settings' && 'hidden')}>
+                <SettingsPage onToast={flash} />
+              </div>
+              {hosts
+                .filter((host) => host.awaiting || (tab.kind === 'host' && tab.id === host.id))
+                .map((host) => (
+                  <div
                     key={host.id}
-                    host={host}
-                    onToast={flash}
-                    onClose={() => requestClose([host.id])}
-                  />
-                </div>
-              ) : null
-            })()}
-        </Suspense>
+                    className={cn(
+                      'absolute inset-0',
+                      (tab.kind !== 'host' || tab.id !== host.id) && 'hidden'
+                    )}
+                  >
+                    <HostSessionPage
+                      host={host}
+                      onToast={flash}
+                      onClose={() => requestClose([host.id])}
+                    />
+                  </div>
+                ))}
+            </Suspense>
+          </ConnectionPage>
+        </div>
+        <aside className={cn('h-full shrink-0', !aiOpen && 'hidden')} aria-label={t('ai.title')}>
+          <Suspense fallback={null}>
+            <AiWorkspacePage />
+          </Suspense>
+        </aside>
       </main>
 
       {/* 关闭主机确认（对照 confirmCloseSession 偏好） */}

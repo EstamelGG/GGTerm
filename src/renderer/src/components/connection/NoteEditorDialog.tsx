@@ -5,7 +5,7 @@ import type { ServerNote } from '@shared/types'
 import { errorMessage } from '@shared/error'
 import { useAiStore } from '@/stores/ai'
 import { useConnectionsStore } from '@/stores/connections'
-import { useSessionStore } from '@/stores/session'
+import { useWorkspaceStore } from '@/stores/workspace'
 import { Button } from '@/components/form/Buttons'
 import { ATNumberField, ATTextArea, ATTextField } from '@/components/form/Fields'
 import { DialogShell } from '@/components/ui/DialogShell'
@@ -150,7 +150,7 @@ export function NoteEditorDialog({
   const { t } = useTranslation()
   const setNote = useConnectionsStore((s) => s.setNote)
   const connections = useConnectionsStore((s) => s.connections)
-  const setTab = useSessionStore((s) => s.setTab)
+  const setAiOpen = useWorkspaceStore((s) => s.setAiOpen)
   const sendInNewSession = useAiStore((s) => s.sendInNewSession)
   const current = connections.find((c) => c.id === hostId)
 
@@ -251,7 +251,7 @@ export function NoteEditorDialog({
   const handoffToAgent = (): void => {
     onDismiss()
     void sendInNewSession(t('conn.note.agentPrompt', { name: hostName, host: hostAddress })).then(
-      () => setTab({ kind: 'ai' })
+      () => setAiOpen(true)
     )
   }
 

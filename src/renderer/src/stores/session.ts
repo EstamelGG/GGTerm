@@ -1,3 +1,4 @@
+import { useWorkspaceStore } from './workspace'
 import { create } from 'zustand'
 import i18next from 'i18next'
 import type {
@@ -99,7 +100,7 @@ interface SessionState {
   tab: WorkspaceTab
   hosts: HostWorkspaceMirror[]
   setTab: (tab: WorkspaceTab) => void
-  connect: (conn: HostConnection) => Promise<void>
+  connect: (conn: HostConnection, enter?: boolean) => Promise<void>
   closeHost: (id: string, agentConnectionIds?: string[]) => void
   detachHost: (id: string) => void
   addShell: (hostId: string, bootstrap?: string) => void
@@ -178,25 +179,31 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   tab: { kind: 'connections' },
   hosts: [],
 
-  setTab: (tab) => set({ tab }),
+  setTab: (tab) => {
+    if (tab.kind === 'host') useWorkspaceStore.getState().focusHost(tab.id)
+    set({ tab })
+  },
 
-  connect: async (conn) => {
+  connect: async (conn, enter = true) => {
     const existing = get().hosts.find((h) => h.id === conn.id)
     if (existing) {
       // 已打开：刷新快照并加开一个 shell（对照 SessionCenter.connect 复用分支）
       set((s) => ({
         hosts: s.hosts.map((h) => (h.id === conn.id ? { ...h, conn, title: conn.name } : h))
       }))
-      get().addShell(conn.id)
-      set({ tab: { kind: 'host', id: conn.id } })
+      if (!enter && (existing.phase === 'offline' || existing.phase === 'idle')) {
+        get().reconnectHost(conn.id)
+      }
+      if (enter) get().addShell(conn.id)
+      if (enter) get().setTab({ kind: 'host', id: conn.id })
       return
     }
     const { awaiting } = await window.aterm.hosts.connect(conn)
     // 同一主机的并发请求可能一起通过前面的存在性检查；IPC 返回后再次检查。
     // 保留重复连接新增 shell 的既有行为，但工作区只创建一次。
     if (get().hosts.some((h) => h.id === conn.id)) {
-      get().addShell(conn.id)
-      set({ tab: { kind: 'host', id: conn.id } })
+      if (enter) get().addShell(conn.id)
+      if (enter) get().setTab({ kind: 'host', id: conn.id })
       return
     }
     const host: HostWorkspaceMirror = {
@@ -213,14 +220,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       files: [],
       focusFileId: null
     }
-    set((s) => ({ hosts: [...s.hosts, host], tab: { kind: 'host', id: conn.id } }))
+    set((s) => ({ hosts: [...s.hosts, host] }))
+    if (enter) get().setTab({ kind: 'host', id: conn.id })
     // 镜像落地：replay 缓冲里早到的事件（同步执行，必先于后续任何新事件到达）
     const pending = pendingHostStates.get(conn.id)
     if (pending) {
       pendingHostStates.delete(conn.id)
       get().applyHostState(pending)
     }
-    get().addShell(conn.id)
+    if (enter) get().addShell(conn.id)
   },
 
   closeHost: (id, agentConnectionIds = []) => {
@@ -229,6 +237,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   detachHost: (id) => {
+    if (useWorkspaceStore.getState().focusedHostId === id)
+      useWorkspaceStore.getState().focusHost(null)
     pendingHostStates.delete(id) // 清残留缓冲，防旧会话事件 replay 到下次重开
     // 清该主机全部 shell 残留缓冲（防旧会话 shell 事件 replay 到下次重开）
     for (const key of pendingShellStates.keys()) {

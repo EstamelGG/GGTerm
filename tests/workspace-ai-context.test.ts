@@ -1,0 +1,64 @@
+// @vitest-environment jsdom
+import { beforeEach, expect, it, vi } from 'vitest'
+import { useAiStore } from '../src/renderer/src/stores/ai'
+import { useWorkspaceStore } from '../src/renderer/src/stores/workspace'
+import { useSessionStore } from '../src/renderer/src/stores/session'
+import { useConnectionsStore } from '../src/renderer/src/stores/connections'
+import type { AiUIMessage, HostConnection } from '../src/shared/types'
+
+beforeEach(() => {
+  useWorkspaceStore.setState({ aiOpen: false, attachments: {}, focusedHostId: null })
+  useConnectionsStore.setState({
+    connections: [
+      { id: 'a', name: 'Same name', host: '10.0.0.1', port: 22, username: 'one' },
+      { id: 'b', name: 'Same name', host: '10.0.0.2', port: 22, username: 'two' }
+    ] as HostConnection[]
+  })
+})
+
+it('sends references by ID and the latest focused host, keeping other conversations isolated', async () => {
+  const id = crypto.randomUUID()
+  const run = vi.fn(async () => {})
+  Object.defineProperty(window, 'aterm', { configurable: true, value: { ai: { run } } })
+  useAiStore.setState({
+    activeId: id,
+    sessions: [
+      {
+        id,
+        title: '',
+        createdAt: 1,
+        updatedAt: 1,
+        messages: [],
+        loaded: true,
+        status: 'ready'
+      }
+    ]
+  })
+  const workspace = useWorkspaceStore.getState()
+  workspace.attachHost('another-chat', 'b')
+  workspace.attachHost(id, 'a')
+  workspace.attachHost(id, 'a')
+  expect(useWorkspaceStore.getState().attachments[id]).toEqual(['a'])
+  expect(useWorkspaceStore.getState().aiOpen).toBe(true)
+  useSessionStore.getState().setTab({ kind: 'host', id: 'b' })
+  useAiStore.getState().send('Check this host')
+  await vi.waitFor(() => expect(run).toHaveBeenCalled())
+  const message = (run.mock.calls[0] as unknown as [string, AiUIMessage[]])[1].at(-1)!
+  expect(message.metadata?.hostReferences).toEqual([
+    { id: 'a', name: 'Same name', host: '10.0.0.1', port: 22 }
+  ])
+  const text = message.parts.map((p) => (p.type === 'text' ? p.text : '')).join('')
+  expect(text).toContain('"focusedHost":{"id":"b"')
+  expect(text).toContain('Explicit user targets and referenced hosts take precedence')
+  expect(useWorkspaceStore.getState().attachments[id]).toEqual([])
+  expect(useWorkspaceStore.getState().attachments['another-chat']).toEqual(['b'])
+})
+
+it('allows a reference to be removed without affecting the focused host', () => {
+  const s = useWorkspaceStore.getState()
+  s.focusHost('b')
+  s.attachHost('chat', 'a')
+  s.removeHost('chat', 'a')
+  expect(useWorkspaceStore.getState().attachments.chat).toEqual([])
+  expect(useWorkspaceStore.getState().focusedHostId).toBe('b')
+})

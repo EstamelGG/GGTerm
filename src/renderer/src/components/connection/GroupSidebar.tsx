@@ -1,6 +1,23 @@
+import { useSessionStore } from '@/stores/session'
+import { useAiStore } from '@/stores/ai'
+import { useWorkspaceStore } from '@/stores/workspace'
+import { errorMessage } from '@shared/error'
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronRight, ChevronsDownUp, Copy, Crosshair, FolderPlus, Pencil, Plug, Plus, RotateCw, Server, ServerPlus, Trash2 } from 'lucide-react'
+import {
+  ChevronRight,
+  ChevronsDownUp,
+  Copy,
+  Crosshair,
+  FolderPlus,
+  Pencil,
+  Plug,
+  Plus,
+  RotateCw,
+  Server,
+  ServerPlus,
+  Trash2
+} from 'lucide-react'
 import type { HostConnection, HostGroup } from '@shared/types'
 import { cn } from '@/lib/utils'
 import { hexToCss } from '@/lib/theme'
@@ -329,11 +346,15 @@ function GroupRowMenu({
 }
 
 function ConnRowMenu({
+  onConnectOnly,
+  onSendToAi,
   onConnect,
   onEdit,
   onCopyAddress,
   onDelete
 }: {
+  onConnectOnly: () => void
+  onSendToAi: () => void
   onConnect: () => void
   onEdit: () => void
   onCopyAddress: () => void
@@ -344,7 +365,15 @@ function ConnRowMenu({
     <ContextMenuContent className="w-44 border-line">
       <ContextMenuItem onClick={onConnect}>
         <Plug />
-        {t('common.connect')}
+        {t('conn.connectAndEnter')}
+      </ContextMenuItem>
+      <ContextMenuItem onClick={onConnectOnly}>
+        <Plug />
+        {t('conn.connectOnly')}
+      </ContextMenuItem>
+      <ContextMenuItem onClick={onSendToAi}>
+        <Server />
+        {t('conn.sendToAi')}
       </ContextMenuItem>
       <ContextMenuItem onClick={onEdit}>
         <Pencil />
@@ -456,10 +485,7 @@ function SideRow({
       />
       <span className="flex min-w-0 items-baseline gap-1.5">
         <span
-          className={cn(
-            'min-w-0 truncate text-minor',
-            on ? 'font-semibold text-fg' : 'text-muted'
-          )}
+          className={cn('min-w-0 truncate text-minor', on ? 'font-semibold text-fg' : 'text-muted')}
         >
           {title}
         </span>
@@ -504,8 +530,17 @@ function ConnRow({
   const phase = useLinksStore((s) => s.byHost[conn.id]?.phase)
   // 右键菜单打开期间保持行高亮（radix modal 会锁 body pointer-events 触发 mouseleave）
   const [menuOpen, setMenuOpen] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const selectHost = (): void => {
+    onSelect()
+  }
   return (
-    <ContextMenu onOpenChange={setMenuOpen}>
+    <ContextMenu
+      onOpenChange={(open) => {
+        setMenuOpen(open)
+        if (open) selectHost()
+      }}
+    >
       <ContextMenuTrigger asChild>
         <div
           role="button"
@@ -524,12 +559,12 @@ function ConnRow({
           style={{ paddingLeft: depth * INDENT_STEP + ROW_BASE }}
           onMouseEnter={() => setHovering(true)}
           onMouseLeave={() => setHovering(false)}
-          onClick={onSelect}
+          onClick={selectHost}
           onKeyDown={(e) => {
             if (e.target !== e.currentTarget) return
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault()
-              onSelect()
+              selectHost()
             }
           }}
           onDoubleClick={() => onConnect(conn)}
@@ -540,7 +575,10 @@ function ConnRow({
             size={12}
             strokeWidth={2}
             // 选中态只靠行底色高亮，图标不再叠加主题色（已连接=绿色呼吸）
-            className={cn('shrink-0', phase === 'connected' ? 'conn-server-connected' : 'text-muted')}
+            className={cn(
+              'shrink-0',
+              phase === 'connected' ? 'conn-server-connected' : 'text-muted'
+            )}
           />
           <span
             className={cn(
@@ -558,13 +596,34 @@ function ConnRow({
             onDoubleClick={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation()
-              onSelect()
+              selectHost()
               onLocate(conn)
             }}
           />
         </div>
       </ContextMenuTrigger>
+      {actionError && (
+        <p role="alert" className="px-2 text-caption text-danger">
+          {actionError}
+        </p>
+      )}
       <ConnRowMenu
+        onConnectOnly={() => {
+          setActionError(null)
+          void useSessionStore
+            .getState()
+            .connect(conn, false)
+            .catch((err) => setActionError(errorMessage(err)))
+        }}
+        onSendToAi={() => {
+          const ai = useAiStore.getState()
+          useWorkspaceStore.getState().setAiOpen(true)
+          const id = ai.activeId
+          if (id) {
+            useWorkspaceStore.getState().attachHost(id, conn.id)
+            useAiStore.setState((s) => ({ viewChatRequest: s.viewChatRequest + 1 }))
+          } else setActionError(t('ai.loading'))
+        }}
         onConnect={() => onConnect(conn)}
         onEdit={() => onEdit(conn)}
         onCopyAddress={() => onCopyAddress(conn)}

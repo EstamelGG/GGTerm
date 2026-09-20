@@ -247,7 +247,10 @@
       "testing": "测试中",
       "available": "可用",
       "failed": "失败"
-    }
+    },
+    "connectAndEnter": "连接并进入",
+    "connectOnly": "仅连接",
+    "sendToAi": "发送到 AI 对话"
   },
   "sftp": {
     "itemsSummary": "{{name}} 等 {{count}} 项",
@@ -369,7 +372,8 @@
     "keepaliveInterval": "心跳间隔",
     "lossThreshold": "连续丢失阈值",
     "offlineReason": "掉线原因",
-    "times": "{{n}} 次"
+    "times": "{{n}} 次",
+    "tabTopology": "连接图"
   },
   "chrome": {
     "closeOthers": "关闭其他",
@@ -625,6 +629,10 @@
       "fit": "自动缩放",
       "spacing": "连线间距",
       "nodeSize": "节点尺寸"
-    }
+    },
+    "hideSidebar": "折叠 AI 侧栏",
+    "showSidebar": "显示 AI 侧栏",
+    "focusedHost": "当前主机",
+    "removeHostReference": "移除主机引用"
   }
 }

@@ -247,7 +247,10 @@
       "testing": "Testing",
       "available": "OK",
       "failed": "Failed"
-    }
+    },
+    "connectAndEnter": "Connect and enter",
+    "connectOnly": "Connect only",
+    "sendToAi": "Send to AI chat"
   },
   "sftp": {
     "itemsSummary": "{{name}} and {{count}} items",
@@ -369,7 +372,8 @@
     "keepaliveInterval": "Keepalive Interval",
     "lossThreshold": "Loss Threshold",
     "offlineReason": "Offline Reason",
-    "times": "{{n}} times"
+    "times": "{{n}} times",
+    "tabTopology": "Connection graph"
   },
   "chrome": {
     "closeOthers": "Close Others",
@@ -625,6 +629,10 @@
       "fit": "Fit view",
       "spacing": "Link spacing",
       "nodeSize": "Node size"
-    }
+    },
+    "hideSidebar": "Hide AI sidebar",
+    "showSidebar": "Show AI sidebar",
+    "focusedHost": "Focused host",
+    "removeHostReference": "Remove host reference"
   }
 }

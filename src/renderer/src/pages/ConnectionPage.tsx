@@ -1,3 +1,6 @@
+import type { ReactNode } from 'react'
+import { TopologyCanvas } from '@/components/ai/TopologyCanvas'
+import { useSessionStore } from '@/stores/session'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Search, Server } from 'lucide-react'
@@ -35,9 +38,11 @@ export default function ConnectionPage({
   active,
   perfEnabled,
   onToast,
-  onConnect
+  onConnect,
+  children
 }: {
   /** 页面是否激活（常驻挂载下由 tab 决定；驱动性能探测的启停） */
+  children?: ReactNode
   active: boolean
   /** 全局性能监控开关；关闭时指标区仅保留延迟。 */
   perfEnabled: boolean
@@ -45,6 +50,7 @@ export default function ConnectionPage({
   onConnect: (c: HostConnection) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const tab = useSessionStore((s) => s.tab)
   const connections = useConnectionsStore((s) => s.connections)
   const groups = useConnectionsStore((s) => s.groups)
   const loaded = useConnectionsStore((s) => s.loaded)
@@ -210,25 +216,32 @@ export default function ConnectionPage({
     setReveal((prev) => ({ id: c.id, n: (prev?.id === c.id ? prev.n : 0) + 1 }))
   }, [])
 
-  const locateInTable = useCallback((c: HostConnection): void => {
-    if (!filtered.some((item) => item.id === c.id)) {
-      setSearch('')
-      setPick(c.groupId ? { kind: 'group', id: c.groupId } : { kind: 'ungrouped' })
-    }
-    setTableReveal((prev) => ({ id: c.id, n: (prev?.n ?? 0) + 1 }))
-  }, [filtered])
+  const locateInTable = useCallback(
+    (c: HostConnection): void => {
+      if (!filtered.some((item) => item.id === c.id)) {
+        setSearch('')
+        setPick(c.groupId ? { kind: 'group', id: c.groupId } : { kind: 'ungrouped' })
+      }
+      useSessionStore.getState().setTab({ kind: 'connections' })
+      setTableReveal((prev) => ({ id: c.id, n: (prev?.n ?? 0) + 1 }))
+    },
+    [filtered]
+  )
 
   /** 全选/取消全选：作用域 = 当前可见行（搜索/分组过滤后） */
-  const toggleSelectAll = useCallback((next: boolean): void => {
-    setSelectedRaw((prev) => {
-      const ids = new Set(prev)
-      for (const c of filtered) {
-        if (next) ids.add(c.id)
-        else ids.delete(c.id)
-      }
-      return ids
-    })
-  }, [filtered])
+  const toggleSelectAll = useCallback(
+    (next: boolean): void => {
+      setSelectedRaw((prev) => {
+        const ids = new Set(prev)
+        for (const c of filtered) {
+          if (next) ids.add(c.id)
+          else ids.delete(c.id)
+        }
+        return ids
+      })
+    },
+    [filtered]
+  )
 
   const openEdit = useCallback((c: HostConnection) => setForm({ kind: 'edit', conn: c }), [])
 
@@ -295,7 +308,10 @@ export default function ConnectionPage({
       <div className="flex shrink-0 flex-col" style={{ width: sidebarWidth }}>
         <GroupSidebar
           pick={pick}
-          onPick={setPick}
+          onPick={(pick) => {
+            setPick(pick)
+            useSessionStore.getState().setTab({ kind: 'connections' })
+          }}
           connections={connections}
           groups={groups}
           reveal={reveal}
@@ -338,115 +354,130 @@ export default function ConnectionPage({
           style={{ left: sidebarWidth - 1 }}
         />
       )}
-      <div className="flex min-w-0 flex-1 flex-col bg-bg">
-        {/* 工具栏：胶囊搜索 + 新增连接（TOOLBAR_V 常量 = 40px 高，与侧栏头部分割线对齐） */}
-        <div className={cn('flex flex-wrap items-center gap-2.5 px-4', TOOLBAR_V)}>
-          <div className="flex h-6 w-64 items-center gap-1.5 rounded-full border border-line bg-raised px-2.5 transition-colors duration-100 focus-within:border-at-accent/50">
-            <Search size={11} strokeWidth={2.2} className="shrink-0 text-muted" />
-            <input
-              type="text"
-              className="h-full min-w-0 flex-1 bg-transparent text-minor text-fg placeholder:text-muted outline-none"
-              placeholder={t('common.search')}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
-          {selectedIds.size > 0 && (
-            <>
-              <Button
-                variant="ghost"
-                size="sm"
-                title={t('conn.export')}
-                disabled={actionBusy}
-                onClick={exportSelected}
-              />
-              <Button
-                variant="danger"
-                size="sm"
-                title={t('common.delete')}
-                disabled={actionBusy}
-                onClick={() => setBulkDeleteCount(selectedIds.size)}
-              />
-            </>
+      <div className="relative min-w-0 flex-1">
+        <div
+          className={cn(
+            'absolute inset-0 flex flex-col bg-bg',
+            tab.kind !== 'connections' && 'hidden'
           )}
-          <div className="flex-1" />
-          <Button
-            variant="ghost"
-            size="sm"
-            title={t('conn.import')}
-            onClick={() => setImportOpen(true)}
-          />
-          <Button
-            size="sm"
-            title={t('conn.newConnection')}
-            onClick={() =>
-              setForm({
-                kind: 'create',
-                groupId: pick.kind === 'group' ? pick.id : null
-              })
-            }
-          />
-        </div>
-        <ChromeSeparator />
-        {loadError && (
-          <div role="alert" className="px-4 py-3 text-body text-danger">
-            {loadError}
+        >
+          {/* 工具栏：胶囊搜索 + 新增连接（TOOLBAR_V 常量 = 40px 高，与侧栏头部分割线对齐） */}
+          <div className={cn('flex flex-wrap items-center gap-2.5 px-4', TOOLBAR_V)}>
+            <div className="flex h-6 w-64 items-center gap-1.5 rounded-full border border-line bg-raised px-2.5 transition-colors duration-100 focus-within:border-at-accent/50">
+              <Search size={11} strokeWidth={2.2} className="shrink-0 text-muted" />
+              <input
+                type="text"
+                className="h-full min-w-0 flex-1 bg-transparent text-minor text-fg placeholder:text-muted outline-none"
+                placeholder={t('common.search')}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            {selectedIds.size > 0 && (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  title={t('conn.export')}
+                  disabled={actionBusy}
+                  onClick={exportSelected}
+                />
+                <Button
+                  variant="danger"
+                  size="sm"
+                  title={t('common.delete')}
+                  disabled={actionBusy}
+                  onClick={() => setBulkDeleteCount(selectedIds.size)}
+                />
+              </>
+            )}
+            <div className="flex-1" />
             <Button
               variant="ghost"
-              title={t('common.retry')}
-              onClick={() => {
-                setLoadError(null)
-                void load().catch((err) => setLoadError(errorMessage(err)))
-              }}
+              size="sm"
+              title={t('conn.import')}
+              onClick={() => setImportOpen(true)}
+            />
+            <Button
+              size="sm"
+              title={t('conn.newConnection')}
+              onClick={() =>
+                setForm({
+                  kind: 'create',
+                  groupId: pick.kind === 'group' ? pick.id : null
+                })
+              }
             />
           </div>
-        )}
-
-        {loaded && filtered.length === 0 ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-2.5">
-            <Server size={28} strokeWidth={1.5} className="text-muted" />
-            <p className="text-body text-muted">
-              {t(
-                search.trim()
-                  ? 'conn.noSearchResults'
-                  : connections.length
-                    ? 'conn.emptyGroup'
-                    : 'conn.empty'
-              )}
-            </p>
-            {search.trim() ? (
-              <Button variant="ghost" title={t('conn.clearSearch')} onClick={() => setSearch('')} />
-            ) : (
+          <ChromeSeparator />
+          {loadError && (
+            <div role="alert" className="px-4 py-3 text-body text-danger">
+              {loadError}
               <Button
-                title={t('conn.newConnection')}
-                onClick={() =>
-                  setForm({ kind: 'create', groupId: pick.kind === 'group' ? pick.id : null })
-                }
+                variant="ghost"
+                title={t('common.retry')}
+                onClick={() => {
+                  setLoadError(null)
+                  void load().catch((err) => setLoadError(errorMessage(err)))
+                }}
               />
-            )}
-          </div>
-        ) : (
-          <ConnectionTable
-            active={active}
-            perfEnabled={perfEnabled}
-            connections={filtered}
-            sortColumn={sortColumn}
-            sortAscending={sortAscending}
-            onToggleSort={toggleSort}
-            onConnect={onConnect}
-            onEdit={openEdit}
-            onDuplicate={duplicateConn}
-            onDelete={setDeleteTarget}
-            onToast={onToast}
-            onLocate={locateConn}
-            reveal={tableReveal}
-            selectedIds={selectedIds}
-            onToggleSelect={toggleSelect}
-            onToggleSelectAll={toggleSelectAll}
-          />
-        )}
-      </div>
+            </div>
+          )}
 
+          {loaded && filtered.length === 0 ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-2.5">
+              <Server size={28} strokeWidth={1.5} className="text-muted" />
+              <p className="text-body text-muted">
+                {t(
+                  search.trim()
+                    ? 'conn.noSearchResults'
+                    : connections.length
+                      ? 'conn.emptyGroup'
+                      : 'conn.empty'
+                )}
+              </p>
+              {search.trim() ? (
+                <Button
+                  variant="ghost"
+                  title={t('conn.clearSearch')}
+                  onClick={() => setSearch('')}
+                />
+              ) : (
+                <Button
+                  title={t('conn.newConnection')}
+                  onClick={() =>
+                    setForm({ kind: 'create', groupId: pick.kind === 'group' ? pick.id : null })
+                  }
+                />
+              )}
+            </div>
+          ) : (
+            <ConnectionTable
+              active={active}
+              perfEnabled={perfEnabled}
+              connections={filtered}
+              sortColumn={sortColumn}
+              sortAscending={sortAscending}
+              onToggleSort={toggleSort}
+              onConnect={onConnect}
+              onEdit={openEdit}
+              onDuplicate={duplicateConn}
+              onDelete={setDeleteTarget}
+              onToast={onToast}
+              onLocate={locateConn}
+              reveal={tableReveal}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
+              onToggleSelectAll={toggleSelectAll}
+            />
+          )}
+        </div>
+
+        <div className={cn('absolute inset-0', tab.kind !== 'ai' && 'hidden')}>
+          <TopologyCanvas />
+        </div>
+        {children}
+      </div>
       {form && <ConnectionForm payload={form} onDismiss={() => setForm(null)} />}
 
       {importOpen && <SshConfigImport onDone={() => setImportOpen(false)} />}

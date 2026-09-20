@@ -62,7 +62,7 @@ import { ButtonTooltip } from '@/components/ui/ButtonTooltip'
 import { IconButton } from '@/components/ui/IconButton'
 import { StateDot } from '@/components/ui/StateDot'
 import { Markdown } from '@/components/ai/Markdown'
-import { TopologyCanvas } from '@/components/ai/TopologyCanvas'
+import { useWorkspaceStore } from '@/stores/workspace'
 import { activeCommandToken, activeMention, SLASH_COMMANDS } from '@/lib/aiInput'
 import { ExecutionSessionsButton } from '@/components/ai/ExecutionSessionsButton'
 import { MarqueeText } from '@/components/chrome/MarqueeText'
@@ -565,6 +565,7 @@ const ToolCallCard = memo(function ToolCallCard({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const conns = useConnectionsStore((s) => s.connections)
+
   const respondApproval = useAiStore((s) => s.respondApproval)
   /** 拒绝两段式：null=未进入备注态；''/文本=待提交（备注可留空） */
   const [rejectNote, setRejectNote] = useState<string | null>(null)
@@ -900,6 +901,16 @@ const MessageItem = memo(function MessageItem({
     return (
       <div className="flex flex-col items-end gap-1">
         {stamp}
+        {m.metadata?.hostReferences?.map((host) => (
+          <span
+            key={host.id}
+            title={`${host.host}:${host.port}`}
+            className="inline-flex max-w-full items-center gap-1 rounded-md border border-line bg-raised px-2 py-1 text-caption"
+          >
+            <Server size={12} />
+            <span className="truncate">{host.name}</span>
+          </span>
+        ))}
         <div className="max-w-[85%] select-text break-words rounded-lg bg-at-accent/15 px-3 py-2 text-body text-fg [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
           <Markdown decorator={highlightMentions}>{textOf(m)}</Markdown>
         </div>
@@ -1086,6 +1097,10 @@ function ChatComposer({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const conns = useConnectionsStore((s) => s.connections)
+  const attachments = useWorkspaceStore((s) => s.attachments[sessionId])
+  const focusedId = useWorkspaceStore((s) => s.focusedHostId)
+  const focusedHost = conns.find((c) => c.id === focusedId)
+  const references = conns.filter((c) => attachments?.includes(c.id))
   const phases = useLinksStore((s) => s.byHost)
   const ai = usePrefsStore((s) => s.data?.ai ?? null)
   const updatePrefs = usePrefsStore((s) => s.update)
@@ -1342,6 +1357,35 @@ function ChatComposer({
           )}
         >
           <div className="relative">
+            {(focusedHost || references.length > 0) && (
+              <div className="flex flex-wrap gap-1 px-2 pt-2">
+                {focusedHost && (
+                  <span
+                    title={`${focusedHost.host}:${focusedHost.port}`}
+                    className="flex min-w-0 max-w-full items-center gap-1 rounded-md bg-hover px-2 py-1 text-caption text-muted"
+                  >
+                    <Server size={12} />
+                    {t('ai.focusedHost')}: <span className="truncate">{focusedHost.name}</span>
+                  </span>
+                )}
+                {references.map((host) => (
+                  <span
+                    key={host.id}
+                    title={`${host.host}:${host.port}`}
+                    className="flex max-w-full items-center gap-1 rounded-md border border-line bg-raised px-2 py-1 text-caption"
+                  >
+                    <Server size={12} />
+                    <span className="truncate">{host.name}</span>
+                    <IconButton
+                      icon={X}
+                      frame={18}
+                      title={t('ai.removeHostReference')}
+                      onClick={() => useWorkspaceStore.getState().removeHost(sessionId, host.id)}
+                    />
+                  </span>
+                ))}
+              </div>
+            )}
             <textarea
               ref={taRef}
               rows={3}
@@ -1683,10 +1727,6 @@ export function AiWorkspacePage(): React.JSX.Element {
 
   return (
     <div className="flex h-full">
-      {/* 左侧：AI 连接拓扑图（中心 = 本机，直链实线 / 跳板虚线） */}
-      <div className="min-w-0 flex-1">
-        <TopologyCanvas />
-      </div>
       {/* 拖拽手柄：上下限 360–720px，双击复位 */}
       <div
         role="separator"
@@ -1696,7 +1736,10 @@ export function AiWorkspacePage(): React.JSX.Element {
         className="z-10 w-1 shrink-0 cursor-col-resize bg-chrome-sep transition-colors hover:bg-at-accent/60"
       />
       {/* 右侧：对话面板（VS Code Copilot 风格：← 返回会话列表 / 列表点选进入会话） */}
-      <div className="flex h-full shrink-0 flex-col" style={{ width: panelWidth }}>
+      <div
+        className="flex h-full shrink-0 flex-col"
+        style={{ width: panelWidth, maxWidth: '50vw' }}
+      >
         {/* 头部：聊天视图（← + 当前会话标题）/ 列表视图（所有会话）；右端恒为新建 */}
         <div className="flex h-10 shrink-0 items-center gap-2 border-b border-chrome-sep px-3">
           {view === 'chat' && (
@@ -1814,6 +1857,7 @@ export function AiWorkspacePage(): React.JSX.Element {
             {/* 输入区（多行 + /命令 + @主机；发送/停止按钮由 Composer 持有） */}
             <div className="shrink-0 border-t border-chrome-sep p-3">
               <ChatComposer
+                key={active.id}
                 sessionId={active.id}
                 busy={isBusy(active)}
                 disabled={!active.loaded || active.id.startsWith('pending:')}
