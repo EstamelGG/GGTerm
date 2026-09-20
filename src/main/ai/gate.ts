@@ -120,7 +120,12 @@ async function subAgentJudge(
   }
   try {
     const model = createChatModel(config, 'judge')
-    const res = await generateText({ model, system: subSystem(locale), prompt: `Command: ${command}` })
+    const res = await generateText({
+      model,
+      system: subSystem(locale),
+      prompt: `Command: ${command}`,
+      timeout: 60_000
+    })
     const text = res.text ?? ''
     const match = /{[^}]*}/s.exec(text)
     if (!match) return fallback
@@ -157,7 +162,11 @@ export async function judgeCommand(
   }
   // 严格模式跳过 AI：安全命令之外的其余全部人工审批
   if (config.approvalLevel === 'strict') {
-    return { action: 'confirm', level: 'strict', reason: 'Strict mode: command requires manual approval' }
+    return {
+      action: 'confirm',
+      level: 'strict',
+      reason: 'Strict mode: command requires manual approval'
+    }
   }
   // 模糊命令 → AI 判定：safe 自动执行；unsafe 一律转人工审批（AI 永不自动拦截，人工拒绝后模型可改方案）
   const sub = await subAgentJudge(command, config, locale)
@@ -172,19 +181,31 @@ export async function judgeCommand(
 export function judgeSftpWrite(config: AiConfig): GateDecision {
   if (config.approvalLevel === 'relaxed')
     return { action: 'direct', level: 'whitelist', reason: '' }
-  return { action: 'confirm', level: 'sftp', reason: 'SFTP write/delete/rename requires confirmation' }
+  return {
+    action: 'confirm',
+    level: 'sftp',
+    reason: 'SFTP write/delete/rename requires confirmation'
+  }
 }
 
 /** 断连/关 shell：可能中断正在运行的任务。 */
 export function judgeSessionClose(config: AiConfig): GateDecision {
   if (config.approvalLevel === 'relaxed')
     return { action: 'direct', level: 'whitelist', reason: '' }
-  return { action: 'confirm', level: 'session', reason: 'Disconnecting/closing a shell may interrupt running tasks' }
+  return {
+    action: 'confirm',
+    level: 'session',
+    reason: 'Disconnecting/closing a shell may interrupt running tasks'
+  }
 }
 
 /** 连接/分组/凭据等配置结构变更：改变用户已有工作环境，非宽松模式一律确认。 */
 export function judgeConfig(op: string, config: AiConfig): GateDecision {
   if (config.approvalLevel === 'relaxed')
     return { action: 'direct', level: 'whitelist', reason: '' }
-  return { action: 'confirm', level: 'config', reason: `${op}: connection config change requires confirmation` }
+  return {
+    action: 'confirm',
+    level: 'config',
+    reason: `${op}: connection config change requires confirmation`
+  }
 }

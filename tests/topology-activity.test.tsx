@@ -38,6 +38,7 @@ it('lights the resolved remote host and cancels stale fade timers on subsequent 
       listener({
         type: 'chunk',
         sessionId,
+        turnId: 'turn',
         chunk: {
           type: 'tool-input-available',
           toolCallId: id,
@@ -51,6 +52,7 @@ it('lights the resolved remote host and cancels stale fade timers on subsequent 
       listener({
         type: 'chunk',
         sessionId,
+        turnId: 'turn',
         chunk: { type: 'tool-output-available', toolCallId: id, output: {} }
       })
     )

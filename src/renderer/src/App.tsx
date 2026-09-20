@@ -16,7 +16,7 @@ import { usePerfStore } from '@/stores/perf'
 import { useConnectionsStore } from '@/stores/connections'
 import { useLinksStore } from '@/stores/links'
 import { useLogStore } from '@/stores/logs'
-import { pendingApprovals, useAiStore } from '@/stores/ai'
+import { isBusy, pendingApprovals, useAiStore } from '@/stores/ai'
 import { usePrefsStore } from '@/stores/prefs'
 import { useShallow } from 'zustand/react/shallow'
 import { applyAccent, applyBgTransparency, applyUiScale } from '@/lib/accent'
@@ -57,7 +57,7 @@ function App(): React.JSX.Element {
     s.sessions.reduce((n, sess) => n + pendingApprovals(sess.messages).length, 0)
   )
   /** 任一 AI 会话生成中（全局可见性：切到其他页面时徽标仍提示，可点入停止） */
-  const aiBusy = useAiStore((s) => s.sessions.some((sess) => sess.status !== 'ready'))
+  const aiBusy = useAiStore((s) => s.sessions.some(isBusy))
   /** 挂起的人工输入待办（密码/验证码）：与待审批同权重，需人处理后 Agent 才能继续 */
   const aiPendingInput = useHumanInputStore((s) => Object.keys(s.pending).length)
   /** 日志面板开关态：非 macOS 用顶部按钮呼出（那里没有常驻菜单栏） */

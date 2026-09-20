@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import {
   ToolLoopAgent,
+  generateText,
   convertToModelMessages,
   isToolUIPart,
   pruneMessages,
@@ -19,9 +20,22 @@ import {
   toUIMessageStream
 } from 'ai'
 import type { LanguageModel, ToolApprovalStatus, ToolSet, UIMessageChunk } from 'ai'
-import type { ZodType } from 'zod'
-import type { AiSessionSummary, AiUIMessage } from '../../shared/types'
+import { toJSONSchema, type ZodType } from 'zod'
+import type {
+  AiContextSettings,
+  AiContextUsage,
+  AiSessionSummary,
+  AiUIMessage
+} from '../../shared/types'
+import { DEFAULT_CONTEXT_SETTINGS } from '../../shared/ai'
 import { errorMessage } from '../../shared/error'
+import {
+  compactContext,
+  estimateTokens,
+  SUMMARY_INSTRUCTIONS,
+  type ContextSummary
+} from './context'
+import { abortableStream } from './abortableStream'
 
 /**
  * 进程内 agent 运行时（AI SDK v7 原生形态）：
@@ -64,6 +78,10 @@ export interface AgentDeps {
     toolCall: { toolName: string; input: unknown; toolCallId?: string }
   ) => ToolApprovalStatus | Promise<ToolApprovalStatus>
   onLog?: (message: string) => void
+  getContextSettings?: () => AiContextSettings
+  getModelKey?: () => string
+  onContextUsage?: (sessionId: string, turnId: string, usage: AiContextUsage) => void
+  modelTimeout?: { firstChunkMs: number; chunkMs: number }
 }
 
 let deps: AgentDeps | null = null
@@ -81,7 +99,9 @@ function purgeLegacySessions(dir: string): void {
     if (!name.endsWith('.json')) continue
     const path = join(dir, name)
     try {
-      const raw = JSON.parse(readFileSync(path, 'utf8')) as { messages?: Array<{ parts?: Array<{ type?: string }> }> }
+      const raw = JSON.parse(readFileSync(path, 'utf8')) as {
+        messages?: Array<{ parts?: Array<{ type?: string }> }>
+      }
       const legacy = (raw.messages ?? []).some((m) =>
         (m.parts ?? []).some((p) => p.type === 'thinking' || p.type === 'toolCall')
       )
@@ -107,12 +127,22 @@ export interface AgentSessionRecord {
   createdAt: number
   updatedAt: number
   messages: AiUIMessage[]
+  contextSummary?: ContextSummary
 }
 
 /** 进行中回合：done 置位后本会话可开启新回合 */
 interface Turn {
+  id: string
   controller: AbortController
   done: boolean
+  settled: Promise<void>
+  settle: () => void
+  contextCompressed: boolean
+  contextSettings: AiContextSettings
+  modelKey: string
+  model?: LanguageModel
+  contextUsage?: AiContextUsage
+  finishReason?: string
 }
 
 /**
@@ -158,10 +188,15 @@ function readRecord(path: string): AgentSessionRecord | null {
 }
 
 function persist(s: Session): void {
+  // 删除会话后，迟到的回合收尾不得重新创建文件。
+  if (sessions.get(s.id) !== s) return
   s.updatedAt = Date.now()
-  const { id, title, titledAt, createdAt, updatedAt, messages } = s
+  const { id, title, titledAt, createdAt, updatedAt, messages, contextSummary } = s
   const p = sessionPath(s.id)
-  writeFileSync(`${p}.tmp`, JSON.stringify({ id, title, titledAt, createdAt, updatedAt, messages }))
+  writeFileSync(
+    `${p}.tmp`,
+    JSON.stringify({ id, title, titledAt, createdAt, updatedAt, messages, contextSummary })
+  )
   renameSync(`${p}.tmp`, p)
 }
 
@@ -219,6 +254,10 @@ export function getAgentSession(id: string): AgentSessionRecord {
   return ensureSession(id)
 }
 
+export function getAgentTurnId(id: string): string | undefined {
+  return ensureSession(id).turn?.id
+}
+
 export function setAgentTitle(id: string, title: string): void {
   const s = ensureSession(id)
   s.title = title
@@ -226,8 +265,23 @@ export function setAgentTitle(id: string, title: string): void {
   persist(s)
 }
 
-export function abortTurn(sessionId: string): void {
-  sessions.get(sessionId)?.turn?.controller.abort()
+export function abortTurn(sessionId: string, turnId?: string): void {
+  const turn = sessions.get(sessionId)?.turn
+  if (turn && !turn.done && (!turnId || turn.id === turnId)) turn.controller.abort()
+}
+
+/** 取消生成或待审批回合；确认落盘后再允许前端开启下一轮。 */
+export async function cancelAgentTurn(sessionId: string, turnId?: string): Promise<AiUIMessage[]> {
+  const s = ensureSession(sessionId)
+  const turn = s.turn
+  if (turnId && turn && turn.id !== turnId) return s.messages
+  if (turn && !turn.done) {
+    turn.controller.abort()
+    await turn.settled
+  } else if (s.messages.length) {
+    finalize(s, s.messages, undefined, true)
+  }
+  return s.messages
 }
 
 /* ---------------- agent 构建 ---------------- */
@@ -239,6 +293,12 @@ const MAX_STEPS = 50
 function forLog(v: unknown, max = 4000): string {
   const s = typeof v === 'string' ? v : (JSON.stringify(v) ?? String(v))
   return s.length > max ? `${s.slice(0, max)}…` : s
+}
+
+function reportContext(s: Session, turn: Turn, usage: AiContextUsage): void {
+  if (turn.done || sessions.get(s.id) !== s) return
+  turn.contextUsage = usage
+  requireDeps().onContextUsage?.(s.id, turn.id, usage)
 }
 
 function toolSetFor(s: Session): ToolSet {
@@ -266,14 +326,80 @@ function toolSetFor(s: Session): ToolSet {
 function agentFor(s: Session): ToolLoopAgent {
   if (s.agent) return s.agent
   const d = requireDeps()
+  const promptTokens =
+    estimateTokens(d.instructions) +
+    estimateTokens(
+      d.tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: toJSONSchema(t.parameters, { unrepresentable: 'any', io: 'input' })
+      }))
+    )
   s.agent = new ToolLoopAgent({
     model: d.getModel(),
     instructions: d.instructions,
     tools: toolSetFor(s),
     stopWhen: stepCountIs(MAX_STEPS),
+    timeout: d.modelTimeout ?? { firstChunkMs: 120_000, chunkMs: 90_000 },
+    // 每一步重新检查：工具循环也可能在单轮内填满窗口。
+    prepareStep: async ({ messages, stepNumber }) => {
+      const turn = s.turn!
+      const { contextWindow, autoCompress } = turn.contextSettings
+      const budget = Math.floor(contextWindow * 0.75) - promptTokens
+      const usage: AiContextUsage = {
+        modelKey: turn.modelKey,
+        contextWindow,
+        inputTokens: promptTokens + estimateTokens(messages),
+        source: 'estimate',
+        phase: 'ready'
+      }
+      reportContext(s, turn, usage)
+      if (budget < 512)
+        throw new Error(
+          'Configured context window is too small for the agent tools. / 配置的上下文窗口不足以容纳工具定义，请检查模型窗口设置。'
+        )
+      const fitted = await compactContext({
+        messages,
+        budget,
+        autoCompress,
+        cached: stepNumber === 0 ? s.contextSummary : undefined,
+        signal: turn.controller.signal,
+        summarize: async (transcript, previous) => {
+          reportContext(s, turn, { ...usage, phase: 'compressing' })
+          const result = await generateText({
+            model: turn.model ?? d.getModel(),
+            system: SUMMARY_INSTRUCTIONS,
+            prompt: `Previous summary:\n${previous}\n\nNext transcript fragment (may continue across fragments):\n${transcript}`,
+            abortSignal: turn.controller.signal,
+            timeout: 120_000,
+            maxRetries: 0,
+            maxOutputTokens: Math.max(128, Math.min(2048, Math.floor(budget * 0.05)))
+          })
+          if (result.finishReason === 'length')
+            throw new Error(
+              'Context summary was truncated; retry or shorten the conversation. / 上下文摘要被截断，请重试或缩短对话。'
+            )
+          return result.text
+        }
+      })
+      reportContext(s, turn, {
+        ...usage,
+        inputTokens: promptTokens + estimateTokens(fitted.messages)
+      })
+      if (fitted.compressed) turn.contextCompressed = true
+      if (stepNumber === 0 && fitted.summary) {
+        s.contextSummary = fitted.summary
+        persist(s)
+      }
+      return { messages: fitted.messages }
+    },
     toolApproval: ({ toolCall }) => d.gate?.(s.id, toolCall) ?? 'not-applicable',
     // 每次调用重新解析模型：BYOK 绑定/密钥变化下一回合即时生效
-    prepareCall: (call) => ({ ...call, model: d.getModel() })
+    prepareCall: (call) => ({
+      ...call,
+      model: s.turn?.model ?? d.getModel(),
+      maxOutputTokens: Math.min(8192, Math.floor(s.turn!.contextSettings.contextWindow * 0.15))
+    })
   })
   return s.agent
 }
@@ -286,18 +412,41 @@ function agentFor(s: Session): ToolLoopAgent {
  */
 export function startTurn(
   sessionId: string,
-  messages: AiUIMessage[]
+  messages: AiUIMessage[],
+  turnId: string = randomUUID()
 ): ReadableStream<UIMessageChunk> {
   const s = ensureSession(sessionId)
   if (s.turn && !s.turn.done) throw new Error('session is busy: a turn is already running')
-  s.messages = messages
+  if (messages.at(-1)?.role === 'assistant' && s.messages.at(-1)?.metadata?.interrupted) {
+    throw new Error('Interrupted turn requires a new user message')
+  }
+  const interrupted = new Map(
+    s.messages.filter((m) => m.metadata?.interrupted).map((m) => [m.id, m])
+  )
+  s.messages = messages.map((m) => interrupted.get(m.id) ?? m)
   persist(s)
-  const turn: Turn = { controller: new AbortController(), done: false }
+  let settle!: () => void
+  const settled = new Promise<void>((resolve) => {
+    settle = resolve
+  })
+  const turn: Turn = {
+    id: turnId,
+    controller: new AbortController(),
+    done: false,
+    settled,
+    settle,
+    contextCompressed: false,
+    modelKey: requireDeps().getModelKey?.() ?? '',
+    contextSettings: requireDeps().getContextSettings?.() ?? DEFAULT_CONTEXT_SETTINGS
+  }
   s.turn = turn
   return new ReadableStream<UIMessageChunk>({
     start: (ctrl) =>
       runTurn(s, turn, (chunk) => {
-        if (!chunk) turn.done = true
+        if (!chunk) {
+          turn.done = true
+          turn.settle()
+        }
         chunk ? ctrl.enqueue(chunk) : ctrl.close()
       })
   })
@@ -312,8 +461,25 @@ async function runTurn(
   const isContinuation = s.messages.at(-1)?.role === 'assistant'
   let error: string | undefined
   try {
+    // 模型、窗口和统计标识在回合开始时一起固定；设置变更下一轮生效。
+    turn.model = d.getModel()
     const agent = agentFor(s)
-    const history = await convertToModelMessages(s.messages, {
+    // 元数据不会被 SDK 转为模型输入：显式插入中断边界，避免将旧任务当成待办。
+    const modelHistory = s.messages.map((m): AiUIMessage =>
+      m.metadata?.interrupted
+        ? {
+            ...m,
+            parts: [
+              ...m.parts,
+              {
+                type: 'text',
+                text: '[The user interrupted this turn. Do not resume its unfinished task unless the user explicitly asks to continue. Follow the latest user request. Already-started background commands may still be running; interruption does not mean rollback or success.]'
+              }
+            ]
+          }
+        : m
+    )
+    const history = await convertToModelMessages(modelHistory, {
       tools: agent.tools,
       ignoreIncompleteToolCalls: true
     })
@@ -321,6 +487,27 @@ async function runTurn(
       // 思维链只保留最后一条消息（审批续跑需回传同回合 reasoning），历史思维链剔除
       messages: pruneMessages({ messages: history, reasoning: 'before-last-message' }),
       abortSignal: turn.controller.signal,
+      onStepFinish: ({ finishReason, usage, stepNumber }) => {
+        if (turn.done) return
+        if (
+          turn.contextUsage &&
+          typeof usage.inputTokens === 'number' &&
+          Number.isFinite(usage.inputTokens) &&
+          usage.inputTokens >= 0
+        ) {
+          reportContext(s, turn, {
+            ...turn.contextUsage,
+            inputTokens: usage.inputTokens,
+            source: 'provider',
+            phase: 'ready'
+          })
+        }
+        turn.finishReason =
+          stepNumber + 1 >= MAX_STEPS && finishReason === 'tool-calls' ? 'step-limit' : finishReason
+        d.onLog?.(
+          `Agent step ${stepNumber + 1}: finish=${finishReason}, inputTokens=${usage.inputTokens}, outputTokens=${usage.outputTokens}`
+        )
+      },
       onToolExecutionStart: ({ toolCall }) =>
         d.onLog?.(`Tool ${toolCall.toolName} input: ${forLog(toolCall.input)}`),
       onToolExecutionEnd: ({ toolCall, toolOutput }) =>
@@ -329,39 +516,66 @@ async function runTurn(
         )
     })
     const ui = toUIMessageStream<ToolSet, AiUIMessage>({
-      stream: result.stream,
+      stream: abortableStream(result.stream, turn.controller.signal, { type: 'abort' }),
       tools: agent.tools,
       originalMessages: s.messages,
       generateMessageId: randomUUID,
-      messageMetadata: ({ part }) =>
-        part.type === 'start' && !isContinuation ? { createdAt: Date.now() } : undefined,
+      messageMetadata: ({ part }) => {
+        if (part.type === 'abort' && !turn.controller.signal.aborted)
+          error = part.reason ?? 'Model response timed out or was interrupted'
+        return part.type === 'start' && !isContinuation ? { createdAt: Date.now() } : undefined
+      },
       onError: (err) => (error = errorMessage(err)),
-      onEnd: ({ messages }) => finalize(s, messages, error)
+      onEnd: ({ messages }) => finalize(s, messages, error, turn.controller.signal.aborted, turn)
     })
     for await (const chunk of ui) push(chunk)
   } catch (err) {
     // 流建立前失败（模型未配置/历史校验失败）：以流内错误告知渲染层，输入已持久化
-    const message = errorMessage(err)
-    push({ type: 'error', errorText: message })
-    finalize(s, s.messages, message)
+    const message = turn.controller.signal.aborted ? undefined : errorMessage(err)
+    if (message) push({ type: 'error', errorText: message })
+    else push({ type: 'abort' })
+    finalize(s, s.messages, message, turn.controller.signal.aborted, turn)
   } finally {
     push(null)
   }
 }
 
 /** 回合收尾：中断/出错后仍在执行态的工具卡标记中断；回合错误并入错误工具卡或写消息元数据；落盘 */
-function finalize(s: Session, messages: AiUIMessage[], error: string | undefined): void {
+function finalize(
+  s: Session,
+  messages: AiUIMessage[],
+  error: string | undefined,
+  interrupted = false,
+  turn?: Turn
+): void {
+  if (turn?.contextUsage) reportContext(s, turn, { ...turn.contextUsage, phase: 'ready' })
   let last = messages.at(-1)
-  if (last?.role !== 'assistant' && error) {
+  if (last?.role !== 'assistant' && (error || interrupted)) {
     last = { id: randomUUID(), role: 'assistant', parts: [], metadata: { createdAt: Date.now() } }
     messages = [...messages, last]
   }
   if (last?.role === 'assistant') {
-    last.parts = last.parts.map((p) =>
-      isToolUIPart(p) && (p.state === 'input-streaming' || p.state === 'input-available')
+    last.parts = last.parts.map((p) => {
+      if (!isToolUIPart(p)) return p
+      if (interrupted && (p.state === 'approval-requested' || p.state === 'approval-responded')) {
+        return {
+          ...p,
+          state: 'output-denied',
+          approval: { ...p.approval, approved: false, reason: 'User interrupted this turn' }
+        }
+      }
+      return p.state === 'input-streaming' || p.state === 'input-available'
         ? { ...p, state: 'output-error', input: p.input, errorText: 'Interrupted' }
         : p
-    )
+    })
+    last.metadata = {
+      createdAt: Date.now(),
+      ...last.metadata,
+      ...(interrupted ? { interrupted: true } : {}),
+      ...(turn?.contextCompressed ? { contextCompressed: true } : {}),
+      ...(turn?.contextUsage ? { contextUsage: turn.contextUsage } : {}),
+      ...(turn?.finishReason ? { finishReason: turn.finishReason } : {})
+    }
     if (error) {
       // 工具失败后模型未能恢复时，回合错误并入最后一张错误工具卡（同文案去重），
       // 不写 metadata，避免卡片 + 底部红框重复展示；无错误卡（纯模型/流失败）才落 metadata
@@ -376,7 +590,7 @@ function finalize(s: Session, messages: AiUIMessage[], error: string | undefined
         }
       }
       if (target < 0) {
-        last.metadata = { createdAt: Date.now(), ...last.metadata, error }
+        last.metadata = { ...last.metadata, error }
       } else if (!same) {
         last.parts = last.parts.map((p, i) => {
           if (i !== target || !isToolUIPart(p) || p.state !== 'output-error') return p

@@ -5,6 +5,7 @@ import { generateText } from 'ai'
 import type { ToolApprovalStatus, UIMessageChunk } from 'ai'
 import type { AiEvent, AiSessionSummary, AiUIMessage } from '../../shared/types'
 import { errorMessage } from '../../shared/error'
+import { contextSettingsFor, modelSettingsKey } from '../../shared/ai'
 import { getPreferences, setPreferences } from '../data/prefs'
 import { getApiKey } from '../data/aiSecrets'
 import { appLog } from '../log'
@@ -18,9 +19,10 @@ import {
   listAgentSessions,
   deleteAgentSession,
   getAgentSession,
+  getAgentTurnId,
   setAgentTitle,
   startTurn,
-  abortTurn,
+  cancelAgentTurn,
   type AgentDeps
 } from './agent'
 import { reclaimAgentSession } from './agentLinks'
@@ -47,6 +49,7 @@ Rules:
 5. Destructive operations (delete, service restart, config changes) will require human confirmation by the system; just report normally.
 6. Host scope: the operation target must be specified by the user (host name or IP both work). If unsure which host, list candidates and let the user choose; never connect to or probe all hosts when the target is unclear. Bulk operations only with explicit user authorization, and write operations must be confirmed host by host.
 7. Local file access (sftp_upload): macOS may deny reading Downloads/Documents/Desktop (EPERM/EACCES in the tool error). Do NOT retry the upload or bypass with other local paths / write_temp_file. Do NOT claim the source file is empty. Tell the user to grant access in System Settings → Privacy & Security → Files and Folders, then stop and wait.
+8. Respect user-interruption markers in conversation history and summaries. Unfinished work from an interrupted turn is paused, not a standing instruction: follow the latest user request and resume earlier work only when the user explicitly asks to continue it. Never infer that interruption rolled back a command or that a missing result means it is safe to rerun.
 Always respond in the language the user writes in.`
 
 /* ---------------- 事件广播（增量合并） ---------------- */
@@ -62,6 +65,7 @@ const pendingDeltas = new Map<string, PendingDelta>()
 
 type DeltaChunk = Extract<UIMessageChunk, { type: 'text-delta' | 'reasoning-delta' }>
 interface PendingDelta {
+  turnId: string
   chunk: DeltaChunk
   timer: ReturnType<typeof setTimeout>
 }
@@ -77,25 +81,26 @@ function flushPending(sessionId: string): void {
   if (!pending) return
   clearTimeout(pending.timer)
   pendingDeltas.delete(sessionId)
-  broadcast({ type: 'chunk', sessionId, chunk: pending.chunk })
+  broadcast({ type: 'chunk', sessionId, turnId: pending.turnId, chunk: pending.chunk })
 }
 
-function emitChunk(sessionId: string, chunk: UIMessageChunk): void {
+function emitChunk(sessionId: string, turnId: string, chunk: UIMessageChunk): void {
   if (chunk.type === 'text-delta' || chunk.type === 'reasoning-delta') {
     const pending = pendingDeltas.get(sessionId)
-    if (pending && sameDelta(pending.chunk, chunk)) {
+    if (pending && pending.turnId === turnId && sameDelta(pending.chunk, chunk)) {
       pending.chunk = { ...pending.chunk, delta: pending.chunk.delta + chunk.delta }
       return
     }
     flushPending(sessionId)
     pendingDeltas.set(sessionId, {
+      turnId,
       chunk,
       timer: setTimeout(() => flushPending(sessionId), FLUSH_MS)
     })
     return
   }
   flushPending(sessionId)
-  broadcast({ type: 'chunk', sessionId, chunk })
+  broadcast({ type: 'chunk', sessionId, turnId, chunk })
 }
 
 /* ---------------- 后台执行完结通知 ---------------- */
@@ -138,7 +143,7 @@ export async function listModels(providerId: string): Promise<string[]> {
   const ai = getPreferences().ai
   const provider = ai.providers.find((p) => p.id === providerId)
   if (!provider?.baseURL) throw new Error('Provider has no BaseURL configured')
-  const apiKey = getApiKey(provider.id)
+  const apiKey = provider.noKey ? '' : getApiKey(provider.id)
   const url = `${provider.baseURL.replace(/\/+$/, '')}/models`
   const res = await fetch(url, {
     headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined
@@ -195,7 +200,10 @@ const CONFIG_OPS: Record<
   string,
   { label: string; detail: (i: Record<string, unknown>) => string }
 > = {
-  add_connection: { label: 'Create connection', detail: (i) => `${i.name} (${i.username}@${i.host})` },
+  add_connection: {
+    label: 'Create connection',
+    detail: (i) => `${i.name} (${i.username}@${i.host})`
+  },
   edit_connection: { label: 'Edit connection', detail: (i) => String(i.hostId) },
   delete_connection: { label: 'Delete connection', detail: (i) => String(i.hostId) },
   add_group: { label: 'Create group', detail: (i) => String(i.name) },
@@ -375,6 +383,13 @@ function ensureAgent(): void {
   initAgent({
     storageDir: join(app.getPath('userData'), 'ai-sessions'),
     getModel: () => createChatModel(getPreferences().ai, 'chat'),
+    getContextSettings: () => contextSettingsFor(getPreferences().ai),
+    getModelKey: () => {
+      const binding = getPreferences().ai.scenarios.chat
+      return binding ? modelSettingsKey(binding) : ''
+    },
+    onContextUsage: (sessionId, turnId, usage) =>
+      broadcast({ type: 'context-usage', sessionId, turnId, usage }),
     tools: aiTools,
     instructions: SYSTEM,
     gate: gateTool,
@@ -410,6 +425,7 @@ async function maybeRefreshTitle(sessionId: string): Promise<void> {
       .slice(-2400)
     const res = await generateText({
       model: createChatModel(getPreferences().ai, 'title'),
+      timeout: 60_000,
       system: TITLE_SYSTEM,
       prompt: `Conversation transcript (oldest first, truncated):\n${transcript}\n\nSummarize the whole conversation and generate a title:`
     })
@@ -459,23 +475,30 @@ export async function getMessages(sessionId: string): Promise<AiUIMessage[]> {
 }
 
 /** 发起回合（渲染层 ChatTransport.sendMessages）：流片经 ai:event 广播，回合结束发 turn-end */
-export async function run(sessionId: string, messages: AiUIMessage[]): Promise<void> {
-  pausedExecutions.delete(sessionId)
+export async function run(
+  sessionId: string,
+  messages: AiUIMessage[],
+  turnId: string
+): Promise<void> {
   ensureAgent()
-  const stream = startTurn(sessionId, messages)
+  const stream = startTurn(sessionId, messages, turnId)
+  pausedExecutions.delete(sessionId)
   void (async () => {
     try {
-      for await (const chunk of stream) emitChunk(sessionId, chunk)
+      for await (const chunk of stream) emitChunk(sessionId, turnId, chunk)
+    } catch (err) {
+      emitChunk(sessionId, turnId, { type: 'error', errorText: errorMessage(err) })
     } finally {
       flushPending(sessionId)
-      broadcast({ type: 'turn-end', sessionId })
-      void maybeRefreshTitle(sessionId)
+      broadcast({ type: 'turn-end', sessionId, turnId })
+      void maybeRefreshTitle(sessionId).catch(() => {})
     }
   })()
 }
 
 /** 取消当前生成：流以 abort 收尾，已产出内容由 agent 持久化 */
-export async function cancel(sessionId: string): Promise<void> {
+export async function cancel(sessionId: string, turnId?: string): Promise<AiUIMessage[]> {
+  if (turnId && getAgentTurnId(sessionId) !== turnId) return getAgentSession(sessionId).messages
   pausedExecutions.add(sessionId)
-  abortTurn(sessionId)
+  return cancelAgentTurn(sessionId, turnId)
 }

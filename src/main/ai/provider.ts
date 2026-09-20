@@ -2,6 +2,7 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import type { LanguageModel } from 'ai'
 import type { AiConfig, AiModelBinding, AiScenario } from '../../shared/types'
 import { getApiKey } from '../data/aiSecrets'
+import { modelFetch } from './modelFetch'
 
 /** 场景回退链：title 未配置 → judge；judge 未配置 → chat */
 const SCENARIO_FALLBACK: Partial<Record<AiScenario, AiScenario>> = { title: 'judge', judge: 'chat' }
@@ -31,6 +32,7 @@ export function createChatModel(config: AiConfig, scenario: AiScenario = 'chat')
   return createOpenAICompatible({
     name: provider.label,
     baseURL: provider.baseURL,
-    apiKey: getApiKey(provider.id)
+    apiKey: provider.noKey ? undefined : getApiKey(provider.id),
+    fetch: modelFetch
   }).chatModel(binding.model)
 }

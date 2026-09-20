@@ -439,6 +439,8 @@ export interface AiProvider {
   /** 显示名 */
   label: string
   baseURL: string
+  /** 显式免密模式：请求不得携带该供应商已存储的密钥。 */
+  noKey?: boolean
 }
 
 /** 模型消费场景：chat = 主对话 / judge = 审批灰区子判定 / title = 会话标题总结 */
@@ -450,6 +452,20 @@ export interface AiModelBinding {
   model: string
 }
 
+export interface AiContextSettings {
+  contextWindow: number
+  autoCompress: boolean
+}
+
+/** 最近一次模型请求的输入上下文，不是会话累计计费 tokens。 */
+export interface AiContextUsage {
+  modelKey: string
+  contextWindow: number
+  inputTokens: number
+  source: 'estimate' | 'provider'
+  phase: 'ready' | 'compressing'
+}
+
 /** AI 配置（非密钥；API Key 经 aiSecrets 按 providerId 单独 safeStorage）。
  *  场景回退链 title → judge → chat：最少只配 chat 即可全功能工作。
  *  modelCache = 各供应商最近一次拉取的模型 id 列表（对话切换器/场景下拉共用）。 */
@@ -457,6 +473,8 @@ export interface AiConfig {
   providers: AiProvider[]
   scenarios: Partial<Record<AiScenario, AiModelBinding | null>>
   modelCache?: Record<string, string[]>
+  /** 按 [providerId, model] 保存，切换模型后保留各自窗口与压缩设置。 */
+  modelSettings?: Record<string, AiContextSettings>
   approvalLevel: AiApprovalLevel
 }
 
@@ -474,6 +492,10 @@ export interface AiMessageMetadata {
   createdAt: number
   display?: string
   error?: string
+  interrupted?: boolean
+  contextCompressed?: boolean
+  contextUsage?: AiContextUsage
+  finishReason?: string
 }
 
 /** 对话消息即 AI SDK UIMessage（主进程持久化、渲染层展示、convertToModelMessages 的唯一格式） */
@@ -482,8 +504,9 @@ export type AiUIMessage = UIMessage<AiMessageMetadata>
 /** main → renderer 事件（ai:event）：回合流片 / 回合结束 /
  *  会话标题 / 执行器通知（渲染层以用户消息投递给 agent） */
 export type AiEvent = { sessionId: string } & (
-  | { type: 'chunk'; chunk: UIMessageChunk }
-  | { type: 'turn-end' }
+  | { type: 'chunk'; turnId: string; chunk: UIMessageChunk }
+  | { type: 'turn-end'; turnId: string }
+  | { type: 'context-usage'; turnId: string; usage: AiContextUsage }
   | { type: 'title'; title: string }
   /** 标题生成中（true 开始 / false 结束）：UI 在标题位置显示转圈 */
   | { type: 'title-pending'; pending: boolean }

@@ -9,6 +9,7 @@ import type {
   AiScenario
 } from '@shared/types'
 import { AI_PRESETS, DEFAULT_PROVIDER_ID } from '@shared/ai'
+import { ProviderModelSettings } from './ProviderModelSettings'
 import { errorMessage } from '@shared/error'
 import { cn } from '@/lib/utils'
 import { Button, ATField, ghostPillCls } from '@/components/form/Buttons'
@@ -74,8 +75,6 @@ export function ModelManagerPanel({
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [hasKey, setHasKey] = useState(false)
   const [keyInput, setKeyInput] = useState('')
-  /** 空密钥（免密供应商如本地 Ollama）：选中时禁填 key，保存即清除已存密钥 */
-  const [noKey, setNoKey] = useState(false)
   /** 每供应商的模型列表拉取状态（按钮转圈 + 结果/错误文案） */
   const [fetchState, setFetchState] = useState<Record<string, FetchState>>({})
   /** 保存按钮结果态：loading=校验中（转圈）/ ok=绿勾 / error=红叉，结果 2s 后回 idle */
@@ -85,6 +84,7 @@ export function ModelManagerPanel({
   const [urlDirty, setUrlDirty] = useState(false)
 
   const editing = providers.find((p) => p.id === editingId) ?? null
+  const noKey = editing?.noKey === true
 
   // 编辑对象切换：清密钥输入与确认态（渲染期调整）；hasKey 为外部系统查询，走 effect 异步回填
   const [prevEditId, setPrevEditId] = useState(editingId)
@@ -93,7 +93,6 @@ export function ModelManagerPanel({
     setConfirmDelete(false)
     setKeyInput('')
     setHasKey(false)
-    setNoKey(false)
     setUrlDirty(false)
   }
 
@@ -345,7 +344,7 @@ export function ModelManagerPanel({
               <ATField
                 title={t('settings.aiApiKey')}
                 hint={
-                  hasKey ? (
+                  hasKey && !noKey ? (
                     <span className="text-caption text-muted">{t('settings.aiApiKeySet')}</span>
                   ) : undefined
                 }
@@ -354,7 +353,7 @@ export function ModelManagerPanel({
                   <ATTextField
                     value={keyInput}
                     onChange={setKeyInput}
-                    placeholder={hasKey ? t('settings.aiApiKeyHint') : ''}
+                    placeholder={hasKey && !noKey ? t('settings.aiApiKeyHint') : ''}
                     className="flex-1"
                     disabled={noKey}
                   />
@@ -364,7 +363,7 @@ export function ModelManagerPanel({
                       label={t('settings.aiNoKey')}
                       on={noKey}
                       onChange={(v) => {
-                        setNoKey(v)
+                        patchProvider(editing.id, { noKey: v })
                         if (v) setKeyInput('')
                       }}
                     />
@@ -372,7 +371,7 @@ export function ModelManagerPanel({
                       type="button"
                       className="text-caption text-muted transition-colors hover:text-fg"
                       onClick={() => {
-                        setNoKey(!noKey)
+                        patchProvider(editing.id, { noKey: !noKey })
                         if (!noKey) setKeyInput('')
                       }}
                     >
@@ -409,6 +408,17 @@ export function ModelManagerPanel({
                   </p>
                 )}
               </ATField>
+
+              {ai && (
+                <ProviderModelSettings
+                  key={editing.id}
+                  config={ai}
+                  provider={editing}
+                  onChange={(key, settings) =>
+                    patchAi({ modelSettings: { ...ai.modelSettings, [key]: settings } })
+                  }
+                />
+              )}
 
               <div className="mt-auto">
                 {/* 删除（默认供应商不可删；两步确认） */}

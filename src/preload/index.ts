@@ -308,9 +308,10 @@ const api = {
     getMessages: (sessionId: string): Promise<AiUIMessage[]> =>
       ipcRenderer.invoke('ai:getMessages', { sessionId }),
     closeSession: (sessionId: string): void => ipcRenderer.send('ai:closeSession', { sessionId }),
-    run: (sessionId: string, messages: AiUIMessage[]): Promise<void> =>
-      ipcRenderer.invoke('ai:run', { sessionId, messages }),
-    cancel: (sessionId: string): void => ipcRenderer.send('ai:cancel', { sessionId }),
+    run: (sessionId: string, messages: AiUIMessage[], turnId: string): Promise<void> =>
+      ipcRenderer.invoke('ai:run', { sessionId, messages, turnId }),
+    cancel: (sessionId: string, turnId?: string): Promise<AiUIMessage[]> =>
+      ipcRenderer.invoke('ai:cancel', { sessionId, turnId }),
     listModels: (providerId: string): Promise<string[]> =>
       ipcRenderer.invoke('ai:listModels', { providerId }),
     hasApiKey: (profileId: string): Promise<boolean> =>

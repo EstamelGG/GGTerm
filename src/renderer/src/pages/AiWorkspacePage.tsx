@@ -52,6 +52,8 @@ import type { DynamicToolUIPart, ReasoningUIPart, ToolUIPart } from 'ai'
 import type { AiApprovalLevel, AiUIMessage } from '@shared/types'
 import type { HumanInputRequest } from '@shared/execution'
 import { errorMessage } from '@shared/error'
+import { contextSettingsFor, modelSettingsKey } from '@shared/ai'
+import { ContextUsageIndicator } from '@/components/ai/ContextUsageIndicator'
 import { cn } from '@/lib/utils'
 import { useShallow } from 'zustand/react/shallow'
 import { ghostPillCls } from '@/components/form/Buttons'
@@ -324,8 +326,7 @@ function responseOf(name: string, output: unknown, t: TFunction): string | null 
         // 连接数：已建立（●）拆成用户侧（应用界面）与 agent 侧（各 AI 会话，每会话一条）；
         // 仅有拨号/重连中的链路时显示 ○，与「从未连接」区分
         const conns = it.connections as
-          | { total?: unknown; user?: unknown; agent?: unknown; pending?: unknown }
-          | undefined
+          { total?: unknown; user?: unknown; agent?: unknown; pending?: unknown } | undefined
         const num = (v: unknown): number => (typeof v === 'number' ? v : 0)
         const total = num(conns?.total)
         const state = total
@@ -576,8 +577,7 @@ const ToolCallCard = memo(function ToolCallCard({
   const desc = strOf(part.input, 'description')
   // 标题主机：入参/输出 hostId，或 execute 按 executionId 反查会话执行记录
   const directHostId = strOf(part.input, 'hostId') || strOf(part.output, 'hostId')
-  const executionId =
-    !directHostId && name === 'execute' ? strOf(part.input, 'executionId') : ''
+  const executionId = !directHostId && name === 'execute' ? strOf(part.input, 'executionId') : ''
   const [lookup, setLookup] = useState<{ id: string; hostId: string } | null>(null)
   useEffect(() => {
     if (!executionId) return
@@ -826,7 +826,9 @@ function ThinkingBlock({ part }: { part: ReasoningUIPart }): React.JSX.Element {
         ) : (
           <Brain size={11} className="shrink-0" />
         )}
-        <span className="shrink-0">{running ? t('ai.thinkingRunning') : t('ai.thinkingTitle')}</span>
+        <span className="shrink-0">
+          {running ? t('ai.thinkingRunning') : t('ai.thinkingTitle')}
+        </span>
         {!open && preview ? (
           <span className="min-w-0 flex-1 truncate text-muted/70">{preview}</span>
         ) : (
@@ -1013,6 +1015,16 @@ const MessageItem = memo(function MessageItem({
     <div className="flex flex-col gap-1">
       {stamp}
       <div className="flex flex-col">{rendered}</div>
+      {m.metadata?.interrupted && <p className="text-caption text-muted">{t('ai.interrupted')}</p>}
+      {m.metadata?.contextCompressed && (
+        <p className="text-caption text-muted">{t('ai.contextCompressed')}</p>
+      )}
+      {m.metadata?.finishReason === 'step-limit' && (
+        <p className="text-caption text-muted">{t('ai.stepLimit')}</p>
+      )}
+      {m.metadata?.finishReason === 'length' && (
+        <p className="text-caption text-muted">{t('ai.outputLimit')}</p>
+      )}
       {m.metadata?.error && (
         <div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-body text-danger">
           {m.metadata.error}
@@ -1057,6 +1069,7 @@ const MENU_MAX = 8
 function ChatComposer({
   sessionId,
   busy,
+  disabled,
   placeholder,
   onSend,
   onCancel,
@@ -1064,6 +1077,7 @@ function ChatComposer({
 }: {
   sessionId: string
   busy: boolean
+  disabled: boolean
   placeholder: string
   onSend: (text: string) => void
   onCancel: () => void
@@ -1111,6 +1125,7 @@ function ChatComposer({
   }, [sessionId])
   /** 对话场景当前绑定（下拉选中值） */
   const chatBinding = ai?.scenarios.chat ?? null
+  const contextUsage = useAiStore((s) => s.sessions.find((x) => x.id === sessionId)?.contextUsage)
   /** 可选对话模型 = 供应商 × 已缓存模型列表（缓存来自设置页自动拉取） */
   const chatOptions = (ai?.providers ?? []).flatMap((p) =>
     (ai?.modelCache?.[p.id] ?? []).map((model) => ({ providerId: p.id, label: p.label, model }))
@@ -1196,7 +1211,7 @@ function ChatComposer({
   }
 
   const submit = (): void => {
-    if (!text.trim() || busy) return
+    if (!text.trim() || busy || disabled) return
     onSend(text)
     setText('')
     setMenu(null)
@@ -1477,7 +1492,7 @@ function ChatComposer({
               <button
                 type="button"
                 onClick={submit}
-                disabled={!text.trim()}
+                disabled={!text.trim() || disabled}
                 title={t('ai.send')}
                 className="flex h-7 w-7 cursor-pointer shrink-0 items-center justify-center rounded-xl bg-at-accent text-white transition-opacity hover:opacity-90 disabled:opacity-35"
               >
@@ -1486,6 +1501,13 @@ function ChatComposer({
             )}
           </div>
         </div>
+        {ai && chatBinding?.model && (
+          <ContextUsageIndicator
+            usage={contextUsage}
+            modelKey={modelSettingsKey(chatBinding)}
+            contextWindow={contextSettingsFor(ai).contextWindow}
+          />
+        )}
       </div>
     </div>
   )
@@ -1535,7 +1557,7 @@ function SessionList({
           <span className="flex w-2 shrink-0 justify-center">
             {pendingApprovals(s.messages).length > 0 ? (
               <StateDot visual={solidDot('var(--at-warn)')} />
-            ) : s.status !== 'ready' ? (
+            ) : isBusy(s) ? (
               <StateDot visual={solidDot('var(--at-accent)')} />
             ) : null}
           </span>
@@ -1745,12 +1767,29 @@ export function AiWorkspacePage(): React.JSX.Element {
                       <MessageItem key={m.id} m={m} sessionId={active.id} />
                     ))}
                     {/* 处理指示器：agent 思考/调用工具中（后台命令运行由光圈表达，不在此重复） */}
-                    {active.status !== 'ready' && (
+                    {(active.stopping ||
+                      active.status === 'submitted' ||
+                      active.status === 'streaming') && (
                       <div className="flex items-center gap-1.5 text-caption text-muted">
                         <Loader2 size={11} className="animate-spin" />
-                        {t('ai.processing')}
+                        {t(active.stopping ? 'ai.stopping' : 'ai.processing')}
                       </div>
                     )}
+                    {active.error &&
+                      !active.messages.some(
+                        (m) =>
+                          m.metadata?.error === active.error?.message ||
+                          m.parts.some(
+                            (p) =>
+                              isToolUIPart(p) &&
+                              p.state === 'output-error' &&
+                              p.errorText.includes(active.error!.message)
+                          )
+                      ) && (
+                        <p className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-body text-danger">
+                          {active.error.message}
+                        </p>
+                      )}
                     {/* 人工输入卡片：排在对话末尾（agent 提示之后），与 VS Code 提问卡同位 */}
                     {inputRequests.map((request) => (
                       <HumanInputCard key={request.executionId} request={request} />
@@ -1777,6 +1816,7 @@ export function AiWorkspacePage(): React.JSX.Element {
               <ChatComposer
                 sessionId={active.id}
                 busy={isBusy(active)}
+                disabled={!active.loaded || active.id.startsWith('pending:')}
                 placeholder={t('ai.placeholder')}
                 onSend={handleSend}
                 onCancel={cancel}

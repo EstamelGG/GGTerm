@@ -9,12 +9,13 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { z } from 'zod'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import type { LanguageModelV3StreamPart } from '@ai-sdk/provider'
-import type { AiUIMessage } from '../src/shared/types'
+import type { AiContextUsage, AiUIMessage } from '../src/shared/types'
 import {
   initAgent,
   createAgentSession,
   startTurn,
   abortTurn,
+  cancelAgentTurn,
   listAgentSessions,
   getAgentSession,
   type AgentDeps,
@@ -275,6 +276,189 @@ describe('agent（离线 mock 模型）', () => {
     expect(final[1].parts.some((p) => p.type === 'text' && p.text === 'approved and done')).toBe(
       true
     )
+  })
+
+  it('上下文占用按请求更新，实际输入量替代估算并持久化，不累计多步用量', async () => {
+    const updates: AiContextUsage[] = []
+    reinit(
+      new MockLanguageModelV3({
+        doStream: [
+          step([toolCall('usage-tool', 'echo_probe', '{"city":"Hangzhou"}'), finish('tool-calls')]),
+          step([...textStep('done'), finish('stop')])
+        ]
+      }),
+      echoTools,
+      {
+        getModelKey: () => 'model-key',
+        onContextUsage: (_sessionId, _turnId, value) => updates.push(value)
+      }
+    )
+    const session = createAgentSession()
+    await collect(startTurn(session.id, [user('usage')]))
+    expect(updates[0]).toMatchObject({
+      modelKey: 'model-key',
+      contextWindow: 32768,
+      source: 'estimate'
+    })
+    expect(updates[0].inputTokens).toBeGreaterThan(1)
+    expect(updates.filter((u) => u.source === 'provider').length).toBeGreaterThanOrEqual(2)
+    expect(updates.at(-1)?.inputTokens).toBe(1)
+    expect(getAgentSession(session.id).messages.at(-1)?.metadata?.contextUsage).toEqual(
+      updates.at(-1)
+    )
+  })
+
+  it('自动摘要接入模型请求并持久化复用，完整 UI 历史不丢失', async () => {
+    const updates: AiContextUsage[] = []
+    const model = new MockLanguageModelV3({
+      doGenerate: async () => ({
+        content: [
+          {
+            type: 'text',
+            text: 'Task A was interrupted by the user; host=h1. Do not resume it unless requested.'
+          }
+        ],
+        finishReason: { unified: 'stop', raw: undefined },
+        usage,
+        warnings: []
+      }),
+      doStream: async () => step([...textStep('B completed'), finish('stop')])
+    })
+    reinit(model, [], {
+      getContextSettings: () => ({ contextWindow: 8192, autoCompress: true }),
+      onContextUsage: (_sessionId, _turnId, value) => updates.push(value)
+    })
+    const session = createAgentSession()
+    const old: AiUIMessage = {
+      id: 'old',
+      role: 'assistant',
+      metadata: { createdAt: 1, interrupted: true },
+      parts: [{ type: 'text', text: 'old logs '.repeat(2500) }]
+    }
+    await collect(startTurn(session.id, [user('A'), old, user('B')]))
+    const record = getAgentSession(session.id)
+    expect(record.contextSummary?.text).toContain('interrupted')
+    expect(record.messages[1].parts).toEqual(old.parts)
+    expect(record.messages.at(-1)?.metadata?.contextCompressed).toBe(true)
+    expect(updates.some((u) => u.phase === 'compressing')).toBe(true)
+    expect(updates.at(-1)).toMatchObject({ phase: 'ready', source: 'provider' })
+    expect(JSON.stringify(model.doStreamCalls[0].prompt)).toContain('Earlier conversation summary')
+    expect(JSON.stringify(model.doStreamCalls[0].prompt)).not.toContain('old logs old logs')
+    expect(
+      JSON.parse(readFileSync(join(dir, `${session.id}.json`), 'utf8')).contextSummary
+    ).toEqual(record.contextSummary)
+    const summaries = model.doGenerateCalls.length
+    await collect(startTurn(session.id, [...record.messages, user('C')]))
+    expect(model.doGenerateCalls).toHaveLength(summaries)
+  })
+
+  it('网络失败后同一会话能够继续，新回合不会保留忙碌锁', async () => {
+    let fail = true
+    const model = new MockLanguageModelV3({
+      doStream: async () => {
+        if (fail) throw new Error('network disconnected')
+        return step([...textStep('recovered'), finish('stop')])
+      }
+    })
+    reinit(model)
+    const session = createAgentSession()
+    const failed = await collect(startTurn(session.id, [user('A')]))
+    expect(failed.some((c) => c.type === 'error')).toBe(true)
+    fail = false
+    await collect(startTurn(session.id, [...getAgentSession(session.id).messages, user('B')]))
+    expect(getAgentSession(session.id).messages.at(-1)?.parts).toContainEqual(
+      expect.objectContaining({ type: 'text', text: 'recovered' })
+    )
+  })
+
+  it('停止待审批回合只落盘拒绝；新请求收到中断边界而不执行旧工具', async () => {
+    let ran = false
+    const model = new MockLanguageModelV3({
+      doStream: [
+        step([toolCall('pending', 'echo_probe', '{"city":"Hangzhou"}'), finish('tool-calls')]),
+        step([...textStep('B only'), finish('stop')])
+      ]
+    })
+    reinit(
+      model,
+      [
+        {
+          ...echoTools[0],
+          handler: async () => {
+            ran = true
+            return {}
+          }
+        }
+      ],
+      { gate: () => ({ type: 'user-approval' }) }
+    )
+    const session = createAgentSession()
+    await collect(startTurn(session.id, [user('A')], 'old'))
+    const stopped = await cancelAgentTurn(session.id, 'old')
+    expect(stopped.at(-1)?.metadata?.interrupted).toBe(true)
+    expect(toolParts(stopped.at(-1)!)[0]).toMatchObject({
+      state: 'output-denied',
+      approval: { approved: false }
+    })
+    expect(model.doStreamCalls).toHaveLength(1)
+    expect(() => startTurn(session.id, stopped)).toThrow('new user message')
+    await collect(startTurn(session.id, [...stopped, user('B')], 'new'))
+    expect(ran).toBe(false)
+    expect(JSON.stringify(model.doStreamCalls[1].prompt)).toContain(
+      'Do not resume its unfinished task'
+    )
+    expect(JSON.stringify(model.doStreamCalls[1].prompt)).toContain('B')
+  })
+
+  it('停止纯思考回合也保留中断事实，确认取消后即可发起下一轮', async () => {
+    const model = new MockLanguageModelV3({
+      doStream: [
+        {
+          stream: new ReadableStream<LanguageModelV3StreamPart>({
+            start(controller) {
+              controller.enqueue({ type: 'stream-start', warnings: [] })
+              controller.enqueue({ type: 'reasoning-start', id: 'r' })
+              controller.enqueue({ type: 'reasoning-delta', id: 'r', delta: 'considering A' })
+            }
+          })
+        },
+        step([...textStep('B'), finish('stop')])
+      ]
+    })
+    reinit(model)
+    const session = createAgentSession()
+    const running = collect(startTurn(session.id, [user('A')], 'first'))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const stopped = await cancelAgentTurn(session.id, 'first')
+    await running
+    expect(stopped.at(-1)?.metadata?.interrupted).toBe(true)
+    await collect(startTurn(session.id, [...stopped, user('B')], 'second'))
+    expect(JSON.stringify(model.doStreamCalls[1].prompt)).toContain('user interrupted this turn')
+  })
+
+  it('模型流停滞超时后保留错误，后续请求能够继续', async () => {
+    let calls = 0
+    const model = new MockLanguageModelV3({
+      doStream: async ({ abortSignal }) => {
+        if (calls++ > 0) return step([...textStep('recovered'), finish('stop')])
+        return {
+          stream: new ReadableStream<LanguageModelV3StreamPart>({
+            start(controller) {
+              controller.enqueue({ type: 'stream-start', warnings: [] })
+              abortSignal?.addEventListener('abort', () => controller.error(abortSignal.reason), {
+                once: true
+              })
+            }
+          })
+        }
+      }
+    })
+    reinit(model, [], { modelTimeout: { firstChunkMs: 30, chunkMs: 30 } })
+    const session = createAgentSession()
+    await collect(startTurn(session.id, [user('A')]))
+    expect(getAgentSession(session.id).messages.at(-1)?.metadata?.error).toBeTruthy()
+    await collect(startTurn(session.id, [...getAgentSession(session.id).messages, user('B')]))
+    expect(model.doStreamCalls).toHaveLength(2)
   })
 
   it('同一步多工具：同键按 tool call / 卡片顺序串行执行', { timeout: 15_000 }, async () => {

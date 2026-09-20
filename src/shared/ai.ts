@@ -1,4 +1,34 @@
-import type { AiConfig, AiProvider, AiProviderPreset } from './types'
+import type {
+  AiConfig,
+  AiContextSettings,
+  AiModelBinding,
+  AiProvider,
+  AiProviderPreset
+} from './types'
+
+export const MIN_CONTEXT_WINDOW = 8192
+export const MAX_CONTEXT_WINDOW = 1_048_576
+export const DEFAULT_CONTEXT_SETTINGS: AiContextSettings = {
+  contextWindow: 32_768,
+  autoCompress: true
+}
+export const modelSettingsKey = (binding: AiModelBinding): string =>
+  JSON.stringify([binding.providerId, binding.model])
+export function contextSettingsFor(
+  config: AiConfig,
+  binding = config.scenarios.chat
+): AiContextSettings {
+  const value = binding ? config.modelSettings?.[modelSettingsKey(binding)] : undefined
+  return {
+    contextWindow:
+      Number.isInteger(value?.contextWindow) &&
+      value!.contextWindow >= MIN_CONTEXT_WINDOW &&
+      value!.contextWindow <= MAX_CONTEXT_WINDOW
+        ? value!.contextWindow
+        : DEFAULT_CONTEXT_SETTINGS.contextWindow,
+    autoCompress: value?.autoCompress !== false
+  }
+}
 
 /** 预设：provider → 默认 baseURL（新建供应商时的快捷填充，本质均走 OpenAI-compatible） */
 export const AI_PRESETS: Record<AiProviderPreset, { baseURL: string }> = {

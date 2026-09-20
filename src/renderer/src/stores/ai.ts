@@ -5,7 +5,7 @@ import type { ChatState, ChatStatus, ChatTransport, UIMessageChunk } from 'ai'
 import { buildPayload } from '@/lib/aiInput'
 import { useConnectionsStore } from '@/stores/connections'
 import { useLinksStore } from '@/stores/links'
-import type { AiEvent, AiSessionSummary, AiUIMessage } from '@shared/types'
+import type { AiContextUsage, AiEvent, AiSessionSummary, AiUIMessage } from '@shared/types'
 
 /**
  * AI 多会话渲染层状态：每会话一个 AI SDK Chat（AbstractChat），状态直接落在 zustand（ChatState 适配），
@@ -22,6 +22,9 @@ export interface AiSession {
   messages: AiUIMessage[]
   status: ChatStatus
   error?: Error
+  stopping?: boolean
+  activeTurnId?: string
+  contextUsage?: AiContextUsage
   /** 历史是否已从 main 水合 */
   loaded: boolean
   /** 标题生成中（main 经 title-pending 事件同步）：UI 在标题位置显示转圈 */
@@ -62,8 +65,15 @@ export function pendingApprovals(
 }
 
 /** 会话是否忙：生成中，或末条消息有待审批（审批未决时不得开启新回合） */
-export function isBusy(s: Pick<AiSession, 'status' | 'messages'>): boolean {
-  return s.status !== 'ready' || pendingApprovals(s.messages).length > 0
+export function isBusy(
+  s: Pick<AiSession, 'status' | 'messages' | 'stopping' | 'activeTurnId'>
+): boolean {
+  return (
+    Boolean(s.stopping || s.activeTurnId) ||
+    s.status === 'submitted' ||
+    s.status === 'streaming' ||
+    pendingApprovals(s.messages).length > 0
+  )
 }
 
 /** 消息纯文本（用户消息优先原文 display） */
@@ -84,38 +94,72 @@ export function sessionTitle(s: { title: string; messages: AiUIMessage[] }): str
 
 /** 进行中回合的接收端：main 按会话广播流片，渲染层持有的流是唯一消费者 */
 interface Receiver {
+  turnId: string
   ctrl: ReadableStreamDefaultController<UIMessageChunk>
+  error?: Extract<UIMessageChunk, { type: 'error' }>
+  cleanup: () => void
 }
 const receivers = new Map<string, Receiver>()
+const completed = new Map<string, { promise: Promise<void>; resolve: () => void }>()
+const paused = new Set<string>()
+const revisions = new Map<string, number>()
 
-function openStream(sessionId: string): ReadableStream<UIMessageChunk> {
+function openStream(
+  sessionId: string,
+  turnId: string,
+  cleanup: () => void
+): ReadableStream<UIMessageChunk> {
   return new ReadableStream<UIMessageChunk>({
     start: (ctrl) => {
-      receivers.set(sessionId, { ctrl })
+      receivers.set(sessionId, { turnId, ctrl, cleanup })
     },
     cancel: () => {
-      receivers.delete(sessionId)
+      if (receivers.get(sessionId)?.turnId === turnId) receivers.delete(sessionId)
+      cleanup()
     }
   })
 }
 
 function deliver(r: Receiver, sessionId: string, e: AiEvent): void {
+  if ((e.type !== 'chunk' && e.type !== 'turn-end') || e.turnId !== r.turnId) return
   if (e.type === 'chunk') {
-    r.ctrl.enqueue(e.chunk)
+    // SDK 收到 error 会立即退出消费；等待 main 收尾，避免错误恢复时抢跑。
+    if (e.chunk.type === 'error') r.error = e.chunk
+    else r.ctrl.enqueue(e.chunk)
   } else if (e.type === 'turn-end') {
     receivers.delete(sessionId)
+    r.cleanup()
+    if (r.error) r.ctrl.enqueue(r.error)
     r.ctrl.close()
   }
 }
 
 const transport: ChatTransport<AiUIMessage> = {
   async sendMessages({ chatId, messages, abortSignal }) {
-    const stream = openStream(chatId)
-    abortSignal?.addEventListener('abort', () => window.aterm.ai.cancel(chatId))
+    const turnId = crypto.randomUUID()
+    revisions.set(chatId, (revisions.get(chatId) ?? 0) + 1)
+    let resolve!: () => void
+    completed.set(chatId, {
+      promise: new Promise<void>((r) => {
+        resolve = r
+      }),
+      resolve
+    })
+    useAiStore.setState((st) => ({
+      sessions: patchSession(st.sessions, chatId, (s) => ({ ...s, activeTurnId: turnId }))
+    }))
+    const abort = (): void => {
+      void window.aterm.ai.cancel(chatId, turnId).catch(() => {})
+    }
+    const cleanup = (): void => abortSignal?.removeEventListener('abort', abort)
+    const stream = openStream(chatId, turnId, cleanup)
+    abortSignal?.addEventListener('abort', abort, { once: true })
     try {
-      await window.aterm.ai.run(chatId, messages)
+      await window.aterm.ai.run(chatId, messages, turnId)
+      if (abortSignal?.aborted) abort()
     } catch (err) {
-      receivers.delete(chatId)
+      if (receivers.get(chatId)?.turnId === turnId) receivers.delete(chatId)
+      cleanup()
       throw err
     }
     return stream
@@ -193,13 +237,20 @@ function chatOf(id: string): SessionChat {
     id,
     transport,
     state: new SessionChatState(id),
-    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
+    sendAutomaticallyWhen: (options) =>
+      !paused.has(id) && lastAssistantMessageIsCompleteWithApprovalResponses(options),
     onFinish: () => {
       useAiStore.setState((st) => ({
-        sessions: patchSession(st.sessions, id, (s) => ({ ...s, updatedAt: Date.now() }))
+        sessions: patchSession(st.sessions, id, (s) => ({
+          ...s,
+          activeTurnId: undefined,
+          updatedAt: Date.now()
+        }))
       }))
+      completed.get(id)?.resolve()
+      completed.delete(id)
       // 回合收尾以 main 持久化结果为准（中断的工具卡已标记、审批续跑后消息完整）
-      void hydrate(id, true)
+      if (!useAiStore.getState().sessions.find((s) => s.id === id)?.stopping) void hydrate(id, true)
     }
   })
   chats.set(id, chat)
@@ -209,8 +260,13 @@ function chatOf(id: string): SessionChat {
 function flushNotify(id: string): void {
   const s = useAiStore.getState().sessions.find((x) => x.id === id)
   const queue = pendingNotify.get(id)
-  if (!s || !queue?.length || isBusy(s)) return
-  void chatOf(id).sendMessage({ text: queue.shift()!, metadata: { createdAt: Date.now() } })
+  if (!s || !s.loaded || !queue?.length || isBusy(s) || s.status === 'error' || paused.has(id))
+    return
+  void chatOf(id).sendMessage({
+    role: 'user',
+    parts: [{ type: 'text', text: queue.shift()! }],
+    metadata: { createdAt: Date.now() }
+  })
 }
 
 /* ---------------- store ---------------- */
@@ -221,6 +277,10 @@ function emptySession(summary: AiSessionSummary): AiSession {
 
 /** 组装并投递给指定会话：UI 显示用户原文（metadata.display），正文为经提示词层变换的 payload */
 function dispatch(id: string, text: string): void {
+  const s = useAiStore.getState().sessions.find((s) => s.id === id)
+  if (!s || !s.loaded || isBusy(s)) return
+  paused.delete(id)
+  pendingNotify.delete(id)
   const conns = useConnectionsStore.getState().connections
   const phases = useLinksStore.getState().byHost
   const payload = buildPayload(
@@ -228,7 +288,11 @@ function dispatch(id: string, text: string): void {
     conns.map((c) => ({ conn: c, phase: phases[c.id]?.phase })),
     i18next.t
   )
-  void chatOf(id).sendMessage({ text: payload, metadata: { createdAt: Date.now(), display: text } })
+  void chatOf(id).sendMessage({
+    role: 'user',
+    parts: [{ type: 'text', text: payload }],
+    metadata: { createdAt: Date.now(), display: text }
+  })
 }
 
 function patchSession(
@@ -239,16 +303,34 @@ function patchSession(
   return list.map((s) => (s.id === id ? patch(s) : s))
 }
 
+function latestContextUsage(messages: AiUIMessage[]): AiContextUsage | undefined {
+  return messages.findLast((m) => m.metadata?.contextUsage)?.metadata?.contextUsage
+}
+
 /** 从 main 拉取历史（首次激活 / 回合结束 / 重载后补齐） */
 async function hydrate(id: string, force = false): Promise<void> {
   const target = useAiStore.getState().sessions.find((s) => s.id === id)
   if (!target || (target.loaded && !force)) return
+  const revision = revisions.get(id)
   try {
     const messages = await window.aterm.ai.getMessages(id)
     const cur = useAiStore.getState().sessions.find((s) => s.id === id)
-    if (!cur || cur.status !== 'ready') return
+    if (
+      !cur ||
+      cur.stopping ||
+      cur.activeTurnId ||
+      cur.status === 'submitted' ||
+      cur.status === 'streaming' ||
+      revisions.get(id) !== revision
+    )
+      return
     useAiStore.setState((st) => ({
-      sessions: patchSession(st.sessions, id, (s) => ({ ...s, messages, loaded: true }))
+      sessions: patchSession(st.sessions, id, (s) => ({
+        ...s,
+        messages,
+        loaded: true,
+        contextUsage: latestContextUsage(messages)
+      }))
     }))
     // 水合即全部：进行中的回合结束后由 turn-end 事件触发再次水合补齐
     flushNotify(id)
@@ -327,6 +409,8 @@ export const useAiStore = create<AiState>((set, get) => ({
     window.aterm.ai.closeSession(id)
     chats.delete(id)
     pendingNotify.delete(id)
+    paused.delete(id)
+    revisions.set(id, (revisions.get(id) ?? 0) + 1)
     const sessions = get().sessions.filter((s) => s.id !== id)
     if (sessions.length === 0) {
       void window.aterm.ai
@@ -396,15 +480,44 @@ export const useAiStore = create<AiState>((set, get) => ({
   cancel: () => {
     const id = get().activeId
     if (!id) return
+    const session = get().sessions.find((s) => s.id === id)
+    if (!session || session.stopping) return
     const chat = chatOf(id)
-    // 中断进行中的流；若卡在人工审批（回合已结束），一律按拒绝写回并触发续跑收尾
-    void chat.stop()
-    for (const p of pendingApprovals(get().sessions.find((s) => s.id === id)?.messages ?? [])) {
-      void chat.addToolApprovalResponse({ id: p.approvalId, approved: false })
-    }
+    paused.add(id)
+    pendingNotify.delete(id)
+    revisions.set(id, (revisions.get(id) ?? 0) + 1)
+    set((st) => ({ sessions: patchSession(st.sessions, id, (s) => ({ ...s, stopping: true })) }))
+    const finished = completed.get(id)?.promise
+    void (async () => {
+      try {
+        const messages = await window.aterm.ai.cancel(id, session.activeTurnId)
+        // 不用 addToolApprovalResponse：停止审批不应触发模型另寻方案。
+        await finished
+        chat.clearError()
+        set((st) => ({
+          sessions: patchSession(st.sessions, id, (s) => ({
+            ...s,
+            messages,
+            loaded: true,
+            contextUsage: latestContextUsage(messages),
+            stopping: false,
+            error: undefined
+          }))
+        }))
+      } catch (err) {
+        set((st) => ({
+          sessions: patchSession(st.sessions, id, (s) => ({
+            ...s,
+            stopping: false,
+            error: err instanceof Error ? err : new Error(String(err))
+          }))
+        }))
+      }
+    })()
   },
 
   respondApproval: (sessionId: string, approvalId: string, approved: boolean, note?: string) => {
+    if (paused.has(sessionId)) return
     void chatOf(sessionId).addToolApprovalResponse({
       id: approvalId,
       approved,
@@ -414,6 +527,14 @@ export const useAiStore = create<AiState>((set, get) => ({
   },
 
   applyEvent: (e) => {
+    if (e.type === 'context-usage') {
+      set((st) => ({
+        sessions: patchSession(st.sessions, e.sessionId, (s) =>
+          s.activeTurnId === e.turnId ? { ...s, contextUsage: e.usage } : s
+        )
+      }))
+      return
+    }
     if (e.type === 'chunk' || e.type === 'turn-end') {
       const r = receivers.get(e.sessionId)
       // 无接收端（渲染层重载后回合仍在跑）：以 main 的持久化结果为准补齐
@@ -435,6 +556,7 @@ export const useAiStore = create<AiState>((set, get) => ({
       return
     }
     // 执行器通知：以用户消息投递给 agent；会话忙（生成中/审批未决）则排队
+    if (paused.has(e.sessionId)) return
     const list = pendingNotify.get(e.sessionId) ?? []
     list.push(e.text)
     pendingNotify.set(e.sessionId, list)

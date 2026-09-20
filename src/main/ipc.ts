@@ -638,13 +638,21 @@ export function registerIpc(): void {
 
   ipcMain.handle(
     channels.aiRun,
-    (_e, { sessionId, messages }: { sessionId: string; messages: AiUIMessage[] }) =>
-      ai.run(sessionId, messages)
+    (
+      _e,
+      {
+        sessionId,
+        messages,
+        turnId
+      }: { sessionId: string; messages: AiUIMessage[]; turnId: string }
+    ) => ai.run(sessionId, messages, turnId)
   )
 
-  ipcMain.on(channels.aiCancel, (_e, { sessionId }: { sessionId: string }) => {
-    void ai.cancel(sessionId)
-  })
+  ipcMain.handle(
+    channels.aiCancel,
+    (_e, { sessionId, turnId }: { sessionId: string; turnId?: string }) =>
+      ai.cancel(sessionId, turnId)
+  )
 
   ipcMain.handle(channels.aiListModels, (_e, { providerId }: { providerId: string }) =>
     ai.listModels(providerId)
