@@ -1,6 +1,6 @@
 {
   "name": "ggterm",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "SSH terminal + AI agent framework",
   "main": "./out/main/index.js",
   "author": "EstamelGG",
