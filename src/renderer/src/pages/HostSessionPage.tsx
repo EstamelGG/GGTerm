@@ -2,7 +2,7 @@ import { useResizePreview } from '@/lib/useResizePreview'
 import { SessionTabs } from '@/components/chrome/SessionTabs'
 import { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { FileText, Plus } from 'lucide-react'
+import { FileText, PanelLeftClose, PanelLeftOpen, Plus } from 'lucide-react'
 import type { LinkPhase, ShellStatus } from '@shared/types'
 import { linkStateColor, shellStateDot } from '@/lib/linkPhase'
 import { shellQuote } from '@shared/sftpPath'
@@ -37,6 +37,13 @@ function loadWidth(): number {
   const raw = localStorage.getItem(WIDTH_KEY)
   const v = raw === null ? NaN : Number(raw)
   return Number.isFinite(v) ? Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, v)) : 300
+}
+
+/** 左栏收纳状态（'0' 收起 / 其它展开）：与宽度同存 localStorage，跨会话沿用 */
+const OPEN_KEY = 'ggterm.sftpOpen'
+
+function loadSftpOpen(): boolean {
+  return localStorage.getItem(OPEN_KEY) !== '0'
 }
 
 /** 上部文件编辑区高度（px）：null = 未拖过，与终端区 flex 均分（默认 50/50） */
@@ -89,6 +96,13 @@ export function HostSessionPage({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [width, setWidth] = useState(() => loadWidth())
+  /** 左栏收纳：面板保持挂载（树/选中/滚动不丢），只把宽度归零 */
+  const [sftpOpen, setSftpOpen] = useState(loadSftpOpen)
+  const toggleSftp = (): void => {
+    const next = !sftpOpen
+    localStorage.setItem(OPEN_KEY, next ? '1' : '0')
+    setSftpOpen(next)
+  }
   const rootRef = useRef<HTMLDivElement>(null)
   const [bounds, setBounds] = useState({ width: 980, height: 540 })
   const widthPreviewRef = useRef<HTMLDivElement>(null)
@@ -174,37 +188,50 @@ export function HostSessionPage({
 
   return (
     <div ref={rootRef} className="relative flex h-full bg-sidebar">
-      {/* 左：SFTP 面板（对照 SftpPane(host:)） */}
-      <div
-        className="flex shrink-0 flex-col border-r border-line bg-sidebar"
-        style={{ width: effectiveWidth }}
-      >
-        <SftpPane
-          hostId={host.id}
-          onToast={onToast}
-          onOpenTerminal={(dir) => addShell(host.id, `cd ${shellQuote(dir)}`)}
-          onOpenFile={(entry) => openFile(host.id, entry)}
-        />
-      </div>
-
-      {/* splitter：1px，拖拽中 accent 35% + 预览线 */}
+      {/* 左：SFTP 面板（对照 SftpPane(host:)）。收纳开关在下方控制台标签行行首（常驻不随标签滚动）。
+          收纳时外层宽度归 0 + overflow-hidden，内层仍按原宽排版 ——
+          测量尺寸不变，展开时树不重测、滚动位置与选中态都保留 */}
       <div
         className={cn(
-          'relative z-10 w-px shrink-0 cursor-col-resize touch-none',
-          dragging ? 'bg-at-accent/35' : 'bg-line'
+          'h-full shrink-0 overflow-hidden bg-sidebar',
+          sftpOpen && 'border-r border-line'
         )}
+        style={{ width: sftpOpen ? effectiveWidth : 0 }}
+        aria-hidden={!sftpOpen}
+        inert={!sftpOpen}
       >
-        <div
-          className="absolute inset-y-0 -left-1 w-2.5 cursor-col-resize touch-none"
-          {...widthResize.handleProps}
-        />
+        <div className="h-full" style={{ width: effectiveWidth }}>
+          <SftpPane
+            hostId={host.id}
+            onToast={onToast}
+            onOpenTerminal={(dir) => addShell(host.id, `cd ${shellQuote(dir)}`)}
+            onOpenFile={(entry) => openFile(host.id, entry)}
+          />
+        </div>
       </div>
-      {dragging && previewWidth !== null && (
-        <div
-          ref={widthPreviewRef}
-          className="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-at-accent/85"
-          style={{ left: effectiveWidth - 1 }}
-        />
+
+      {sftpOpen && (
+        <>
+          {/* splitter：1px，拖拽中 accent 35% + 预览线 */}
+          <div
+            className={cn(
+              'relative z-10 w-px shrink-0 cursor-col-resize touch-none',
+              dragging ? 'bg-at-accent/35' : 'bg-line'
+            )}
+          >
+            <div
+              className="absolute inset-y-0 -left-1 w-2.5 cursor-col-resize touch-none"
+              {...widthResize.handleProps}
+            />
+          </div>
+          {dragging && previewWidth !== null && (
+            <div
+              ref={widthPreviewRef}
+              className="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-at-accent/85"
+              style={{ left: effectiveWidth - 1 }}
+            />
+          )}
+        </>
       )}
 
       {/* 右：上下分栏 —— 上=文件编辑区、下=SSH 会话区（两区焦点独立、各自滚动） */}
@@ -308,6 +335,15 @@ export function HostSessionPage({
 
         {/* 下：SSH 会话区（常驻）。chips 在滚动区内横滚，'+' 与状态胶囊固定行尾不越界 */}
         <div className={CHROME_ROW}>
+          {/* SFTP 面板收纳开关：固定在标签行行首，不随 chips 横滚 */}
+          <IconButton
+            variant="toolbar"
+            icon={sftpOpen ? PanelLeftClose : PanelLeftOpen}
+            frame={22}
+            title={sftpOpen ? t('sftp.collapsePane') : t('sftp.expandPane')}
+            aria-expanded={sftpOpen}
+            onClick={toggleSftp}
+          />
           <SessionTabs
             tabs={host.shells.map((s) => ({
               id: s.id,

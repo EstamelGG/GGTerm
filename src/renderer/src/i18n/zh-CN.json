@@ -280,6 +280,8 @@
     "namePlaceholder": "名称",
     "connecting": "正在连接 SFTP…",
     "disconnected": "SFTP 已断开，等待主机链路恢复",
+    "collapsePane": "收起 SFTP 面板",
+    "expandPane": "展开 SFTP 面板",
     "home": "主目录",
     "collapseAll": "折叠全部",
     "hideHidden": "不显示隐藏的文件",

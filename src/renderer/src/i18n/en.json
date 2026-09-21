@@ -280,6 +280,8 @@
     "namePlaceholder": "Name",
     "connecting": "Connecting to SFTP…",
     "disconnected": "SFTP disconnected, waiting for host link to recover",
+    "collapsePane": "Collapse SFTP panel",
+    "expandPane": "Expand SFTP panel",
     "home": "Home",
     "collapseAll": "Collapse All",
     "hideHidden": "Hide dotfiles",
