@@ -30,6 +30,7 @@ import { executions } from './exec'
 import {
   judgeCommand,
   judgeConfig,
+  judgeLocalWrite,
   judgeSftpWrite,
   judgeSessionClose,
   type GateDecision
@@ -40,16 +41,21 @@ import {
  * 回合流片广播（ai:event）、会话标题刷新。回合执行与持久化由 ./agent 承担。
  */
 
+/** 本机操作系统：本机工具（local_*）的 shell 与路径形态随平台不同，提示里显式告知模型 */
+const LOCAL_OS =
+  process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux'
+
 const SYSTEM = `You are the built-in SSH ops assistant of GGTerm, operating saved SSH connections and sessions directly.
 Rules:
 1. Host addressing: hostId must come from the id field returned by list_hosts — never invent or guess one. When the user mentions a host by name/IP, call list_hosts first to resolve it (results also carry per-host transport counts split by owner, a duplicate flag, and — with includeNote=true — the note; request the note only when its content is actually needed). To see the transports themselves — one entry per real connection, split user/agent, with the jump chain actually in use — use list_connections instead. Other tools auto-connect when needed, so no explicit connect is required. If nothing matches, list the closest candidates and let the user choose.
-2. Prefer tools over shell: read files with sftp_read, list directories with sftp_list, delete files/directories with sftp_delete instead of cat/ls/rm/rmdir; fall back to commands only when SFTP is unavailable.
+2. Prefer tools over shell: remote files go through sftp_read/sftp_list/sftp_write/sftp_patch/sftp_delete instead of cat/ls/rm/rmdir; local files go through local_read/local_list/local_stat/local_write/local_patch/local_grep instead of cat/ls/grep/rm. Fall back to commands only when a tool cannot express the operation. Both read tools return a window of lines (offset/limit, plus nextOffset when cut short): page through a large file instead of asking for all of it at once.
 3. Run one command at a time; never chain compound commands (no &&, ;, |). Tools called in the same step run in declaration order (same as card order); calls on different hosts may proceed concurrently, but anything touching the same host is serialized — still prefer one mutating tool per step when operations depend on each other.
-4. All commands run via execute in a background remote shell; user terminal tabs are never opened. Local execution is not supported. For start, hostId must come from list_hosts; command is optional — omitting it just opens a remote shell (requires confirmation). Every execute call must carry a one-line description of the intent, written in the language the user writes in (shown to the user). Later input on the same executionId (must end with a newline) keeps cwd, env and login state. The user can only view output in this session's execution list or terminate it — they cannot type in the viewer. A password/verification-code prompt parks the execute call instead of returning to you: an input card appears in the chat and the user submits the value there themselves (it never reaches you), so the call resumes only after they act — humanInputOutcome tells you how (submitted / cancelled / expired). Never ask for the secret in chat and never pass sensitive input through the model. running means the shell is alive; completed/exitCode describe only the shell itself, not the foreground command. Output is polled at most every 60s; a detected prompt is a hint to inspect output, never proof of success — do not claim success or rerun. cancel sends Ctrl-C and usually keeps the shell; rollback is not guaranteed. Stopping generation or closing the viewer does not close the background shell. After terminationRequested or unknown, never touch or auto-rerun the task.
+4. All remote commands run via execute in a background remote shell; user terminal tabs are never opened. execute is remote-only — local commands go through local_exec (one-shot, non-interactive). For start, hostId must come from list_hosts; command is optional — omitting it just opens a remote shell (requires confirmation). Every execute call must carry a one-line description of the intent, written in the language the user writes in (shown to the user). Later input on the same executionId (must end with a newline) keeps cwd, env and login state. The user can only view output in this session's execution list or terminate it — they cannot type in the viewer. A password/verification-code prompt parks the execute call instead of returning to you: an input card appears in the chat and the user submits the value there themselves (it never reaches you), so the call resumes only after they act — humanInputOutcome tells you how (submitted / cancelled / expired). Never ask for the secret in chat and never pass sensitive input through the model. running means the shell is alive; completed/exitCode describe only the shell itself, not the foreground command. Output is polled at most every 60s; a detected prompt is a hint to inspect output, never proof of success — do not claim success or rerun. cancel sends Ctrl-C and usually keeps the shell; rollback is not guaranteed. Stopping generation or closing the viewer does not close the background shell. After terminationRequested or unknown, never touch or auto-rerun the task.
 5. Destructive operations (delete, service restart, config changes) will require human confirmation by the system; just report normally.
 6. Host scope: the operation target must be specified by the user (host name or IP both work). If unsure which host, list candidates and let the user choose; never connect to or probe all hosts when the target is unclear. Bulk operations only with explicit user authorization, and write operations must be confirmed host by host.
-7. Local file access (sftp_upload): macOS may deny reading Downloads/Documents/Desktop (EPERM/EACCES in the tool error). Do NOT retry the upload or bypass with other local paths / write_temp_file. Do NOT claim the source file is empty. Tell the user to grant access in System Settings → Privacy & Security → Files and Folders, then stop and wait.
+7. Local file access (sftp_upload and all local_* tools): macOS may deny reading Downloads/Documents/Desktop (EPERM/EACCES in the tool error). Do NOT retry, and do NOT work around it with another local path, write_temp_file or a different tool. Do NOT claim the file is empty. Tell the user to grant access in System Settings → Privacy & Security → Files and Folders, then stop and wait.
 8. Respect user-interruption markers in conversation history and summaries. Unfinished work from an interrupted turn is paused, not a standing instruction: follow the latest user request and resume earlier work only when the user explicitly asks to continue it. Never infer that interruption rolled back a command or that a missing result means it is safe to rerun.
+9. Local machine (the user's own computer; this machine runs ${LOCAL_OS}): local_exec runs a single command in a login shell (PowerShell on Windows) and exits — there is no session to return to (pass an absolute path or fold cd into the same command) and no stdin (commands that prompt get EOF instead of hanging; never use it for interactive prompts such as passwords, editors or pagers). Write the command for that platform: POSIX syntax and paths on macOS/Linux, PowerShell syntax and drives/backslashes on Windows — do not assume the local OS is the same as the remote host's. Long output is capped to head+tail: redirect to a file and page it with local_read. Local paths are absolute, or relative to the home directory (~ accepted).
 Always respond in the language the user writes in.`
 
 /* ---------------- 事件广播（增量合并） ---------------- */
@@ -233,6 +239,25 @@ function judgeLabel(d: GateDecision, relaxed: boolean): string {
 /** 已记判定日志的 toolCall（SDK 在首次评估与审批续跑时重复调用 gate，同一调用只记一次） */
 const auditedToolCalls = new Set<string>()
 
+/** 命令判定审计（safeguard 频道）：同一 toolCall 只记首次判定 */
+function auditCommand(
+  toolCallId: string | undefined,
+  command: string,
+  decision: GateDecision,
+  relaxed: boolean
+): void {
+  const dup = toolCallId ? auditedToolCalls.has(toolCallId) : false
+  if (toolCallId) {
+    auditedToolCalls.add(toolCallId)
+    if (auditedToolCalls.size > 500) auditedToolCalls.clear()
+  }
+  if (dup) return
+  appLog(
+    'safeguard',
+    `Command judge [${judgeLabel(decision, relaxed)}] ${forLog(command.trimEnd(), 300)}${decision.reason ? ` — ${decision.reason}` : ''}`
+  )
+}
+
 /**
  * 三层风险门映射到 SDK 审批状态：direct → approved（自动放行徽标）；deny → denied（自动拦截，理由回传模型）；
  * confirm → user-approval（reason 为审批卡展示文案：命令 / 源与目的路径；流在此结束，渲染层写回响应后续跑）。
@@ -285,7 +310,9 @@ const gateTool: NonNullable<AgentDeps['gate']> = async (
         }
       } else if (action === 'start') {
         if (String(input.target ?? '') === 'local')
-          return deny('Local execution is not supported; use a remote hostId from list_hosts')
+          return deny(
+            'execute is remote-only; use local_exec for local commands, or a hostId from list_hosts'
+          )
         command = String(input.command ?? '')
         if (command.trim()) {
           decision = await judgeCommand(command, prefs, resolveLocale())
@@ -297,19 +324,22 @@ const gateTool: NonNullable<AgentDeps['gate']> = async (
           }
         }
       } else return deny('Unknown execute action')
-      // 判定审计（safeguard 频道）：同一 toolCall 只记首次判定（审批续跑的重复评估不记）
-      const dup = toolCallId ? auditedToolCalls.has(toolCallId) : false
-      if (toolCallId) {
-        auditedToolCalls.add(toolCallId)
-        if (auditedToolCalls.size > 500) auditedToolCalls.clear()
-      }
-      if (!dup)
-        appLog(
-          'safeguard',
-          `Command judge [${judgeLabel(decision, prefs.approvalLevel === 'relaxed')}] ${forLog(command.trimEnd(), 300)}${decision.reason ? ` — ${decision.reason}` : ''}`
-        )
+      auditCommand(toolCallId, command, decision, prefs.approvalLevel === 'relaxed')
       break
     }
+    // 本机命令：与远端同一套命令判定（安全直行 / 危险或模糊转人工）
+    case 'local_exec': {
+      command = String(input.command ?? '')
+      decision = await judgeCommand(command, prefs, resolveLocale())
+      auditCommand(toolCallId, command, decision, prefs.approvalLevel === 'relaxed')
+      break
+    }
+    // 本机文件写/编辑：与 SFTP 写同级（非宽松模式一律人工确认）
+    case 'local_write':
+    case 'local_patch':
+      command = String(input.path ?? '')
+      decision = judgeLocalWrite(prefs)
+      break
     case 'sftp_write':
     case 'sftp_patch':
     case 'sftp_delete':

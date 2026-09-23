@@ -26,11 +26,13 @@ import {
   Layers,
   Lock,
   Loader2,
+  Monitor,
   NotebookPen,
   Pen,
   Plug,
   Plus,
   Replace,
+  Search,
   Server,
   ServerCog,
   ServerOff,
@@ -112,7 +114,7 @@ function compactJson(v: unknown, max = 300): string {
 /** 主机显示名解析：`name (ip)`，查不到回退原始 id */
 type HostResolver = (hostId: string) => string
 
-/** 工具卡图标映射（与 main/ai/tools 的 28 个工具一一对应），未知工具兜底 Wrench */
+/** 工具卡图标映射（与 main/ai/tools 的 35 个工具一一对应），未知工具兜底 Wrench */
 const TOOL_ICONS: Record<string, LucideIcon> = {
   list_hosts: Server,
   list_connections: Waypoints,
@@ -141,7 +143,15 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
   rename_group: Pen,
   delete_group: FolderMinus,
   edit_note: NotebookPen,
-  compute: Calculator
+  compute: Calculator,
+  // 本机域：命令执行与文件读写/检索（本地无 hostId，靠图标与摘要区分）
+  local_exec: Monitor,
+  local_list: FolderOpen,
+  local_stat: FileSearch,
+  local_read: FileText,
+  local_write: FilePen,
+  local_patch: FileDiff,
+  local_grep: Search
 }
 
 const strOf = (o: unknown, k: string): string => {
@@ -266,6 +276,21 @@ function toolSummary(
         })
       return t('ai.tool.computeCodec', { action, op: str('op'), data: str('data') })
     }
+    // 本机域：摘要统一带 path（缺省即家目录）；命令与正则各显示关键参数
+    case 'local_exec':
+      return t('ai.tool.localExec', { command: str('command') })
+    case 'local_list':
+      return t('ai.tool.localList', { path: str('path') || '~' })
+    case 'local_stat':
+      return t('ai.tool.localStat', { path: str('path') })
+    case 'local_read':
+      return t('ai.tool.localRead', { path: str('path') })
+    case 'local_write':
+      return t('ai.tool.localWrite', { path: str('path') })
+    case 'local_patch':
+      return t('ai.tool.localPatch', { path: str('path') })
+    case 'local_grep':
+      return t('ai.tool.localGrep', { path: str('path') || '~', pattern: str('pattern') })
     default:
       return Object.keys(o).length ? compactJson(input) : ''
   }
@@ -289,7 +314,7 @@ function formatSize(n: number): string {
  * 连接/写入/传输等确认型工具不设响应区（无信息量）
  */
 function responseOf(name: string, output: unknown, t: TFunction): string | null {
-  if (name === 'sftp_list') {
+  if (name === 'sftp_list' || name === 'local_list') {
     if (!Array.isArray(output)) return null
     const lines = output
       .map((e) => {
@@ -391,8 +416,7 @@ function responseOf(name: string, output: unknown, t: TFunction): string | null 
       if (typeof o.output !== 'string') return null
       return o.output.trim() ? o.output.replace(/\s+$/, '') : t('ai.tool.toolNoOutput')
     case 'sftp_read':
-      if (typeof o.content !== 'string') return null
-      return o.content.trim() ? o.content.replace(/\s+$/, '') : t('ai.tool.toolNoOutput')
+      return readResponse(o, t)
     case 'probe_latency':
       return typeof o.summary === 'string' && o.summary.trim() ? o.summary : null
     case 'test_connection':
@@ -406,9 +430,58 @@ function responseOf(name: string, output: unknown, t: TFunction): string | null 
       if (typeof o.digest === 'string' && o.digest) return o.digest
       if (typeof o.result === 'string' && o.result) return o.result
       return null
+    // 本机：命令（超时/非零退出码作为首行提示）+ 文件内容 / 元数据 / 检索命中
+    case 'local_exec': {
+      if (typeof o.output !== 'string') return null
+      const code = typeof o.exitCode === 'number' ? o.exitCode : null
+      const status =
+        o.timedOut === true
+          ? t('ai.tool.execTimeout')
+          : code !== null && code !== 0
+            ? t('ai.tool.exitCode', { code: String(code) })
+            : ''
+      const body = o.output.trim() ? o.output.replace(/\s+$/, '') : t('ai.tool.toolNoOutput')
+      return status ? `${status}\n\n${body}` : body
+    }
+    case 'local_read':
+      return readResponse(o, t)
+    case 'local_stat': {
+      const kind = o.isDir === true ? 'dir' : o.isLink === true ? 'link' : 'file'
+      const mode = typeof o.mode === 'string' ? o.mode : ''
+      const size = typeof o.size === 'number' ? formatSize(o.size) : ''
+      const mtime = typeof o.modified === 'number' ? new Date(o.modified).toLocaleString() : ''
+      return [kind, mode, size, mtime].filter(Boolean).join(' · ') || null
+    }
+    case 'local_grep': {
+      if (!Array.isArray(o.matches)) return null
+      const body = o.matches
+        .map((m) => {
+          const hit = m as { path?: unknown; line?: unknown; text?: unknown }
+          if (typeof hit.path !== 'string' || !hit.path) return ''
+          const line = typeof hit.line === 'number' ? hit.line : 0
+          const text = typeof hit.text === 'string' ? hit.text : ''
+          return `${hit.path}:${line}  ${text}`
+        })
+        .filter(Boolean)
+        .join('\n')
+      if (!body) return t('ai.tool.toolNoOutput')
+      return o.truncated === true ? `${body}\n${t('ai.tool.truncatedNote')}` : body
+    }
     default:
       return null
   }
+}
+
+/** 文本类读取结果的响应区：内容 + 分页提示（被截断时说明还有后续、从哪一行续读） */
+function readResponse(o: Record<string, unknown>, t: TFunction): string | null {
+  if (typeof o.content !== 'string') return null
+  const body = o.content.trim() ? o.content.replace(/\s+$/, '') : t('ai.tool.toolNoOutput')
+  if (o.truncated !== true) return body
+  return `${body}\n${t('ai.tool.readPaged', {
+    from: String(o.fromLine ?? ''),
+    to: String(o.toLine ?? ''),
+    total: String(o.totalLines ?? '')
+  })}`
 }
 
 /** 源/目的路径行：标签淡化，路径可换行复制 */

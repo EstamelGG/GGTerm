@@ -10,7 +10,7 @@ import { createChatModel } from './provider'
 export type GateAction = 'direct' | 'confirm' | 'deny'
 
 export type GateLevel =
-  'whitelist' | 'blacklist' | 'gray' | 'strict' | 'sftp' | 'session' | 'config'
+  'whitelist' | 'blacklist' | 'gray' | 'strict' | 'sftp' | 'session' | 'config' | 'local'
 
 export interface GateDecision {
   action: GateAction
@@ -185,6 +185,17 @@ export function judgeSftpWrite(config: AiConfig): GateDecision {
     action: 'confirm',
     level: 'sftp',
     reason: 'SFTP write/delete/rename requires confirmation'
+  }
+}
+
+/** 本机文件写/删：语义与 SFTP 写同级（本机改动同样影响用户环境），非宽松模式一律确认。 */
+export function judgeLocalWrite(config: AiConfig): GateDecision {
+  if (config.approvalLevel === 'relaxed')
+    return { action: 'direct', level: 'whitelist', reason: '' }
+  return {
+    action: 'confirm',
+    level: 'local',
+    reason: 'Local file write requires confirmation'
   }
 }
 

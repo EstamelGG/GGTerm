@@ -2,7 +2,27 @@ import { basename } from 'node:path'
 import { z } from 'zod'
 import { defineTool } from './shared'
 import type { SftpEntry } from '../../../shared/types'
+import { applyAnchorPatch } from './anchorPatch'
+import { pageHint, pageLines, READ_DEFAULT_LINES } from './page'
 import { hostIdSchema, intentSchema, sftpOf, type AnyTool } from './shared'
+
+/** sftp_read / sftp_patch 的读取上限（与 SftpSession.EDIT_MAX_BYTES 一致）：超过只能改用远端命令按需读 */
+const SFTP_READ_MAX_BYTES = 10 * 1024 * 1024
+
+const isDirPermissions = (permissions: number | null): boolean =>
+  permissions !== null && (permissions & 0o170000) === 0o040000
+
+/**
+ * 超限错误：明确「不要重试」并给出可执行的替代命令 ——
+ * 否则模型容易反复换路径重试，或干脆去下载整个大文件。
+ */
+function tooLargeForSftpRead(path: string, size: number | null): Error {
+  const actual = size === null ? 'over 10MB' : `${(size / 1024 / 1024).toFixed(1)}MB`
+  return new Error(
+    `File is too large for sftp_read (${actual}; limit 10MB). Do not retry it here — read only the part you need on the host with execute: ` +
+      `head -n 200 ${path}, tail -n 200 ${path}, sed -n '100,300p' ${path}, grep -n <pattern> ${path}`
+  )
+}
 
 /** 删除条目构造（目录走 rm -rf，文件走 unlink） */
 async function removePath(hostId: string, path: string): Promise<void> {
@@ -47,12 +67,48 @@ export const sftpTools: AnyTool[] = [
     }
   }),
   defineTool('sftp_read', {
-    description: 'Read a remote text file (via SFTP; preferred over cat; errors above 10MB).',
-    parameters: z.object({ description: intentSchema, hostId: hostIdSchema, path: z.string() }),
-    handler: async ({ hostId, path }) => {
-      const res = await (await sftpOf(hostId)).readForEdit(path, 0)
-      if (res.kind === 'tooLarge') throw new Error('File too large (>10MB); use a command instead')
-      return { path, content: res.text, size: res.size }
+    description: `Read a remote text file (via SFTP; preferred over cat). Only files up to 10MB: larger ones are refused before any transfer — read those on the host with execute (head/tail/sed/grep) instead of retrying. Returns a window of complete lines — ${READ_DEFAULT_LINES} lines by default, capped by size as well — instead of the whole file: the result carries totalLines and, when it was cut short, nextOffset, which you pass back as offset to continue reading. Content is verbatim (CRLF preserved), so a returned window can be used directly as sftp_patch anchors.`,
+    parameters: z.object({
+      description: intentSchema,
+      hostId: hostIdSchema,
+      path: z.string(),
+      offset: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('First line to return, 1-based; default 1'),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe(`Maximum lines to return; default ${READ_DEFAULT_LINES}`)
+    }),
+    handler: async ({ hostId, path, offset, limit }) => {
+      const sftp = await sftpOf(hostId)
+      // 先 stat 判大小：超限直接拒绝，不为一页内容把整个大文件拖下来
+      const st = await sftp.stat(path)
+      if (isDirPermissions(st.permissions))
+        throw new Error('Path is a directory; use sftp_list instead')
+      if (st.size > SFTP_READ_MAX_BYTES) throw tooLargeForSftpRead(path, st.size)
+      const res = await sftp.readForEdit(path, 0)
+      // stat 与读取之间文件可能变大：保留兜底
+      if (res.kind === 'tooLarge') throw tooLargeForSftpRead(path, null)
+      const page = pageLines(res.text, offset ?? 1, limit ?? READ_DEFAULT_LINES)
+      const hint = pageHint(page)
+      return {
+        path,
+        content: page.content,
+        size: res.size,
+        totalLines: page.totalLines,
+        fromLine: page.fromLine,
+        toLine: page.toLine,
+        truncated: page.truncated,
+        ...(page.nextOffset ? { nextOffset: page.nextOffset } : {}),
+        ...(page.longLines.length ? { longLines: page.longLines } : {}),
+        ...(hint ? { hint } : {})
+      }
     }
   }),
   defineTool('sftp_stat', {
@@ -90,7 +146,7 @@ export const sftpTools: AnyTool[] = [
   }),
   defineTool('sftp_patch', {
     description:
-      'Edit part of a remote text file precisely (anchor replacement): oldText is copied verbatim from sftp_read output (indentation included), newText is the replacement (empty string = delete the snippet). By default oldText must appear EXACTLY ONCE; if it appears multiple times (common in XML/JSON with repeated keys), pass occurrence (1-based) to replace the Nth match. Zero matches abort. Best for localized edits of large files; use sftp_write to create files or rewrite whole content.',
+      'Edit part of a remote text file precisely (anchor replacement): oldText is copied verbatim from sftp_read output (indentation included), newText is the replacement (empty string = delete the snippet). By default oldText must appear EXACTLY ONCE; if it appears multiple times (common in XML/JSON with repeated keys), pass occurrence (1-based) to replace the Nth match. Zero matches abort. Best for localized edits; files above 10MB are refused — edit those on the host with execute. Use sftp_write to create files or rewrite whole content.',
     parameters: z.object({
       description: intentSchema,
       hostId: hostIdSchema,
@@ -110,56 +166,32 @@ export const sftpTools: AnyTool[] = [
         )
     }),
     handler: async ({ hostId, path, oldText, newText, occurrence }) => {
-      if (oldText === newText) throw new Error('oldText equals newText; nothing to change')
       const sftp = await sftpOf(hostId)
       const before = await sftp.stat(path)
+      // 超限不读：patch 必须拿到全文，10MB 以上只能改用远端命令就地改
+      if (before.size > SFTP_READ_MAX_BYTES)
+        throw new Error(
+          `File is too large to edit through sftp_patch (${(before.size / 1024 / 1024).toFixed(1)}MB; limit 10MB). Edit it on the host with execute (e.g. sed -i) instead.`
+        )
       const res = await sftp.readForEdit(path, 0)
-      if (res.kind === 'tooLarge') throw new Error('File too large (>10MB); use a command instead')
+      if (res.kind === 'tooLarge')
+        throw new Error(
+          'File is too large for sftp_patch (over 10MB); edit it on the host with execute instead'
+        )
       if (res.binary) throw new Error('Binary file; use a command instead')
       if (res.lossy)
         throw new Error('File encoding cannot be round-tripped losslessly; use a command instead')
-      const content = res.text
-      // 匹配索引（与计数一致：逐字符前进，保守计重叠）
-      const indicesOf = (needle: string): number[] => {
-        const idx: number[] = []
-        for (let i = content.indexOf(needle); i !== -1; i = content.indexOf(needle, i + 1))
-          idx.push(i)
-        return idx
-      }
-      // CRLF 容错：agent 锚点通常带 \n；CRLF 文件先按原样找，找不到再试 \r\n 归一
-      let anchor = oldText
-      let patch = newText
-      let indices = indicesOf(anchor)
-      if (indices.length === 0 && content.includes('\r\n') && oldText.includes('\n')) {
-        const crlfOld = oldText.replace(/\n/g, '\r\n')
-        const crlfIdx = indicesOf(crlfOld)
-        if (crlfIdx.length > 0) {
-          anchor = crlfOld
-          patch = newText.replace(/\n/g, '\r\n')
-          indices = crlfIdx
-        }
-      }
-      if (indices.length === 0)
-        throw new Error('oldText not found in the file (0 matches); run sftp_read to verify first')
-      let index: number
-      if (occurrence != null) {
-        if (occurrence > indices.length)
-          throw new Error(
-            `oldText matched ${indices.length} place(s); occurrence ${occurrence} is out of range`
-          )
-        index = indices[occurrence - 1]
-      } else {
-        if (indices.length > 1)
-          throw new Error(
-            `oldText matched ${indices.length} places; use a longer snippet or the occurrence parameter to pick one`
-          )
-        index = indices[0]
-      }
+      const { next, anchor, patch } = applyAnchorPatch(
+        res.text,
+        oldText,
+        newText,
+        occurrence,
+        'sftp_read'
+      )
       // 并发防护：读改之间若文件被他人改动（mtime/size 变化）则拒绝，避免覆盖别人的更新
       const after = await sftp.stat(path)
       if (after.modified !== before.modified || after.size !== before.size)
         throw new Error('File changed on the server during edit; re-run sftp_read and retry')
-      const next = content.slice(0, index) + patch + content.slice(index + anchor.length)
       await sftp.writeText(path, next, res.encoding, res.bom)
       return {
         path,

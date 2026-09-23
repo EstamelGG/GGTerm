@@ -4,6 +4,7 @@ import { executeTools } from './execute'
 import { computeTools } from './compute'
 import { activeClientOf, type AnyTool } from './shared'
 import { connectionTools } from './connection'
+import { localTools } from './local'
 import { sftpTools } from './sftp'
 import { transferTools } from './transfer'
 import { manageTools } from './manage'
@@ -69,7 +70,16 @@ const LOCK_KEYS: Record<AiToolName, LockKeyFn> = {
   execute: (input) =>
     input.action === 'start' || input.action === 'list'
       ? null
-      : `exec:${String(input.executionId ?? '')}`
+      : `exec:${String(input.executionId ?? '')}`,
+  // 本机：只读直行（无共享链路可争用）；写入与执行共用一把「本机锁」，顺序可预期 ——
+  // 本机资源无法像远端那样按 hostId 分道，串行也避免同一次改动里的读写交错
+  local_read: none,
+  local_list: none,
+  local_stat: none,
+  local_grep: none,
+  local_exec: () => 'local',
+  local_write: () => 'local',
+  local_patch: () => 'local'
 }
 
 /** 给工具挂上资源锁键（策略集中在 LOCK_KEYS，工具实现不感知并发） */
@@ -84,7 +94,8 @@ export const aiTools: AnyTool[] = [
   ...computeTools,
   ...transferTools,
   ...manageTools,
-  ...noteTools
+  ...noteTools,
+  ...localTools
 ]
   .map(withSessionContext)
   .map(withLockKey)
@@ -118,3 +129,10 @@ export type AiToolName =
   | 'edit_note'
   | 'write_temp_file'
   | 'compute'
+  | 'local_exec'
+  | 'local_list'
+  | 'local_stat'
+  | 'local_read'
+  | 'local_write'
+  | 'local_patch'
+  | 'local_grep'
