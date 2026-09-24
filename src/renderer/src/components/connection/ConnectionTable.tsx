@@ -1,4 +1,14 @@
-import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { DEVICE_TYPES, isNetworkDevice } from '@shared/device'
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowUpDown,
@@ -469,10 +479,7 @@ export function ConnectionTable({
   const openEdit = useCallback((c: HostConnection) => onEdit(c), [onEdit])
   const openDelete = useCallback((c: HostConnection) => onDelete(c), [onDelete])
   const openNote = useCallback((c: HostConnection) => setNoteTarget(c), [])
-  const handleToggleSelect = useCallback(
-    (id: string) => onToggleSelect(id),
-    [onToggleSelect]
-  )
+  const handleToggleSelect = useCallback((id: string) => onToggleSelect(id), [onToggleSelect])
   const handleConnect = useCallback((c: HostConnection) => onConnect(c), [onConnect])
   const handleDuplicate = useCallback((c: HostConnection) => onDuplicate(c), [onDuplicate])
   const handleToast = useCallback((text: string) => onToast(text), [onToast])
@@ -685,8 +692,8 @@ const HostRow = memo(function HostRow({
 
   const phase = items.some((item) => item.phase === 'connected')
     ? 'connected'
-    : (items.find((item) => item.phase === 'connecting' || item.phase === 'reconnecting')
-        ?.phase ?? linkPhase)
+    : (items.find((item) => item.phase === 'connecting' || item.phase === 'reconnecting')?.phase ??
+      linkPhase)
   const userCount = items.filter(
     (item) => item.owner === 'user' && item.phase === 'connected'
   ).length
@@ -775,7 +782,17 @@ const HostRow = memo(function HostRow({
           </button>
         </div>
         <CellBox style={{ width: hostWidth }} className="flex items-center gap-3">
-          <OsIcon osName={sample?.osName || cachedOsName || ''} size={16} badge />
+          <OsIcon
+            osName={
+              isNetworkDevice(conn)
+                ? ''
+                : conn.deviceType
+                  ? DEVICE_TYPES[conn.deviceType]
+                  : sample?.osName || cachedOsName || ''
+            }
+            size={16}
+            badge
+          />
           <div className="min-w-0 flex-1">
             <div className="flex h-6 min-w-0 items-center gap-1.5">
               {/* 主机名可点：定位到左侧目录对应位置（按钮式 hover 反馈；负 margin 抵消内边距保持对齐） */}
@@ -787,6 +804,14 @@ const HostRow = memo(function HostRow({
               >
                 <ExpandableTextCell text={conn.name} weight="medium" className="text-body" />
               </button>
+              {conn.deviceType && (
+                <span
+                  className="max-w-24 truncate text-caption text-muted"
+                  title={DEVICE_TYPES[conn.deviceType]}
+                >
+                  {DEVICE_TYPES[conn.deviceType]}
+                </span>
+              )}
               {!!conn.jumpHostIds?.length && (
                 <IconButton
                   icon={Link2}
@@ -795,10 +820,7 @@ const HostRow = memo(function HostRow({
                   onClick={() => onFlashJump(conn.jumpHostIds ?? [])}
                 />
               )}
-              <NoteIconButton
-                hasContent={noteHasContent(conn.note)}
-                onClick={() => onNote(conn)}
-              />
+              <NoteIconButton hasContent={noteHasContent(conn.note)} onClick={() => onNote(conn)} />
             </div>
             <HostAddressCell
               text={`${conn.username}@${conn.host.includes(':') ? '[' + conn.host + ']' : conn.host}:${conn.port}`}
@@ -827,12 +849,19 @@ const HostRow = memo(function HostRow({
           )}
         </CellBox>
         <CellBox className={cn('min-w-[90px] pr-0', showPerfCol ? 'w-[90px]' : 'flex-1')}>
-          <LatencyCell status={(latency ?? 'idle') as LatencyStatus} off={!!conn.jumpHostIds?.length} />
+          <LatencyCell
+            status={(latency ?? 'idle') as LatencyStatus}
+            off={!!conn.jumpHostIds?.length}
+          />
         </CellBox>
         {showPerfCol && (
           <div data-column="performance" className="min-w-[200px] flex-1 overflow-hidden px-2.5">
             <PerfCell
-              sample={conn.perfDisabled || conn.jumpHostIds?.length ? null : (sample ?? null)}
+              sample={
+                isNetworkDevice(conn) || conn.perfDisabled || conn.jumpHostIds?.length
+                  ? null
+                  : (sample ?? null)
+              }
             />
           </div>
         )}
@@ -841,7 +870,12 @@ const HostRow = memo(function HostRow({
           className="flex shrink-0 items-center justify-end gap-1.5 pr-2.5"
           style={{ width: ACTION_WIDTH }}
         >
-          <Button size="sm" title={t('common.connect')} className="shrink-0" onClick={() => onConnect(conn)} />
+          <Button
+            size="sm"
+            title={t('common.connect')}
+            className="shrink-0"
+            onClick={() => onConnect(conn)}
+          />
           <IconButton
             icon={Pencil}
             size={11.5}
@@ -854,7 +888,12 @@ const HostRow = memo(function HostRow({
       <RevealRow open={expanded}>
         <div ref={measureDetail ? detailRef : undefined}>
           {(expanded || closing) && (
-            <ConnectionSessionsDetail hostId={conn.id} name={conn.name} items={items} onToast={onToast} />
+            <ConnectionSessionsDetail
+              hostId={conn.id}
+              name={conn.name}
+              items={items}
+              onToast={onToast}
+            />
           )}
         </div>
       </RevealRow>

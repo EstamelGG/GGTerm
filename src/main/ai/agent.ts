@@ -70,7 +70,7 @@ export interface AgentDeps {
   /** 每次调用解析模型（BYOK 绑定/密钥变化即时生效；未配置时抛错） */
   getModel: () => LanguageModel
   tools: AgentTool[]
-  instructions: string
+  instructions: string | (() => string)
   /** 工具审批门（SDK ToolApprovalStatus：not-applicable/approved/denied/user-approval）；
    *  SDK 在首次评估与审批续跑时会对同一 toolCall 重复调用，toolCallId 供调用方去重审计日志 */
   gate?: (
@@ -326,23 +326,24 @@ function toolSetFor(s: Session): ToolSet {
 function agentFor(s: Session): ToolLoopAgent {
   if (s.agent) return s.agent
   const d = requireDeps()
-  const promptTokens =
-    estimateTokens(d.instructions) +
-    estimateTokens(
-      d.tools.map((t) => ({
-        name: t.name,
-        description: t.description,
-        inputSchema: toJSONSchema(t.parameters, { unrepresentable: 'any', io: 'input' })
-      }))
-    )
+  const instructions = typeof d.instructions === 'function' ? d.instructions() : d.instructions
+  const toolTokens = estimateTokens(
+    d.tools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: toJSONSchema(t.parameters, { unrepresentable: 'any', io: 'input' })
+    }))
+  )
   s.agent = new ToolLoopAgent({
     model: d.getModel(),
-    instructions: d.instructions,
+    instructions,
     tools: toolSetFor(s),
     stopWhen: stepCountIs(MAX_STEPS),
     timeout: d.modelTimeout ?? { firstChunkMs: 120_000, chunkMs: 90_000 },
     // 每一步重新检查：工具循环也可能在单轮内填满窗口。
     prepareStep: async ({ messages, stepNumber }) => {
+      const instructions = typeof d.instructions === 'function' ? d.instructions() : d.instructions
+      const promptTokens = toolTokens + estimateTokens(instructions)
       const turn = s.turn!
       const { contextWindow, autoCompress } = turn.contextSettings
       const budget = Math.floor(contextWindow * 0.75) - promptTokens
@@ -391,7 +392,7 @@ function agentFor(s: Session): ToolLoopAgent {
         s.contextSummary = fitted.summary
         persist(s)
       }
-      return { messages: fitted.messages }
+      return { messages: fitted.messages, instructions }
     },
     toolApproval: ({ toolCall }) => d.gate?.(s.id, toolCall) ?? 'not-applicable',
     // 每次调用重新解析模型：BYOK 绑定/密钥变化下一回合即时生效

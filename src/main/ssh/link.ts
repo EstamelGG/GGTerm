@@ -1,3 +1,4 @@
+import { isNetworkDevice } from '../../shared/device'
 import { BrowserWindow } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { Client, type ClientChannel } from 'ssh2'
@@ -608,6 +609,8 @@ export class HostLink {
 
   /** 会话链路（重）建立后单次采集主机系统名并广播 os:sample（OS 图标缓存兜底路径）；失败静默 */
   async probeOsName(client: Client): Promise<void> {
+    if (isNetworkDevice(listConnections().find((c) => c.id === this.hostId) ?? this.connection))
+      return
     try {
       const out = await execCommand(client, OS_NAME_SCRIPT)
       const line = out

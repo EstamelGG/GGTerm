@@ -52,7 +52,11 @@ export class PerfMonitor {
     /** 展示名（日志用） */
     private readonly label = '',
     /** intervalMs：采样间隔（缺省 SESSION_INTERVAL_MS）；collectNet：是否计算网速（缺省是，列表 hub 关闭） */
-    private readonly opts: { intervalMs?: number; collectNet?: boolean } = {}
+    private readonly opts: {
+      intervalMs?: number
+      collectNet?: boolean
+      shouldSample?: () => boolean
+    } = {}
   ) {}
 
   private get intervalMs(): number {
@@ -147,9 +151,13 @@ export class PerfMonitor {
   }
 
   private async sample(): Promise<void> {
+    if (this.opts.shouldSample?.() === false) {
+      this.stop()
+      return
+    }
     if (this.broken) return
     const client = await this.getClient()
-    if (!client || this.sampling) return
+    if (!client || this.sampling || this.opts.shouldSample?.() === false) return
     this.sampling = true // 上轮未归（>3s 网络延迟）时跳过，防堆积
     try {
       const out = await execCommand(client, PERF_SCRIPT)

@@ -1,3 +1,7 @@
+import { isNetworkDevice } from '@shared/device'
+import { useExecutionTabs } from '@/stores/executionTabs'
+import { ExecutionOutput } from '@/components/ai/ExecutionOutput'
+import type { ExecutionSnapshot } from '@shared/execution'
 import { useResizePreview } from '@/lib/useResizePreview'
 import { SessionTabs } from '@/components/chrome/SessionTabs'
 import { Suspense, lazy, useEffect, useRef, useState } from 'react'
@@ -95,6 +99,15 @@ export function HostSessionPage({
   onClose: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const agentTasks = useExecutionTabs((s) => s.tasks).filter((task) => task.hostId === host.id)
+  const activeAgent =
+    agentTasks.find((task) => task.executionId === host.focusShellId) ??
+    (host.shells.length === 0 ? agentTasks[0] : undefined)
+  const [pendingAgents, setPendingAgents] = useState<ExecutionSnapshot[]>([])
+  const pendingAgent = pendingAgents[0]
+  const [closingAgent, setClosingAgent] = useState(false)
+  const networkDevice = isNetworkDevice(host.conn)
+  const canSftp = !networkDevice && host.shells.length > 0
   const [width, setWidth] = useState(() => loadWidth())
   /** 左栏收纳：面板保持挂载（树/选中/滚动不丢），只把宽度归零 */
   const [sftpOpen, setSftpOpen] = useState(loadSftpOpen)
@@ -142,11 +155,17 @@ export function HostSessionPage({
   const reconnectShell = useSessionStore((s) => s.reconnectShell)
   const submitAuth = useSessionStore((s) => s.submitAuth)
 
-  const focused = host.shells.find((s) => s.id === host.focusShellId) ?? host.shells[0]
+  const focused = activeAgent
+    ? undefined
+    : (host.shells.find((s) => s.id === host.focusShellId) ?? host.shells[0])
   /** 上区显示的文件（focusFileId 兜底到最后一个，保证编辑区总有可见内容） */
   const activeFileId = host.focusFileId ?? host.files[host.files.length - 1]?.id ?? null
   /** 链路级重连：offline（重试超限）与 idle（被主动断开，含 AI 断开）都需要；点重连后原会话自动恢复 */
-  const showLinkReconnect = (host.phase === 'offline' || host.phase === 'idle') && !host.awaiting
+  const showLinkReconnect =
+    !host.viewerOnly &&
+    !activeAgent &&
+    (host.phase === 'offline' || host.phase === 'idle') &&
+    !host.awaiting
   const showShellReconnect =
     !showLinkReconnect &&
     focused !== undefined &&
@@ -194,23 +213,25 @@ export function HostSessionPage({
       <div
         className={cn(
           'h-full shrink-0 overflow-hidden bg-sidebar',
-          sftpOpen && 'border-r border-line'
+          canSftp && sftpOpen && 'border-r border-line'
         )}
-        style={{ width: sftpOpen ? effectiveWidth : 0 }}
-        aria-hidden={!sftpOpen}
-        inert={!sftpOpen}
+        style={{ width: canSftp && sftpOpen ? effectiveWidth : 0 }}
+        aria-hidden={!canSftp || !sftpOpen}
+        inert={!canSftp || !sftpOpen}
       >
         <div className="h-full" style={{ width: effectiveWidth }}>
-          <SftpPane
-            hostId={host.id}
-            onToast={onToast}
-            onOpenTerminal={(dir) => addShell(host.id, `cd ${shellQuote(dir)}`)}
-            onOpenFile={(entry) => openFile(host.id, entry)}
-          />
+          {canSftp && (
+            <SftpPane
+              hostId={host.id}
+              onToast={onToast}
+              onOpenTerminal={(dir) => addShell(host.id, `cd ${shellQuote(dir)}`)}
+              onOpenFile={(entry) => openFile(host.id, entry)}
+            />
+          )}
         </div>
       </div>
 
-      {sftpOpen && (
+      {canSftp && sftpOpen && (
         <>
           {/* splitter：1px，拖拽中 accent 35% + 预览线 */}
           <div
@@ -338,6 +359,7 @@ export function HostSessionPage({
           {/* SFTP 面板收纳开关：固定在标签行行首，不随 chips 横滚 */}
           <IconButton
             variant="toolbar"
+            disabled={!canSftp}
             icon={sftpOpen ? PanelLeftClose : PanelLeftOpen}
             frame={22}
             title={sftpOpen ? t('sftp.collapsePane') : t('sftp.expandPane')}
@@ -345,14 +367,36 @@ export function HostSessionPage({
             onClick={toggleSftp}
           />
           <SessionTabs
-            tabs={host.shells.map((s) => ({
-              id: s.id,
-              title: t('session.consoleTitle', { n: s.number }),
-              statusColor: shellStateDot(s.status)
-            }))}
-            selectedId={focused?.id ?? null}
+            tabs={[
+              ...host.shells.map((s) => ({
+                id: s.id,
+                title: t('session.consoleTitle', { n: s.number }),
+                statusColor: shellStateDot(s.status)
+              })),
+              ...agentTasks.map((task) => ({
+                id: task.executionId,
+                title: `agent ${task.sessionId.slice(0, 6)} · ${task.executionId.slice(0, 6)}`,
+                statusColor: shellStateDot(
+                  task.status === 'running'
+                    ? 'connected'
+                    : task.status === 'starting'
+                      ? 'connecting'
+                      : 'ended'
+                )
+              }))
+            ]}
+            selectedId={activeAgent?.executionId ?? focused?.id ?? null}
             onSelect={(id) => focusShell(host.id, id)}
-            onClose={(id) => closeShell(host.id, id)}
+            onClose={(id) => {
+              const task = agentTasks.find((task) => task.executionId === id)
+              if (task)
+                setPendingAgents((items) =>
+                  items.some((item) => item.executionId === task.executionId)
+                    ? items
+                    : [...items, task]
+                )
+              else closeShell(host.id, id)
+            }}
           />
           <IconButton
             variant="toolbar"
@@ -362,9 +406,20 @@ export function HostSessionPage({
             cornerRadius={11}
             filled
             aria-label={t('session.newTerminal')}
-            onClick={() => addShell(host.id)}
+            onClick={() => {
+              void useSessionStore
+                .getState()
+                .connect(host.conn)
+                .catch((e) => onToast(String(e)))
+            }}
           />
-          <LinkStatusPill host={host} />
+          <span className="text-caption text-muted">
+            {activeAgent ? (
+              `agent · ${t(`execution.${activeAgent.status}`)}`
+            ) : (
+              <LinkStatusPill host={host} />
+            )}
+          </span>
           {(showLinkReconnect || showShellReconnect) && (
             <Button
               variant="ghost"
@@ -379,7 +434,7 @@ export function HostSessionPage({
         </div>
 
         <div className="relative min-h-0 flex-1 bg-sidebar">
-          {host.phase === 'offline' && host.offlineReason && (
+          {!activeAgent && host.phase === 'offline' && host.offlineReason && (
             <p
               role="alert"
               className="absolute inset-x-0 top-0 z-20 max-h-full overflow-auto whitespace-pre-wrap break-words bg-sidebar px-3 py-2 text-minor text-danger select-text"
@@ -390,7 +445,20 @@ export function HostSessionPage({
           {host.shells.map((s) => (
             <ShellPane key={s.id} host={host} shell={s} focused={focused?.id === s.id} />
           ))}
-          {host.shells.length === 0 && (
+          {activeAgent && (
+            <div className="absolute inset-0 flex flex-col gap-2 p-2">
+              <p className="text-caption text-muted">{t('execution.readOnly')}</p>
+              {activeAgent.error && (
+                <p role="alert" className="text-minor text-danger">
+                  {activeAgent.error}
+                </p>
+              )}
+              <div className="min-h-0 flex-1">
+                <ExecutionOutput key={activeAgent.executionId} task={activeAgent} />
+              </div>
+            </div>
+          )}
+          {host.shells.length === 0 && !activeAgent && (
             <div className="flex h-full items-center justify-center">
               <p className="text-body text-muted">{t('session.noSessions')}</p>
             </div>
@@ -398,6 +466,42 @@ export function HostSessionPage({
         </div>
       </div>
 
+      {pendingAgent && (
+        <DialogShell
+          open
+          title={t('execution.closeTab')}
+          dismissable={!closingAgent}
+          onOpenChange={(open) => {
+            if (!open && !closingAgent) setPendingAgents([])
+          }}
+          footer={
+            <>
+              <Button
+                variant="ghost"
+                title={t('common.cancel')}
+                disabled={closingAgent}
+                onClick={() => setPendingAgents([])}
+              />
+              <Button
+                variant="danger"
+                title={t('common.close')}
+                disabled={closingAgent}
+                onClick={() => {
+                  setClosingAgent(true)
+                  void useExecutionTabs
+                    .getState()
+                    .close(pendingAgent)
+                    .then(() => setPendingAgents((items) => items.slice(1)))
+                    .catch((e) => onToast(String(e)))
+                    .finally(() => setClosingAgent(false))
+                }}
+              />
+            </>
+          }
+        >
+          <p className="text-body text-fg">{t('execution.closeTabConfirm')}</p>
+        </DialogShell>
+      )}
       {/* 关闭未保存文件确认 */}
       {pendingCloseFile && (
         <CloseDocumentsDialog

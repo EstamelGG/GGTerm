@@ -1,3 +1,4 @@
+import { deviceGuidance } from '../../../shared/device'
 import { z } from 'zod'
 import { defineTool } from './shared'
 import { listConnections, listGroups } from '../../data/connections'
@@ -77,6 +78,8 @@ export const connectionTools: AnyTool[] = [
         const userCount = isUp(userPhase) ? 1 : 0
         const base = {
           id: c.id,
+          deviceType: c.deviceType ?? null,
+          deviceGuidance: deviceGuidance(c),
           name: c.name,
           host: c.host,
           port: c.port,

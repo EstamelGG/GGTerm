@@ -1,3 +1,5 @@
+import { isNetworkDevice } from '../../shared/device'
+import { listConnections } from '../data/connections'
 import { BrowserWindow } from 'electron'
 import type { PerfSample } from '../../shared/types'
 import { sessionGpuWatch } from './gpuPerf'
@@ -19,6 +21,7 @@ function broadcast(sample: PerfSample): void {
 
 /** 面板开 → watch(hostId)；面板关/切走 → watch(null)。一次只保留当前 host 的监控 */
 export function sessionPerfWatch(hostId: string | null): void {
+  if (hostId && isNetworkDevice(listConnections().find((c) => c.id === hostId))) hostId = null
   sessionGpuWatch(hostId)
   for (const [id, m] of monitors) {
     if (id !== hostId) {
@@ -35,7 +38,11 @@ export function sessionPerfWatch(hostId: string | null): void {
     () => link.activeClient,
     broadcast,
     link.connection.name,
-    { intervalMs: SESSION_INTERVAL_MS, collectNet: true }
+    {
+      intervalMs: SESSION_INTERVAL_MS,
+      collectNet: true,
+      shouldSample: () => !isNetworkDevice(listConnections().find((c) => c.id === hostId))
+    }
   )
   monitors.set(hostId, monitor)
   monitor.start()

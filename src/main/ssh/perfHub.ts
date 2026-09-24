@@ -1,3 +1,4 @@
+import { isNetworkDevice } from '../../shared/device'
 import { BrowserWindow } from 'electron'
 import { Client } from 'ssh2'
 import { sshAlgorithms } from './algorithms'
@@ -226,7 +227,8 @@ export function perfRescan(): void {
 /** 新建条目并启动采样（连接级禁用、配置跳板或无记录则跳过——跳板主机在内网，直连探测必然失败且无意义） */
 function createEntry(hostId: string): void {
   const conn = connections.listConnections().find((c) => c.id === hostId)
-  if (!conn || conn.perfDisabled || (conn.jumpHostIds?.length ?? 0) > 0) return
+  if (!conn || isNetworkDevice(conn) || conn.perfDisabled || (conn.jumpHostIds?.length ?? 0) > 0)
+    return
   const entry: HubEntry = {
     conn,
     client: null,
@@ -236,7 +238,8 @@ function createEntry(hostId: string): void {
   }
   entry.monitor = new PerfMonitor(hostId, () => clientFor(hostId), broadcast, conn.name, {
     intervalMs: HUB_INTERVAL_MS,
-    collectNet: false
+    collectNet: false,
+    shouldSample: () => !isNetworkDevice(connections.listConnections().find((c) => c.id === hostId))
   })
   entries.set(hostId, entry)
   if (!paused) entry.monitor.start() // 暂停期新建的条目等恢复时统一续跑

@@ -4,8 +4,10 @@ import { cn } from '@/lib/utils'
 export function Switch({
   on,
   onChange,
-  label
+  label,
+  disabled
 }: {
+  disabled?: boolean
   label: string
   on: boolean
   onChange: (v: boolean) => void
@@ -13,6 +15,7 @@ export function Switch({
   return (
     <button
       type="button"
+      disabled={disabled}
       role="switch"
       aria-checked={on}
       aria-label={label}

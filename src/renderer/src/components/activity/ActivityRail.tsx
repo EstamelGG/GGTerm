@@ -1,3 +1,4 @@
+import { isNetworkDevice } from '@shared/device'
 import { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowDownUp, Bot, Gauge, Zap } from 'lucide-react'
@@ -39,6 +40,7 @@ export function ActivityRail(): React.JSX.Element {
   const focusedId = useWorkspaceStore((s) => s.focusedHostId)
   const host = useSessionStore((s) => s.hosts.find((h) => h.id === focusedId))
   const hostId = host?.id ?? null
+  const networkDevice = isNetworkDevice(host?.conn)
   const [width, setWidth] = useState(loadWidth)
   const previewRef = useRef<HTMLDivElement>(null)
   const transfersRunning = useSftpStore((s) =>
@@ -51,9 +53,9 @@ export function ActivityRail(): React.JSX.Element {
   const aiInput = useHumanInputStore((s) => Object.keys(s.pending).length > 0)
 
   useEffect(() => {
-    window.aterm.perf.watchSession(hostId)
+    window.aterm.perf.watchSession(networkDevice ? null : hostId)
     return () => window.aterm.perf.watchSession(null)
-  }, [hostId])
+  }, [hostId, networkDevice])
 
   const resize = useResizePreview({
     value: width,
@@ -119,7 +121,11 @@ export function ActivityRail(): React.JSX.Element {
                 <TransfersPanel />
               ) : hostId ? (
                 active === 'performance' ? (
-                  <PerformancePanel key={hostId} hostId={hostId} />
+                  networkDevice ? (
+                    <p className="text-minor text-muted">{t('conn.form.networkHint')}</p>
+                  ) : (
+                    <PerformancePanel key={hostId} hostId={hostId} />
+                  )
                 ) : (
                   <CommandsPanel hostId={hostId} />
                 )

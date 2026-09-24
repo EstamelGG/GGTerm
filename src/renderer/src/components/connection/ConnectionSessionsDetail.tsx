@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Bot, TerminalSquare, UserRound } from 'lucide-react'
 import type { SshConnectionSession } from '@shared/types'
@@ -12,7 +12,7 @@ import { linkStateDot, linkStateLabelKey } from '@/lib/linkPhase'
 import { StateDot } from '@/components/ui/StateDot'
 import { CopyIconButton, IconButton } from '@/components/ui/IconButton'
 
-const ExecutionSessionsDialog = lazy(() => import('@/components/ai/ExecutionSessionsDialog'))
+import { openExecutionTabs } from '@/stores/executionTabs'
 
 export function ConnectionSessionsDetail({
   hostId,
@@ -30,7 +30,6 @@ export function ConnectionSessionsDetail({
   const [pending, setPending] = useState<SshConnectionSession[] | null>(null)
   const [closing, setClosing] = useState(false)
   /** 命令执行会话弹窗：值 = 该 agent 连接所属 AI 会话 id（只看此连接的执行） */
-  const [execView, setExecView] = useState<string | null>(null)
   const hosts = useSessionStore((s) => s.hosts)
   const aiSessions = useAiStore((s) => s.sessions)
   const chosen = items.filter((item) => selected.includes(item.connectionId))
@@ -125,7 +124,10 @@ export function ConnectionSessionsDetail({
             disabled={!(item.owner === 'agent' && item.sessionId)}
             title={item.owner === 'agent' && item.sessionId ? t('execution.title') : undefined}
             onClick={() => {
-              if (item.owner === 'agent' && item.sessionId) setExecView(item.sessionId)
+              if (item.owner === 'agent' && item.sessionId)
+                void openExecutionTabs(item.sessionId, hostId).catch((e) =>
+                  onToast(errorMessage(e))
+                )
             }}
           />
         </div>
@@ -176,15 +178,6 @@ export function ConnectionSessionsDetail({
           onCancel={() => setPending(null)}
           onClose={() => void close()}
         />
-      )}
-      {execView && (
-        <Suspense fallback={null}>
-          <ExecutionSessionsDialog
-            sessionId={execView}
-            hostId={hostId}
-            onClose={() => setExecView(null)}
-          />
-        </Suspense>
       )}
     </section>
   )

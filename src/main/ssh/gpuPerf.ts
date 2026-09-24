@@ -1,3 +1,5 @@
+import { isNetworkDevice } from '../../shared/device'
+import { listConnections } from '../data/connections'
 import { BrowserWindow } from 'electron'
 import type { PerfGpu, PerfGpuProc, PerfGpuSample } from '../../shared/types'
 import { appLog } from '../log'
@@ -47,6 +49,10 @@ export function sessionGpuWatch(hostId: string | null): void {
 }
 
 async function sample(hostId: string): Promise<void> {
+  if (isNetworkDevice(listConnections().find((c) => c.id === hostId))) {
+    sessionGpuWatch(null)
+    return
+  }
   if (sampling || watched !== hostId) return
   const client = getLink(hostId)?.activeClient
   if (!client) return

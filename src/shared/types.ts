@@ -12,6 +12,7 @@ export interface HostConnection {
   host: string
   port: number
   username: string
+  deviceType?: import('./device').DeviceType
   authType: AuthType
   groupId: string | null
   /** 连接超时（ms），默认 20000 */

@@ -1,3 +1,4 @@
+import { isNetworkDevice } from '../../../shared/device'
 import { z } from 'zod'
 import type { Client } from 'ssh2'
 import { listConnections } from '../../data/connections'
@@ -47,6 +48,8 @@ export async function ensureLink(hostId: string): Promise<HostLink> {
 
 /** 取主机 SFTP 会话；未连接时自动建连 */
 export async function sftpOf(hostId: string): Promise<HostLink['sftp']> {
+  if (isNetworkDevice(listConnections().find((c) => c.id === hostId)))
+    throw new Error('SFTP is disabled for network devices. Use the confirmed vendor CLI instead.')
   return (await ensureLink(hostId)).sftp
 }
 

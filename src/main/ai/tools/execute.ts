@@ -1,3 +1,5 @@
+import { isNetworkDevice } from '../../../shared/device'
+import { listConnections } from '../../data/connections'
 import { z } from 'zod'
 import { defineTool } from './shared'
 import { executions } from '../exec'
@@ -59,7 +61,7 @@ const executeRequest = z.discriminatedUnion('action', [
 export const executeTools: AnyTool[] = [
   defineTool('execute', {
     description:
-      "Background remote command execution. start opens an interactive remote shell on hostId (from list_hosts), optionally feeding command as the first input. For switches/network devices or hosts with login dialogs, first start with no command, read the banner/prompts, and resolve any confirmation on the same executionId before sending commands. A password-change Y/N confirmation is not a password-entry prompt or evidence of failed SSH authentication; do not change credentials without user authorization. This tool is remote-only: local commands go through local_exec. No user terminal tab is ever opened. The shell survives after a command finishes: keep using the same executionId to send more input or answer interactive prompts via input (must end with a newline) — cwd, env and login state are preserved. Output is collected continuously; a suspected prompt is checked every 5s with up to 60s wait by default. A detected prompt is NOT proof of success. running only means the shell is alive; completed/exitCode describe only the shell exiting, not the foreground command. The user can view output in this session's execution list (read-only) or terminate it, but cannot type there. A password/verification-code prompt parks this call instead of returning: an input card appears in the chat and the user submits the value there themselves — it never reaches you — so the call resumes only after they act. The returned snapshot then carries humanInputOutcome: submitted = the user filled it in (read the new output and continue), cancelled/expired = they gave up (terminationRequested is set; do not rerun). Never submit sensitive input through the model and never ask for the secret in chat. terminationRequested/unknown forbid further operations or reruns. cancel sends Ctrl-C — it usually keeps the shell and never rolls back. Stopping the agent or closing the viewer does not close the background shell. list returns all executions of this AI session.",
+      'Background remote command execution. start opens an interactive remote shell on hostId (from list_hosts), optionally feeding command as the first input. For switches/network devices or hosts with login dialogs, first start with no command, read the banner/prompts, and resolve any confirmation on the same executionId before sending commands. A password-change Y/N confirmation is not a password-entry prompt or evidence of failed SSH authentication; do not change credentials without user authorization. This tool is remote-only: local commands go through local_exec. No user terminal tab is ever opened. The shell survives after a command finishes: keep using the same executionId to send more input or answer interactive prompts via input (must end with a newline) — cwd, env and login state are preserved. Output is collected continuously; a suspected prompt is checked every 5s with up to 60s wait by default. A detected prompt is NOT proof of success. running only means the shell is alive; completed/exitCode describe only the shell exiting, not the foreground command. The user can view output in read-only agent terminal tabs or terminate it, but cannot type there. A password/verification-code prompt parks this call instead of returning: an input card appears in the chat and the user submits the value there themselves — it never reaches you — so the call resumes only after they act. The returned snapshot then carries humanInputOutcome: submitted = the user filled it in (read the new output and continue), cancelled/expired = they gave up (terminationRequested is set; do not rerun). Never submit sensitive input through the model and never ask for the secret in chat. terminationRequested/unknown forbid further operations or reruns. cancel sends Ctrl-C — it usually keeps the shell and never rolls back. Stopping the agent does not close the shell. Closing an agent terminal tab terminates its shell after user confirmation. list returns all executions of this AI session.',
     parameters: executeParameters,
     handler: async (input, invocation) => {
       const args = executeRequest.parse(input)
@@ -68,6 +70,13 @@ export const executeTools: AnyTool[] = [
       if (args.action !== 'poll' && invocation.signal?.aborted)
         throw new Error('Request cancelled; no action taken')
       if (args.action === 'start') {
+        if (
+          args.command.trim() &&
+          isNetworkDevice(listConnections().find((c) => c.id === args.hostId))
+        )
+          throw new Error(
+            'Network device: start without command, inspect the banner and CLI mode, then send vendor-appropriate input.'
+          )
         const id = executions.start(owner, {
           target: 'remote',
           hostId: args.hostId,

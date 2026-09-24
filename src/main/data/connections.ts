@@ -1,3 +1,4 @@
+import { DEVICE_TYPES } from '../../shared/device'
 import Store from 'electron-store'
 import { randomUUID } from 'crypto'
 import { BrowserWindow } from 'electron'
@@ -41,6 +42,10 @@ export function createConnection(
     host: input.host,
     port: input.port ?? 22,
     username: input.username,
+    deviceType:
+      input.deviceType && Object.hasOwn(DEVICE_TYPES, input.deviceType)
+        ? input.deviceType
+        : undefined,
     authType: input.authType ?? 'password',
     groupId: input.groupId ?? null,
     connectTimeout: input.connectTimeout ?? 20000,
@@ -65,6 +70,8 @@ export function updateConnection(
   const list = listConnections()
   const idx = list.findIndex((c) => c.id === id)
   if (idx < 0) return null
+  if (patch.deviceType && !Object.hasOwn(DEVICE_TYPES, patch.deviceType))
+    throw new Error('Unknown host type')
   const next: HostConnection = { ...list[idx], ...patch, id, updatedAt: Date.now() }
   list[idx] = next
   store.set('connections', list)

@@ -1,3 +1,4 @@
+import { useExecutionTabs } from '@/stores/executionTabs'
 import { OverflowTabs } from '@/components/chrome/OverflowTabs'
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -46,6 +47,25 @@ import { ContextMenu, ContextMenuTrigger } from '@/components/ui/context-menu'
 
 /** 单行工作区 / 主机导航，下方主区域切换（页面常驻保实例）。 */
 function App(): React.JSX.Element {
+  useEffect(() => {
+    let active = true
+    let timer: ReturnType<typeof setTimeout>
+    const refresh = async (): Promise<void> => {
+      const sessions = useAiStore.getState().sessions
+      const results = await Promise.allSettled(
+        sessions.map((s) => window.aterm.executions.list(s.id))
+      )
+      if (!active) return
+      const tasks = results.flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
+      useExecutionTabs.getState().sync(tasks)
+      timer = setTimeout(() => void refresh(), 1000)
+    }
+    void refresh()
+    return () => {
+      active = false
+      clearTimeout(timer)
+    }
+  }, [])
   const { t } = useTranslation()
   const tab = useSessionStore((s) => s.tab)
   const hosts = useSessionStore((s) => s.hosts)
@@ -58,6 +78,14 @@ function App(): React.JSX.Element {
   const tabPhases = useLinksStore(useShallow((s) => hosts.map((h) => s.byHost[h.id]?.phase)))
   // 主机 tab 标题按所属分组色着色（未分组沿用默认配色）
   const connections = useConnectionsStore((s) => s.connections)
+  useEffect(() => {
+    useSessionStore.setState((state) => ({
+      hosts: state.hosts.map((h) => {
+        const conn = connections.find((c) => c.id === h.id)
+        return conn && conn !== h.conn ? { ...h, conn, title: conn.name } : h
+      })
+    }))
+  }, [connections])
   const groups = useConnectionsStore((s) => s.groups)
   const aiNeedsAttention = useAiStore((s) =>
     s.sessions.some((session) => pendingApprovals(session.messages).length > 0)
@@ -171,7 +199,14 @@ function App(): React.JSX.Element {
 
   const openHost = (id: string): void => {
     const state = useSessionStore.getState()
-    if (state.hosts.find((host) => host.id === id)?.shells.length === 0) state.addShell(id)
+    const host = state.hosts.find((host) => host.id === id)
+    if (
+      host &&
+      !host.viewerOnly &&
+      host.shells.length === 0 &&
+      !useExecutionTabs.getState().tasks.some((task) => task.hostId === id)
+    )
+      state.addShell(id)
     setTab({ kind: 'host', id })
   }
 

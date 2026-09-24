@@ -1,3 +1,4 @@
+import { DEVICE_TYPES, isNetworkDevice, type DeviceType } from '@shared/device'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, Ellipsis, Loader2, Server, Settings2, X, Zap } from 'lucide-react'
@@ -95,6 +96,8 @@ export function ConnectionForm({
     }
   }, [payload])
 
+  const [deviceType, setDeviceType] = useState<DeviceType | undefined>(editing?.deviceType)
+  const networkDevice = isNetworkDevice({ deviceType })
   const [name, setName] = useState(init.name)
   const [host, setHost] = useState(init.host)
   const [port, setPort] = useState(init.port)
@@ -255,6 +258,7 @@ export function ConnectionForm({
       keepaliveInterval: Number.isFinite(keepalive) ? keepalive : 5000,
       initCommand: initCommand.trim(),
       initDir: initDir.trim(),
+      deviceType,
       perfDisabled,
       strictKex,
       jumpHostIds: [...new Set(jumps.filter((j): j is string => !!j && j !== editing?.id))]
@@ -336,6 +340,29 @@ export function ConnectionForm({
         <fieldset disabled={busy || !hydrated} className="min-w-0">
           {tab === 'basic' && (
             <div className="flex flex-col gap-2.5">
+              <ATField title={t('conn.form.deviceType')}>
+                <Select
+                  value={deviceType ?? 'none'}
+                  onValueChange={(value) =>
+                    setDeviceType(value === 'none' ? undefined : (value as DeviceType))
+                  }
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">{t('conn.form.deviceUnspecified')}</SelectItem>
+                    {Object.entries(DEVICE_TYPES).map(([id, label]) => (
+                      <SelectItem key={id} value={id}>
+                        {label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </ATField>
+              {networkDevice && (
+                <p className="text-minor text-muted">{t('conn.form.networkHint')}</p>
+              )}
               <div className="flex gap-2">
                 <ATField title={t('conn.form.group')} className="flex-1">
                   {/* 触发器/列表项带分组色点（与侧栏一致的颜色锚点） */}
@@ -528,6 +555,7 @@ export function ConnectionForm({
 
               <ATField title={t('conn.form.initDir')}>
                 <ATTextField
+                  disabled={networkDevice}
                   value={initDir}
                   onChange={setInitDir}
                   placeholder={t('conn.form.initDirPh')}
@@ -535,6 +563,7 @@ export function ConnectionForm({
               </ATField>
               <ATField title={t('conn.form.initCommand')}>
                 <ATTextArea
+                  disabled={networkDevice}
                   value={initCommand}
                   onChange={setInitCommand}
                   minHeight={60}
@@ -555,7 +584,8 @@ export function ConnectionForm({
                 </div>
                 <Switch
                   label={t('conn.form.disableMonitor')}
-                  on={perfDisabled}
+                  disabled={networkDevice}
+                  on={networkDevice || perfDisabled}
                   onChange={setPerfDisabled}
                 />
               </div>

@@ -1,3 +1,4 @@
+import { isNetworkDevice } from '@shared/device'
 import { useWorkspaceStore } from './workspace'
 import { create } from 'zustand'
 import i18next from 'i18next'
@@ -81,6 +82,7 @@ export interface PendingManualSecrets {
 
 /** 对照 HostWorkspace 镜像：主机工作区渲染层状态 */
 export interface HostWorkspaceMirror {
+  viewerOnly?: boolean
   id: string
   conn: HostConnection
   title: string
@@ -133,7 +135,7 @@ export const isTab = (a: WorkspaceTab, b: WorkspaceTab): boolean =>
 
 /** 连接级初始执行：initCommand 优先，否则安全生成目录切换命令。 */
 function shellInitCommand(conn: HostConnection | undefined): string | undefined {
-  if (!conn) return undefined
+  if (!conn || isNetworkDevice(conn)) return undefined
   if (conn.initCommand?.trim()) return conn.initCommand
   const dir = conn.initDir?.trim()
   if (dir) return shellDirectoryCommand(dir)
@@ -191,6 +193,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       set((s) => ({
         hosts: s.hosts.map((h) => (h.id === conn.id ? { ...h, conn, title: conn.name } : h))
       }))
+      if (existing.viewerOnly) {
+        const { awaiting } = await window.aterm.hosts.connect(conn)
+        set((s) => ({
+          hosts: s.hosts.map((h) => (h.id === conn.id ? { ...h, viewerOnly: false, awaiting } : h))
+        }))
+        const pending = pendingHostStates.get(conn.id)
+        if (pending) {
+          pendingHostStates.delete(conn.id)
+          get().applyHostState(pending)
+        }
+      }
       if (!enter && (existing.phase === 'offline' || existing.phase === 'idle')) {
         get().reconnectHost(conn.id)
       }

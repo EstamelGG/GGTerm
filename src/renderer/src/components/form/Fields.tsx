@@ -67,11 +67,13 @@ export function ATTextArea({
   onChange,
   placeholder = '',
   minHeight = 56,
+  disabled,
   className
 }: {
   value: string
   onChange: (v: string) => void
   placeholder?: string
+  disabled?: boolean
   minHeight?: number
   className?: string
 }): React.JSX.Element {
@@ -84,6 +86,7 @@ export function ATTextArea({
         </span>
       )}
       <textarea
+        disabled={disabled}
         aria-labelledby={labelId}
         className={cn(fieldBase, 'resize-none py-2')}
         style={{ minHeight }}

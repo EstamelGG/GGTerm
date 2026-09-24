@@ -6,7 +6,6 @@
     "output": "Read-only shell output",
     "readOnly": "Execution sessions for this conversation. Output is read-only; typing and pasting are disabled. Submit passwords or verification codes in the chat card instead.",
     "empty": "No execution sessions in this conversation.",
-    "keepRunning": "Closing this viewer leaves execution running.",
     "terminate": "Terminate session",
     "terminationRequested": "Termination requested",
     "confirmTerminate": "Close this execution channel? Installation or configuration changes already made will not be rolled back. Detached remote processes may continue running.",
@@ -16,7 +15,9 @@
     "running": "Running",
     "completed": "Exited",
     "failed": "Failed to start",
-    "unknown": "Remote state unknown — do not automatically rerun"
+    "unknown": "Remote state unknown — do not automatically rerun",
+    "closeTab": "Close agent tab",
+    "closeTabConfirm": "Closing this tab interrupts the agent shell. Running operations may not finish. Continue?"
   },
   "common": {
     "retry": "Retry",
@@ -248,7 +249,10 @@
       "test": "Test",
       "testing": "Testing",
       "available": "OK",
-      "failed": "Failed"
+      "failed": "Failed",
+      "deviceType": "Host type (optional)",
+      "deviceUnspecified": "Unspecified",
+      "networkHint": "Network devices skip performance/OS probes, startup commands and SFTP."
     },
     "connectAndEnter": "Connect and enter",
     "connectOnly": "Connect only",

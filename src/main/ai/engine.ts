@@ -1,3 +1,5 @@
+import { deviceGuidance, isNetworkDevice } from '../../shared/device'
+import { listConnections } from '../data/connections'
 import { BrowserWindow, app } from 'electron'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
@@ -50,7 +52,7 @@ Rules:
 1. Host addressing: hostId must come from the id field returned by list_hosts — never invent or guess one. When the user mentions a host by name/IP, call list_hosts first to resolve it (results also carry per-host transport counts split by owner, a duplicate flag, and — with includeNote=true — the note; request the note only when its content is actually needed). To see the transports themselves — one entry per real connection, split user/agent, with the jump chain actually in use — use list_connections instead. Other tools auto-connect when needed, so no explicit connect is required. If nothing matches, list the closest candidates and let the user choose.
 2. Prefer tools over shell: remote files go through sftp_read/sftp_list/sftp_write/sftp_patch/sftp_delete instead of cat/ls/rm/rmdir; local files go through local_read/local_list/local_stat/local_write/local_patch/local_grep instead of cat/ls/grep/rm. Fall back to commands only when a tool cannot express the operation. Both read tools return a window of lines (offset/limit, plus nextOffset when cut short): page through a large file instead of asking for all of it at once.
 3. Run one command at a time; never chain compound commands (no &&, ;, |). Tools called in the same step run in declaration order (same as card order); calls on different hosts may proceed concurrently, but anything touching the same host is serialized — still prefer one mutating tool per step when operations depend on each other.
-4. All remote commands run via execute in a background remote shell; user terminal tabs are never opened. execute is remote-only — local commands go through local_exec (one-shot, non-interactive). For start, hostId must come from list_hosts; command is optional — omitting it just opens a remote shell (requires confirmation). Every execute call must carry a one-line description of the intent, written in the language the user writes in (shown to the user). Later input on the same executionId (must end with a newline) keeps cwd, env and login state. The user can only view output in this session's execution list or terminate it — they cannot type in the viewer. A password/verification-code prompt parks the execute call instead of returning to you: an input card appears in the chat and the user submits the value there themselves (it never reaches you), so the call resumes only after they act — humanInputOutcome tells you how (submitted / cancelled / expired). Never ask for the secret in chat and never pass sensitive input through the model. running means the shell is alive; completed/exitCode describe only the shell itself, not the foreground command. Output is polled at most every 60s; a detected prompt is a hint to inspect output, never proof of success — do not claim success or rerun. cancel sends Ctrl-C and usually keeps the shell; rollback is not guaranteed. Stopping generation or closing the viewer does not close the background shell. After terminationRequested or unknown, never touch or auto-rerun the task.
+4. All remote commands run via execute in a background remote shell; user terminal tabs are never opened. execute is remote-only — local commands go through local_exec (one-shot, non-interactive). For start, hostId must come from list_hosts; command is optional — omitting it just opens a remote shell (requires confirmation). Every execute call must carry a one-line description of the intent, written in the language the user writes in (shown to the user). Later input on the same executionId (must end with a newline) keeps cwd, env and login state. The user can only view output in read-only agent terminal tabs or terminate it — they cannot type in the viewer. A password/verification-code prompt parks the execute call instead of returning to you: an input card appears in the chat and the user submits the value there themselves (it never reaches you), so the call resumes only after they act — humanInputOutcome tells you how (submitted / cancelled / expired). Never ask for the secret in chat and never pass sensitive input through the model. running means the shell is alive; completed/exitCode describe only the shell itself, not the foreground command. Output is polled at most every 60s; a detected prompt is a hint to inspect output, never proof of success — do not claim success or rerun. cancel sends Ctrl-C and usually keeps the shell; rollback is not guaranteed. Stopping generation does not close the shell. Closing an agent terminal tab terminates its shell after user confirmation. After terminationRequested or unknown, never touch or auto-rerun the task.
 5. Destructive operations (delete, service restart, config changes) will require human confirmation by the system; just report normally.
 6. Host scope: the operation target must be specified by the user (host name or IP both work). If unsure which host, list candidates and let the user choose; never connect to or probe all hosts when the target is unclear. Bulk operations only with explicit user authorization, and write operations must be confirmed host by host.
 7. Local file access (sftp_upload and all local_* tools): macOS may deny reading Downloads/Documents/Desktop (EPERM/EACCES in the tool error). Do NOT retry, and do NOT work around it with another local path, write_temp_file or a different tool. Do NOT claim the file is empty. Tell the user to grant access in System Settings → Privacy & Security → Files and Folders, then stop and wait.
@@ -295,7 +297,13 @@ const gateTool: NonNullable<AgentDeps['gate']> = async (
           )
         command = String(input.input ?? '')
         // 写入交互式 shell 的 stdin 与新启命令同权判定：安全自动写入，危险/模糊走 AI/人工
-        if (command.trim()) {
+        if (isNetworkDevice(listConnections().find((c) => c.id === task?.hostId))) {
+          decision = {
+            action: 'confirm',
+            level: 'session',
+            reason: 'Network device CLI input requires confirmation: ' + command
+          }
+        } else if (command.trim()) {
           decision = await judgeCommand(command, prefs, resolveLocale())
         } else {
           // 空输入（如仅回车刷 prompt）：无命令意图，宽松放行，其余人工确认
@@ -421,7 +429,10 @@ function ensureAgent(): void {
     onContextUsage: (sessionId, turnId, usage) =>
       broadcast({ type: 'context-usage', sessionId, turnId, usage }),
     tools: aiTools,
-    instructions: SYSTEM,
+    instructions: () =>
+      SYSTEM +
+      '\nHost platform constraints (saved configuration):\n' +
+      JSON.stringify(listConnections().map((c) => ({ hostId: c.id, guidance: deviceGuidance(c) }))),
     gate: gateTool,
     onLog: (message) => appLog('ai', message)
   })

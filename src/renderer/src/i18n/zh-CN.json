@@ -6,7 +6,6 @@
     "output": "Shell 输出（只读）",
     "readOnly": "仅显示本次对话的执行会话。输出为只读，不支持输入或粘贴；密码 / 验证码等敏感提示请在对话卡片中提交。",
     "empty": "本次对话暂无执行会话。",
-    "keepRunning": "关闭查看窗口不会停止执行。",
     "terminate": "终止会话",
     "terminationRequested": "已请求终止",
     "confirmTerminate": "确认关闭此执行通道？已经完成的安装或配置修改不会回滚，脱离终端运行的远程进程可能继续运行。",
@@ -16,7 +15,9 @@
     "running": "正在运行",
     "completed": "已退出",
     "failed": "启动失败",
-    "unknown": "远端状态未知，请勿自动重跑"
+    "unknown": "远端状态未知，请勿自动重跑",
+    "closeTab": "关闭 agent 标签页",
+    "closeTabConfirm": "关闭此标签页会中断 agent 的 shell，正在执行的操作可能无法完成。是否继续？"
   },
   "common": {
     "retry": "重试",
@@ -248,7 +249,10 @@
       "test": "测试",
       "testing": "测试中",
       "available": "可用",
-      "failed": "失败"
+      "failed": "失败",
+      "deviceType": "主机类型（可选）",
+      "deviceUnspecified": "未指定",
+      "networkHint": "网络设备不自动采集性能、探测 Linux 系统、执行初始化命令或打开 SFTP。"
     },
     "connectAndEnter": "连接并进入",
     "connectOnly": "仅连接",

@@ -92,3 +92,14 @@ it('peer close invalidates the authenticated client even with keepalive enabled'
     expect(link.activeClient).toBeNull()
   })
 })
+
+it('user connections to tagged network devices never run the Linux OS probe', async () => {
+  const { HostLink } = await import('../src/main/ssh/link')
+  const link = new HostLink(
+    host.id,
+    { ...host, deviceType: 'huawei' },
+    {} as import('../src/main/ssh/link').HostLinkEvents
+  )
+  await link.probeOsName({} as import('ssh2').Client)
+  expect(probes.exec).not.toHaveBeenCalled()
+})

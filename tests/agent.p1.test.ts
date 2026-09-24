@@ -122,6 +122,21 @@ describe('agent（离线 mock 模型）', () => {
     if (dir) rmSync(dir, { recursive: true, force: true })
   })
 
+  it('refreshes platform instructions when a saved host changes during an existing conversation', async () => {
+    let guidance = 'Host type: Ubuntu'
+    const model = new MockLanguageModelV3({
+      doStream: async () => step([...textStep('done'), finish('stop')])
+    })
+    reinit(model, [], { instructions: () => guidance })
+    const session = createAgentSession()
+    await collect(startTurn(session.id, [user('first')]))
+    guidance = 'Host type: Huawei. NOT a Linux shell.'
+    await collect(startTurn(session.id, [...getAgentSession(session.id).messages, user('second')]))
+    expect(JSON.stringify(model.doStreamCalls[0].prompt)).toContain('Host type: Ubuntu')
+    expect(JSON.stringify(model.doStreamCalls[1].prompt)).toContain('NOT a Linux shell')
+    expect(JSON.stringify(model.doStreamCalls[1].prompt)).not.toContain('Host type: Ubuntu')
+  })
+
   it('工具往返：UI 流片、UIMessage 持久化、会话列表', async () => {
     const session = createAgentSession()
     reinit(
