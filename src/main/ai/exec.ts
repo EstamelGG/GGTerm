@@ -12,7 +12,11 @@ export function connectRemoteExecution(
   return new Promise((resolve, reject) => {
     client.shell({ term: 'xterm-256color', cols: 120, rows: 30 }, (error, channel) => {
       if (error || !channel) {
-        reject(error ?? new Error('SSH shell failed'))
+        reject(
+          new Error(
+            `SSH authenticated, but opening the PTY/shell channel failed: ${error?.message ?? 'No shell channel returned'}`
+          )
+        )
         return
       }
       const stdout = new StringDecoder('utf8')

@@ -54,6 +54,31 @@ it('allocates a PTY, preserves split UTF-8, and drains output before returning t
   expect(client.listenerCount('close')).toBe(0)
 })
 
+it('opens an empty shell and captures switch login prompts without sending a command', async () => {
+  const { client, channel } = fixture()
+  const data = vi.fn()
+  await connectRemoteExecution(client, '', { data, exit: vi.fn(), lost: vi.fn() })
+  const prompt = 'The password needs to be changed. Change now? [Y/N]:'
+  channel.emit('data', Buffer.from(prompt))
+  expect(data).toHaveBeenCalledWith(prompt)
+  expect(channel.write).not.toHaveBeenCalled()
+  channel.emit('close')
+})
+
+it('distinguishes a failed shell request from SSH authentication failure', async () => {
+  const { client, shell } = fixture()
+  shell.mockImplementation((_options, callback) => callback(new Error('No response from server')))
+  await expect(
+    connectRemoteExecution(client, '', {
+      data: vi.fn(),
+      exit: vi.fn(),
+      lost: vi.fn()
+    })
+  ).rejects.toThrow(
+    'SSH authenticated, but opening the PTY/shell channel failed: No response from server'
+  )
+})
+
 it('channel closure without exit status is unknown, never a successful completion', async () => {
   const { client, channel } = fixture()
   const exit = vi.fn()

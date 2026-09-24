@@ -16,6 +16,8 @@ export interface HostConnection {
   groupId: string | null
   /** 连接超时（ms），默认 20000 */
   connectTimeout: number
+  /** 仅允许现代密钥交换；默认关闭以自动兼容旧设备 */
+  strictKex?: boolean
   /** 保活间隔（ms），默认 5000；0 = 关闭心跳 */
   keepaliveInterval: number
   /** 连接后初始执行命令（空 = 无；如 su - / cd /data / 加载环境） */

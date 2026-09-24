@@ -1,5 +1,6 @@
 import { BrowserWindow } from 'electron'
 import { Client } from 'ssh2'
+import { sshAlgorithms } from './algorithms'
 import { selectAuth } from '../../shared/sshAuth'
 import { createHostVerifier } from './hostKeys'
 import type { ConnectionSecrets, HostConnection, PerfSample } from '../../shared/types'
@@ -66,6 +67,7 @@ function connectProbeClient(conn: HostConnection, secrets: ConnectionSecrets): P
       reject(verifier.error() ?? err)
     })
     client.connect({
+      algorithms: sshAlgorithms(conn.strictKex),
       host: conn.host,
       port: conn.port,
       username: conn.username,
@@ -99,13 +101,19 @@ async function clientFor(hostId: string): Promise<Client | null> {
 
   if (e.conn.authType === 'manual') {
     authFailedHosts.add(hostId)
-    appLog('ssh', `Perf probe skipped "${e.conn.name}" (manual auth; takes effect after saving the connection)`)
+    appLog(
+      'ssh',
+      `Perf probe skipped "${e.conn.name}" (manual auth; takes effect after saving the connection)`
+    )
     return null
   }
   const secrets = secretsStore.loadSecrets(hostId)
   if (!secrets.password && !secrets.privateKey) {
     authFailedHosts.add(hostId)
-    appLog('ssh', `Perf probe skipped "${e.conn.name}" (no stored credentials; takes effect after saving the connection)`)
+    appLog(
+      'ssh',
+      `Perf probe skipped "${e.conn.name}" (no stored credentials; takes effect after saving the connection)`
+    )
     return null
   }
 
@@ -139,7 +147,11 @@ async function clientFor(hostId: string): Promise<Client | null> {
       e.monitor.noteFailure()
       if (!e.failLogged) {
         e.failLogged = true
-        appLog('ssh', `Perf probe connection failed "${e.conn.name}": ${message} (auto retry every 10s)`, 'error')
+        appLog(
+          'ssh',
+          `Perf probe connection failed "${e.conn.name}": ${message} (auto retry every 10s)`,
+          'error'
+        )
       }
     }
     return null

@@ -291,6 +291,7 @@ export default function ConnectionPage({
             authType: c.authType,
             groupId: c.groupId,
             connectTimeout: c.connectTimeout,
+            strictKex: c.strictKex,
             keepaliveInterval: c.keepaliveInterval,
             initCommand: c.initCommand,
             initDir: c.initDir,

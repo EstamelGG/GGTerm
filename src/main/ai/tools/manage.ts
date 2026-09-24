@@ -32,6 +32,12 @@ export const manageTools: AnyTool[] = [
           'Group id (resolve an existing group via list_groups, or create one via add_group)'
         ),
       jumpHostIds: z.array(z.string()).optional().describe('Jump chain (ordered, outermost first)'),
+      strictKex: z
+        .boolean()
+        .optional()
+        .describe(
+          'Require modern key exchange for this host; default false automatically negotiates legacy SHA-1 if needed'
+        ),
       password: z.string().optional(),
       privateKey: z.string().optional().describe('Private key content (PEM text, not a path)'),
       passphrase: z.string().optional()
@@ -44,7 +50,8 @@ export const manageTools: AnyTool[] = [
         port: input.port,
         authType: input.authType,
         groupId: input.groupId ?? null,
-        jumpHostIds: input.jumpHostIds
+        jumpHostIds: input.jumpHostIds,
+        strictKex: input.strictKex
       })
       if (
         input.password !== undefined ||
@@ -85,6 +92,12 @@ export const manageTools: AnyTool[] = [
         .optional()
         .describe('Group id; null moves the connection to ungrouped'),
       jumpHostIds: z.array(z.string()).optional(),
+      strictKex: z
+        .boolean()
+        .optional()
+        .describe(
+          'Require modern key exchange for this host; default false automatically negotiates legacy SHA-1 if needed'
+        ),
       password: z.string().optional(),
       privateKey: z.string().optional().describe('Private key content (PEM text, not a path)'),
       passphrase: z.string().optional()
@@ -143,6 +156,7 @@ export const manageTools: AnyTool[] = [
         port: conn.port,
         username: conn.username,
         connectTimeout: conn.connectTimeout,
+        strictKex: conn.strictKex,
         password: secrets.password,
         privateKey: secrets.privateKey,
         passphrase: secrets.passphrase,

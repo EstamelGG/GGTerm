@@ -38,15 +38,20 @@ export function getOrCreateAgentLink(conn: HostConnection): HostLink {
   // A separate HostLink creates its own Client, jump clients and SFTP channel.
   // Agent state never enters the user's host/shell/SFTP event stream.
   const noop = (): void => {}
-  const link = new HostLink(conn.id, conn, {
-    onHostState: sendState,
-    onShellState: noop,
-    onShellData: noop,
-    onShellAnnounce: noop,
-    onSftpState: noop,
-    onSftpTransfer: noop,
-    onSftpMeasure: noop
-  })
+  const link = new HostLink(
+    conn.id,
+    conn,
+    {
+      onHostState: sendState,
+      onShellState: noop,
+      onShellData: noop,
+      onShellAnnounce: noop,
+      onSftpState: noop,
+      onSftpTransfer: noop,
+      onSftpMeasure: noop
+    },
+    { probeOs: false }
+  )
   links.set(key, { sessionId, link })
   return link
 }

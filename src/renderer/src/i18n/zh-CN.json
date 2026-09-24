@@ -226,6 +226,8 @@
       "passphrase": "口令（Passphrase）",
       "manualHint": "连接时手动输入用户名与密码，不在本机保存任何凭据。",
       "connectTimeout": "连接超时 (ms)",
+      "strictKex": "仅允许现代密钥交换",
+      "strictKexHint": "默认优先现代算法，自动兼容旧设备的 SHA-1 密钥交换。开启后拒绝旧算法；跳板需分别设置。",
       "keepalive": "保活间隔 (ms)",
       "jumpChain": "跳板链",
       "jumpEmpty": "直连（未使用跳板）",

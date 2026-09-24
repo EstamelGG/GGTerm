@@ -226,6 +226,8 @@
       "passphrase": "Passphrase",
       "manualHint": "Enter the username and password manually when connecting; no credentials are stored on this machine.",
       "connectTimeout": "Connect Timeout (ms)",
+      "strictKex": "Modern key exchange only",
+      "strictKexHint": "Modern algorithms are preferred, with automatic SHA-1 key exchange compatibility for older devices. Enable to reject legacy algorithms; configure jump hosts separately.",
       "keepalive": "Keepalive Interval (ms)",
       "jumpChain": "Jump Chain",
       "jumpEmpty": "Direct connection (no jump host)",

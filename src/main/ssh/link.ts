@@ -1,6 +1,7 @@
 import { BrowserWindow } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { Client, type ClientChannel } from 'ssh2'
+import { sshAlgorithms } from './algorithms'
 import { selectAuth } from '../../shared/sshAuth'
 import { createHostVerifier } from './hostKeys'
 import type {
@@ -311,7 +312,8 @@ export class HostLink {
   constructor(
     readonly hostId: string,
     private conn: HostConnection,
-    readonly events: HostLinkEvents
+    readonly events: HostLinkEvents,
+    private readonly options: { probeOs?: boolean } = {}
   ) {
     this.sftp = new SftpSession(this, events)
   }
@@ -478,7 +480,7 @@ export class HostLink {
         }
         this.sftp.hostLinkRestored()
         // 兜底采集主机系统名（性能监控不可用/未开时，OS 图标缓存靠会话链路刷新）
-        void this.probeOsName(client)
+        if (this.options.probeOs !== false) void this.probeOsName(client)
         return
       } catch (err) {
         const message = errorMessage(err)
@@ -551,6 +553,7 @@ export class HostLink {
 
       // 心跳交给 ssh2 内置 keepalive（每跳独立配置，随跳板连接自身参数）
       conn.connect({
+        algorithms: sshAlgorithms(hop.strictKex),
         host: hop.host,
         port: hop.port,
         username: hop.username,
@@ -620,15 +623,10 @@ export class HostLink {
     }
   }
 
-  /**
-   * 通道 close 事件。keepalive 开启时，ssh2 内置 keepalive 超时会先触发 error
-   * 事件（declareLossAndReconnect 已接管），close 事件不再作为判死依据；
-   * 仅在心跳关闭（interval=0）时以 close 作为掉线信号。
-   */
+  /** Socket close always invalidates the transport, even before a keepalive error arrives. */
   private handleDisconnect(gen: number): void {
     if (gen !== this.generation) return
-    if (this.conn.keepaliveInterval > 0) return
-    this.declareLossAndReconnect('channel closed (heartbeat off)')
+    this.declareLossAndReconnect('SSH transport closed by peer')
   }
 
   /** 链路死亡唯一漏斗：通知会话，再固定次数重试，超限停车等手动 */
@@ -696,7 +694,9 @@ export class HostLink {
     const detail = this.offlineReason
       ? `reason: ${this.offlineReason}`
       : `current phase: ${this.phase} (possibly waiting for host response/auth)`
-    throw new Error(`Connection not established within ${Math.round(timeoutMs / 1000)}s — ${detail}`)
+    throw new Error(
+      `Connection not established within ${Math.round(timeoutMs / 1000)}s — ${detail}`
+    )
   }
 }
 

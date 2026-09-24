@@ -38,6 +38,8 @@ const finished = (status: ExecutionStatus): boolean =>
 /** 「正在等输入」的三种提示特征：wait 判是否交回控制权、input 判是否回退到提示符行，共用同一套判据 */
 const SENSITIVE_PROMPT_RE =
   /(?:password|passphrase|verification code|one.time (?:code|password)|密码|口令|验证码)[^\r\n]{0,100}[:：?？]\s*$/i
+const YES_NO_PROMPT_RE =
+  /(?:\[(?:y\/n|n\/y|yes\/no|no\/yes)\]|\((?:y\/n|n\/y|yes\/no|no\/yes)\))\s*[:：?？]?\s*$/i
 const ASK_PROMPT_RE =
   /(?:\[[ynYN/]+\]|\([ynYN/]+\)|(?:enter|input|select|choose|请输入|请选择)[^\r\n]{0,100}[:：?？])\s*$/i
 const SHELL_PROMPT_RE = /(?:^|[\r\n])[^\r\n]{0,200}[$#%>]\s*$/
@@ -45,7 +47,11 @@ const SHELL_PROMPT_RE = /(?:^|[\r\n])[^\r\n]{0,200}[$#%>]\s*$/
 /** 卡片展示用的提示行：终端尾部最后一行非空内容（已去 ANSI），最长 200 字符 */
 function promptLine(output: string): string {
   const tail = stripAnsi(output).slice(-1000)
-  const line = tail.split(/[\r\n]+/).filter((l) => l.trim()).pop() ?? ''
+  const line =
+    tail
+      .split(/[\r\n]+/)
+      .filter((l) => l.trim())
+      .pop() ?? ''
   return line.trim().slice(-200)
 }
 
@@ -58,7 +64,10 @@ function inputStart(task: Task): number {
   const nl = task.output.lastIndexOf('\n')
   const tail = stripAnsi(task.output.slice(nl + 1))
   const waiting =
-    SENSITIVE_PROMPT_RE.test(tail) || ASK_PROMPT_RE.test(tail) || SHELL_PROMPT_RE.test(tail)
+    SENSITIVE_PROMPT_RE.test(tail) ||
+    YES_NO_PROMPT_RE.test(tail) ||
+    ASK_PROMPT_RE.test(tail) ||
+    SHELL_PROMPT_RE.test(tail)
   return waiting ? task.offset + nl + 1 : task.offset + task.output.length
 }
 
@@ -427,8 +436,8 @@ export class ExecutionManager {
       const check = setInterval(() => {
         const tail = stripAnsi(task.output).slice(-1000).trimEnd()
         const fresh = task.offset + task.output.length > task.promptAcknowledged
-        const sensitive = SENSITIVE_PROMPT_RE.test(tail)
-        const prompt = sensitive || ASK_PROMPT_RE.test(tail)
+        const sensitive = SENSITIVE_PROMPT_RE.test(tail) && !YES_NO_PROMPT_RE.test(tail)
+        const prompt = sensitive || YES_NO_PROMPT_RE.test(tail) || ASK_PROMPT_RE.test(tail)
         // Ordinary shell prompts are hints to inspect output, never proof of command success.
         const shellPrompt = SHELL_PROMPT_RE.test(tail)
         if (fresh && (prompt || shellPrompt) && Date.now() - task.updatedAt >= 1000) {

@@ -1,4 +1,5 @@
 import { Client, type ClientChannel } from 'ssh2'
+import { sshAlgorithms } from './ssh/algorithms'
 import type { AuthType, ConnectionSecrets } from '../shared/types'
 import { selectAuth } from '../shared/sshAuth'
 import { createHostVerifier } from './ssh/hostKeys'
@@ -11,6 +12,7 @@ export interface SshTestInput {
   port: number
   username: string
   connectTimeout: number
+  strictKex?: boolean
   password: string
   privateKey: string
   passphrase: string
@@ -26,7 +28,8 @@ function dial(
   connectTimeout: number,
   auth: AuthType,
   secrets: Partial<ConnectionSecrets>,
-  sock?: ClientChannel
+  sock?: ClientChannel,
+  strictKex?: boolean
 ): Promise<Client> {
   return new Promise((resolve, reject) => {
     const verifier = createHostVerifier(host, port)
@@ -50,6 +53,7 @@ function dial(
     }
     conn.once('ready', onReady).once('error', onError)
     conn.connect({
+      algorithms: sshAlgorithms(strictKex),
       host,
       port,
       username,
@@ -98,7 +102,8 @@ async function runTest(input: SshTestInput): Promise<void> {
         hop.connectTimeout,
         hop.authType,
         loadSecrets(hop.id),
-        sock
+        sock,
+        hop.strictKex
       )
       opened.push(client)
       const next = i + 1 < hops.length ? hops[i + 1] : input
@@ -111,7 +116,8 @@ async function runTest(input: SshTestInput): Promise<void> {
       input.connectTimeout,
       input.authType,
       input,
-      sock
+      sock,
+      input.strictKex
     )
     target.end()
   } finally {

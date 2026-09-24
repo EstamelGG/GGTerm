@@ -4,7 +4,11 @@ import {
   type ExecutionEvents,
   type ExecutionTransport
 } from '../src/main/ai/executionManager'
-import type { ExecutionSnapshot, HumanInputRequest, HumanInputResolved } from '../src/shared/execution'
+import type {
+  ExecutionSnapshot,
+  HumanInputRequest,
+  HumanInputResolved
+} from '../src/shared/execution'
 
 let events: ExecutionEvents
 let manager: ExecutionManager
@@ -24,6 +28,31 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers())
 
 describe('execution lifecycle', () => {
+  it('returns a switch password-change confirmation as ordinary input, then protects the real password prompt', async () => {
+    const requests: HumanInputRequest[] = []
+    manager.onHumanInputRequest((request) => requests.push(request))
+    const id = manager.start('owner', { target: 'remote', hostId: 'host', command: '' })
+    await Promise.resolve()
+    const prompt = 'The password needs to be changed. Change now? [Y/N]:'
+    events.data(`Warning: The initial password poses security risks.\r\n${prompt}`)
+    const pending = manager.wait('owner', id)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(await pending).toMatchObject({
+      status: 'running',
+      needsInput: true,
+      sensitiveInput: false,
+      exitCode: null
+    })
+    expect(requests).toHaveLength(0)
+    expect(transport.write).not.toHaveBeenCalled()
+    const from = manager.input('owner', id, 'Y\n')
+    events.data('\r\nNew password: ')
+    void manager.wait('owner', id, from)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(requests).toHaveLength(1)
+    expect(requests[0].prompt).toBe('New password:')
+    manager.close('owner', id)
+  })
   it('a prompt returns control while keeping the shell alive and never fabricates a command exit code', async () => {
     const id = start()
     const pending = manager.wait('owner', id)
@@ -281,9 +310,7 @@ describe('execution lifecycle', () => {
     const output = manager.snapshot('owner', id).output
     expect(output).not.toContain('hunter2secret')
     expect(output).toContain('••••••••')
-    expect(() => manager.submitHumanInput('owner', id, 'again\n')).toThrow(
-      'No pending human input'
-    )
+    expect(() => manager.submitHumanInput('owner', id, 'again\n')).toThrow('No pending human input')
   })
 
   it('cancelling a pending request terminates the blocked execution', async () => {

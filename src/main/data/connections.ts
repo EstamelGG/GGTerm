@@ -44,6 +44,7 @@ export function createConnection(
     authType: input.authType ?? 'password',
     groupId: input.groupId ?? null,
     connectTimeout: input.connectTimeout ?? 20000,
+    strictKex: input.strictKex ?? false,
     keepaliveInterval: input.keepaliveInterval ?? 5000,
     initCommand: input.initCommand ?? '',
     initDir: input.initDir ?? '',

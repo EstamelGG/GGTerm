@@ -73,6 +73,7 @@ export function ConnectionForm({
         initCommand: '',
         initDir: '',
         perfDisabled: false,
+        strictKex: false,
         jumps: [] as (string | null)[]
       }
     }
@@ -89,6 +90,7 @@ export function ConnectionForm({
       initCommand: c.initCommand ?? '',
       initDir: c.initDir ?? '',
       perfDisabled: c.perfDisabled ?? false,
+      strictKex: c.strictKex ?? false,
       jumps: (c.jumpHostIds ?? []) as (string | null)[]
     }
   }, [payload])
@@ -107,6 +109,7 @@ export function ConnectionForm({
   const [initCommand, setInitCommand] = useState(init.initCommand)
   const [initDir, setInitDir] = useState(init.initDir)
   const [perfDisabled, setPerfDisabled] = useState(init.perfDisabled)
+  const [strictKex, setStrictKex] = useState(init.strictKex)
   /** 跳板链（行序即链序，最外层在前；null = 未选择占位行） */
   const [jumps, setJumps] = useState<(string | null)[]>(init.jumps)
   const [testState, setTestState] = useState<TestState>('idle')
@@ -181,6 +184,7 @@ export function ConnectionForm({
         username: username.trim(),
         authType: auth,
         connectTimeout: timeout,
+        strictKex,
         password,
         privateKey,
         passphrase,
@@ -252,6 +256,7 @@ export function ConnectionForm({
       initCommand: initCommand.trim(),
       initDir: initDir.trim(),
       perfDisabled,
+      strictKex,
       jumpHostIds: [...new Set(jumps.filter((j): j is string => !!j && j !== editing?.id))]
     }
     try {
@@ -400,11 +405,13 @@ export function ConnectionForm({
                     className="h-8 items-center px-[3px]"
                     value={auth}
                     onChange={setAuth}
-                    options={([
-                      ['password', 'conn.form.authPassword'],
-                      ['privateKey', 'conn.form.authPrivateKey'],
-                      ['manual', 'conn.form.authManual']
-                    ] as const).map(([value, key]) => ({ value, label: t(key) }))}
+                    options={(
+                      [
+                        ['password', 'conn.form.authPassword'],
+                        ['privateKey', 'conn.form.authPrivateKey'],
+                        ['manual', 'conn.form.authManual']
+                      ] as const
+                    ).map(([value, key]) => ({ value, label: t(key) }))}
                   />
                   {/* 密钥模式的口令就近放选择行右侧，省一个独立字段位 */}
                   {auth === 'privateKey' && (
@@ -511,6 +518,13 @@ export function ConnectionForm({
               </p>
 
               <JumpChainEditor value={jumps} onChange={setJumps} selfId={editing?.id ?? null} />
+              <div className="flex items-center justify-between text-body text-fg">
+                <span>{t('conn.form.strictKex')}</span>
+                <Switch label={t('conn.form.strictKex')} on={strictKex} onChange={setStrictKex} />
+              </div>
+              <p className="text-caption leading-relaxed text-muted">
+                {t('conn.form.strictKexHint')}
+              </p>
 
               <ATField title={t('conn.form.initDir')}>
                 <ATTextField
