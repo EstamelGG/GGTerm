@@ -1,4 +1,5 @@
 import { FileReferenceChip } from '@/components/ai/FileReferenceChip'
+import { ActivityPanelHeader } from '@/components/activity/ActivityPanelHeader'
 import { memo, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
@@ -1731,7 +1732,9 @@ export function AiWorkspacePage(): React.JSX.Element {
   )
 
   /** 面板视图：chat = 当前会话对话；list = 全部会话列表（VS Code Copilot 风格导航） */
-  const [view, setView] = useState<'chat' | 'list'>('chat')
+  const [view, setView] = useState<'chat' | 'list'>(() =>
+    activeId || useAiStore.getState().viewChatRequest > 0 ? 'chat' : 'list'
+  )
 
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -1794,7 +1797,7 @@ export function AiWorkspacePage(): React.JSX.Element {
     <div className="flex h-full">
       <div className="flex h-full min-w-0 flex-1 flex-col">
         {/* 头部：聊天视图（← + 当前会话标题）/ 列表视图（所有会话）；右端恒为新建 */}
-        <div className="flex h-10 shrink-0 items-center gap-2 border-b border-chrome-sep px-3">
+        <ActivityPanelHeader>
           {view === 'chat' && (
             <IconButton
               variant="toolbar"
@@ -1825,7 +1828,7 @@ export function AiWorkspacePage(): React.JSX.Element {
             aria-label={t('ai.newSession')}
             onClick={handleNewSession}
           />
-        </div>
+        </ActivityPanelHeader>
 
         {view === 'list' ? (
           <SessionList

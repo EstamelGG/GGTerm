@@ -616,13 +616,17 @@ function ConnRow({
             .catch((err) => setActionError(errorMessage(err)))
         }}
         onSendToAi={() => {
-          const ai = useAiStore.getState()
           useWorkspaceStore.getState().setAiOpen(true)
-          const id = ai.activeId
-          if (id) {
-            useWorkspaceStore.getState().attachHost(id, conn.id)
-            useAiStore.setState((s) => ({ viewChatRequest: s.viewChatRequest + 1 }))
-          } else setActionError(t('ai.loading'))
+          void (async () => {
+            await useAiStore.getState().init()
+            if (!useAiStore.getState().activeId && !useAiStore.getState().initError)
+              await useAiStore.getState().newSession()
+            const ai = useAiStore.getState()
+            if (ai.activeId) {
+              useWorkspaceStore.getState().attachHost(ai.activeId, conn.id)
+              useAiStore.setState((s) => ({ viewChatRequest: s.viewChatRequest + 1 }))
+            } else setActionError(ai.initError ?? t('ai.loading'))
+          })().catch((err) => setActionError(errorMessage(err)))
         }}
         onConnect={() => onConnect(conn)}
         onEdit={() => onEdit(conn)}

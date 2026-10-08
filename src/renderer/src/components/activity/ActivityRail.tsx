@@ -13,6 +13,7 @@ import { useHumanInputStore } from '@/stores/humanInput'
 import { PerformancePanel } from './panels/PerformancePanel'
 import { TransfersPanel } from './panels/TransfersPanel'
 import { CommandsPanel } from './panels/CommandsPanel'
+import { ActivityPanelHeader } from './ActivityPanelHeader'
 
 const AiWorkspacePage = lazy(() => import('@/pages/AiWorkspacePage'))
 const WIDTH_KEY = 'ggterm.activityDockWidth'
@@ -103,8 +104,8 @@ export function ActivityRail(): React.JSX.Element {
         </div>
         {active !== 'ai' && (
           <div className="flex h-full min-w-0 flex-col">
-            <div className="flex h-10 shrink-0 items-center gap-2 border-b border-line px-3">
-              <span className="shrink-0 text-caption font-semibold text-fg">
+            <ActivityPanelHeader>
+              <span className="shrink-0 text-body font-medium text-fg">
                 {t(PANELS.find((p) => p.id === active)!.titleKey)}
               </span>
               {active !== 'transfers' && host && (
@@ -115,7 +116,7 @@ export function ActivityRail(): React.JSX.Element {
                   {host.title}
                 </span>
               )}
-            </div>
+            </ActivityPanelHeader>
             <div className="min-h-0 flex-1 overflow-y-auto p-3">
               {active === 'transfers' ? (
                 <TransfersPanel />

@@ -22,7 +22,7 @@ interface WorkspaceState {
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
-  sidebarOpen: true,
+  sidebarOpen: false,
   activePanel: 'ai',
   focusedHostId: null,
   attachments: {},

@@ -384,10 +384,8 @@ export const useAiStore = create<AiState>((set, get) => ({
     // 幂等：AI 工作台是条件挂载（切 tab 会卸载重挂），镜像已存在则不重建
     if (get().sessions.length > 0) return
     try {
-      let list = await window.aterm.ai.listSessions()
-      if (list.length === 0) list = [await window.aterm.ai.createSession()]
-      set({ sessions: list.map(emptySession), activeId: list[0].id, initError: null })
-      void hydrate(list[0].id)
+      const list = await window.aterm.ai.listSessions()
+      set({ sessions: list.map(emptySession), initError: null })
     } catch (err) {
       set({
         initError: String(err instanceof Error ? err.message : err),

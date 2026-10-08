@@ -328,7 +328,9 @@ export function SftpPane({
           void useAiStore
             .getState()
             .init()
-            .then(() => {
+            .then(async () => {
+              if (!useAiStore.getState().activeId && !useAiStore.getState().initError)
+                await useAiStore.getState().newSession()
               const ai = useAiStore.getState()
               if (ai.activeId) attach(ai.activeId)
               else onToast(ai.initError ?? t('ai.loading'))

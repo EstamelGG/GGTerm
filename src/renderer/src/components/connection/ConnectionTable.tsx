@@ -15,10 +15,14 @@ import {
   Bot,
   ChevronDown,
   ChevronUp,
+  Copy,
   Ellipsis,
   Link2,
   Pencil,
+  Plug,
   RotateCw,
+  Server,
+  Trash2,
   UserRound
 } from 'lucide-react'
 import type { HostConnection, SshConnectionSession } from '@shared/types'
@@ -27,6 +31,10 @@ import { useResizePreview } from '@/lib/useResizePreview'
 import { useLatencyStore, type LatencyStatus } from '@/stores/latency'
 import { useLinksStore } from '@/stores/links'
 import { usePerfStore } from '@/stores/perf'
+import { useSessionStore } from '@/stores/session'
+import { useAiStore } from '@/stores/ai'
+import { useWorkspaceStore } from '@/stores/workspace'
+import { errorMessage } from '@shared/error'
 import { Button } from '@/components/form/Buttons'
 import { CheckBox } from '@/components/form/Fields'
 import { IconButton } from '@/components/ui/IconButton'
@@ -882,7 +890,14 @@ const HostRow = memo(function HostRow({
             aria-label={t('common.edit')}
             onClick={() => onEdit(conn)}
           />
-          <RowMenu onDuplicate={() => onDuplicate(conn)} onDelete={() => onDelete(conn)} />
+          <RowMenu
+            conn={conn}
+            onConnect={() => onConnect(conn)}
+            onEdit={() => onEdit(conn)}
+            onDuplicate={() => onDuplicate(conn)}
+            onDelete={() => onDelete(conn)}
+            onToast={onToast}
+          />
         </div>
       </div>
       <RevealRow open={expanded}>
@@ -1036,24 +1051,86 @@ function SelectCheckbox({ state }: { state: 'off' | 'on' | 'some' }): React.JSX.
   return <CheckBox state={state} />
 }
 
-/** 行尾"更多"菜单：复制连接 / 删除（编辑按钮在外侧直出） */
+/** 行尾"更多"菜单：包含左侧主机右键菜单的全部操作，并保留复制连接。 */
 function RowMenu({
+  conn,
+  onConnect,
+  onEdit,
   onDuplicate,
-  onDelete
+  onDelete,
+  onToast
 }: {
+  conn: HostConnection
+  onConnect: () => void
+  onEdit: () => void
   onDuplicate: () => void
   onDelete: () => void
+  onToast: (text: string) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const sendToAi = async (): Promise<void> => {
+    useWorkspaceStore.getState().setAiOpen(true)
+    await useAiStore.getState().init()
+    if (!useAiStore.getState().activeId && !useAiStore.getState().initError)
+      await useAiStore.getState().newSession()
+    const ai = useAiStore.getState()
+    if (!ai.activeId) {
+      onToast(ai.initError ?? t('ai.loading'))
+      return
+    }
+    useWorkspaceStore.getState().attachHost(ai.activeId, conn.id)
+    useAiStore.setState((s) => ({ viewChatRequest: s.viewChatRequest + 1 }))
+  }
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <IconButton icon={Ellipsis} size={12} title={t('common.moreActions')} />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-36">
-        <DropdownMenuItem onClick={onDuplicate}>{t('conn.duplicate')}</DropdownMenuItem>
+      <DropdownMenuContent align="end" className="w-44">
+        <DropdownMenuItem onClick={onConnect}>
+          <Plug />
+          {t('conn.connectAndEnter')}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => {
+            void useSessionStore
+              .getState()
+              .connect(conn, false)
+              .catch((err) => onToast(errorMessage(err)))
+          }}
+        >
+          <Plug />
+          {t('conn.connectOnly')}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => void sendToAi().catch((err) => onToast(errorMessage(err)))}
+        >
+          <Server />
+          {t('conn.sendToAi')}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onEdit}>
+          <Pencil />
+          {t('common.edit')}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator className="bg-line" />
+        <DropdownMenuItem
+          onClick={() => {
+            void navigator.clipboard
+              .writeText(conn.host)
+              .then(() => onToast(t('common.copied')))
+              .catch((err) => onToast(errorMessage(err)))
+          }}
+        >
+          <Copy />
+          {t('conn.copyAddress')}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onDuplicate}>
+          <Copy />
+          {t('conn.duplicate')}
+        </DropdownMenuItem>
         <DropdownMenuSeparator className="bg-line" />
         <DropdownMenuItem variant="destructive" onClick={onDelete}>
+          <Trash2 />
           {t('common.delete')}
         </DropdownMenuItem>
       </DropdownMenuContent>

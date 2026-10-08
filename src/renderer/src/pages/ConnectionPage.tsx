@@ -363,8 +363,13 @@ export default function ConnectionPage({
           )}
         >
           {/* 工具栏：胶囊搜索 + 新增连接（TOOLBAR_V 常量 = 40px 高，与侧栏头部分割线对齐） */}
-          <div className={cn('flex flex-wrap items-center gap-2.5 px-4', TOOLBAR_V)}>
-            <div className="flex h-6 w-64 items-center gap-1.5 rounded-full border border-line bg-raised px-2.5 transition-colors duration-100 focus-within:border-at-accent/50">
+          <div
+            className={cn(
+              'flex shrink-0 items-center gap-2.5 px-4 [&>button]:shrink-0 [&>button]:whitespace-nowrap',
+              TOOLBAR_V
+            )}
+          >
+            <div className="flex h-6 w-64 min-w-0 items-center gap-1.5 rounded-full border border-line bg-raised px-2.5 transition-colors duration-100 focus-within:border-at-accent/50">
               <Search size={11} strokeWidth={2.2} className="shrink-0 text-muted" />
               <input
                 type="text"
