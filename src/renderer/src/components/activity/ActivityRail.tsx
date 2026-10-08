@@ -1,7 +1,7 @@
 import { isNetworkDevice } from '@shared/device'
 import { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowDownUp, Bot, Gauge, Zap } from 'lucide-react'
+import { ArrowDownUp, Bot, Gauge, Zap, Network, Plus } from 'lucide-react'
 import { useResizePreview } from '@/lib/useResizePreview'
 import { cn } from '@/lib/utils'
 import { IconButton } from '@/components/ui/IconButton'
@@ -14,6 +14,8 @@ import { PerformancePanel } from './panels/PerformancePanel'
 import { TransfersPanel } from './panels/TransfersPanel'
 import { CommandsPanel } from './panels/CommandsPanel'
 import { ActivityPanelHeader } from './ActivityPanelHeader'
+import { PortForwardsPanel } from './panels/PortForwardsPanel'
+import { usePortForwardsStore } from '@/stores/portForwards'
 
 const AiWorkspacePage = lazy(() => import('@/pages/AiWorkspacePage'))
 const WIDTH_KEY = 'ggterm.activityDockWidth'
@@ -30,6 +32,7 @@ const PANELS = [
   { id: 'ai', icon: Bot, titleKey: 'ai.title' },
   { id: 'performance', icon: Gauge, titleKey: 'activity.performance' },
   { id: 'transfers', icon: ArrowDownUp, titleKey: 'activity.transfers' },
+  { id: 'forwards', icon: Network, titleKey: 'forward.title' },
   { id: 'commands', icon: Zap, titleKey: 'activity.commands' }
 ] as const
 
@@ -52,6 +55,24 @@ export function ActivityRail(): React.JSX.Element {
     s.sessions.some((session) => pendingApprovals(session.messages).length > 0)
   )
   const aiInput = useHumanInputStore((s) => Object.keys(s.pending).length > 0)
+  const forwardsRunning = usePortForwardsStore((s) => s.rules.some((r) => r.status === 'running'))
+  const forwardFilter = usePortForwardsStore((s) => s.filterHostId)
+
+  useEffect(() => {
+    let subscribed = true
+    let updated = false
+    const unsubscribe = window.aterm.portForwards.onChanged((rules) => {
+      updated = true
+      usePortForwardsStore.getState().setRules(rules)
+    })
+    void window.aterm.portForwards.list().then((rules) => {
+      if (subscribed && !updated) usePortForwardsStore.getState().setRules(rules)
+    })
+    return () => {
+      subscribed = false
+      unsubscribe()
+    }
+  }, [])
 
   useEffect(() => {
     window.aterm.perf.watchSession(networkDevice ? null : hostId)
@@ -108,7 +129,7 @@ export function ActivityRail(): React.JSX.Element {
               <span className="shrink-0 text-body font-medium text-fg">
                 {t(PANELS.find((p) => p.id === active)!.titleKey)}
               </span>
-              {active !== 'transfers' && host && (
+              {active !== 'transfers' && active !== 'forwards' && host && (
                 <span
                   className="min-w-0 truncate text-caption text-muted"
                   title={`${host.conn.username}@${host.conn.host}:${host.conn.port}`}
@@ -116,9 +137,20 @@ export function ActivityRail(): React.JSX.Element {
                   {host.title}
                 </span>
               )}
+              {active === 'forwards' && (
+                <div className="ml-auto">
+                  <IconButton
+                    icon={Plus}
+                    title={t('forward.new')}
+                    onClick={() => usePortForwardsStore.getState().open(forwardFilter, true)}
+                  />
+                </div>
+              )}
             </ActivityPanelHeader>
             <div className="min-h-0 flex-1 overflow-y-auto p-3">
-              {active === 'transfers' ? (
+              {active === 'forwards' ? (
+                <PortForwardsPanel />
+              ) : active === 'transfers' ? (
                 <TransfersPanel />
               ) : hostId ? (
                 active === 'performance' ? (
@@ -152,6 +184,7 @@ export function ActivityRail(): React.JSX.Element {
               onClick={() => select(panel.id)}
             />
             {((panel.id === 'transfers' && transfersRunning) ||
+              (panel.id === 'forwards' && forwardsRunning) ||
               (panel.id === 'ai' && (aiBusy || aiApproval || aiInput))) && (
               <span
                 className={cn(

@@ -11,6 +11,7 @@ import { errorMessage } from '@shared/error'
 import { TOOLBAR_V } from '@/components/chrome/layout'
 import { descendantsOf } from '@shared/groupTree'
 import { useConnectionsStore } from '@/stores/connections'
+import { usePortForwardsStore } from '@/stores/portForwards'
 import { useLatencyStore, type LatencyStatus } from '@/stores/latency'
 import { usePerfStore } from '@/stores/perf'
 import { ChromeSeparator } from '@/components/chrome/ChromeSeparator'
@@ -85,6 +86,9 @@ export default function ConnectionPage({
   const [sortColumn, setSortColumn] = useState<SortColumn>('createdAt')
   const [sortAscending, setSortAscending] = useState(true)
   const [deleteTarget, setDeleteTarget] = useState<HostConnection | null>(null)
+  const deletingHasForwards = usePortForwardsStore((s) =>
+    s.rules.some((rule) => rule.hostId === deleteTarget?.id)
+  )
   const [form, setForm] = useState<FormPayload | null>(null)
   const [groupEditor, setGroupEditor] = useState<GroupEditorPayload | null>(null)
   const [deleteGroupTarget, setDeleteGroupTarget] = useState<HostGroup | null>(null)
@@ -554,6 +558,7 @@ export default function ConnectionPage({
       >
         <p className="text-body text-muted">
           {t('conn.deleteConnMessage', { name: deleteTarget?.name })}
+          {deletingHasForwards && <span className="mt-2 block">{t('forward.deleteHostHint')}</span>}
         </p>
       </DialogShell>
 

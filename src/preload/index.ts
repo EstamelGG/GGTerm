@@ -35,6 +35,7 @@ import type {
 import type { ProtectedFolder } from '../shared/localAccess'
 import type { SshTestInput } from '../main/sshTest'
 import type { ExecutionSnapshot, HumanInputRequest, HumanInputResolved } from '../shared/execution'
+import type { PortForward, PortForwardAction, PortForwardInput } from '../shared/portForward'
 
 /* 启动外观：main 经 additionalArguments 传入已存 accent / 背景透明度，在任何渲染脚本执行前
    设置 CSS 变量（逻辑与 renderer lib/accent.ts 保持一致），避免首帧「默认值 → 保存值」闪变。
@@ -78,6 +79,20 @@ import type { ExecutionSnapshot, HumanInputRequest, HumanInputResolved } from '.
 
 /** 渲染进程可用的 API（对照 Swift 层：SwiftData/Keychain/UserDefaults 通道） */
 const api = {
+  portForwards: {
+    list: (): Promise<PortForward[]> => ipcRenderer.invoke('port-forward:list'),
+    configure: (input: PortForwardInput, id?: string): Promise<PortForward> =>
+      ipcRenderer.invoke('port-forward:configure', input, id),
+    control: (id: string, action: PortForwardAction): Promise<PortForward | null> =>
+      ipcRenderer.invoke('port-forward:control', id, action),
+    probe: (id: string): Promise<{ reachable: boolean; latencyMs: number; error: string | null }> =>
+      ipcRenderer.invoke('port-forward:probe', id),
+    onChanged: (cb: (rules: PortForward[]) => void): (() => void) => {
+      const listener = (_e: unknown, rules: PortForward[]): void => cb(rules)
+      ipcRenderer.on('port-forward:changed', listener)
+      return () => ipcRenderer.removeListener('port-forward:changed', listener)
+    }
+  },
   executions: {
     list: (sessionId: string, hostId?: string): Promise<ExecutionSnapshot[]> =>
       ipcRenderer.invoke('execution:list', sessionId, hostId),

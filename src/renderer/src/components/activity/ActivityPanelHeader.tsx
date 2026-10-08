@@ -7,7 +7,12 @@ import { cn } from '@/lib/utils'
 export function ActivityPanelHeader({ children }: { children: ReactNode }): React.JSX.Element {
   return (
     <>
-      <div className={cn('flex h-10 shrink-0 items-center gap-2 px-3', TOOLBAR_V)}>{children}</div>
+      <div
+        data-slot="activity-panel-header"
+        className={cn('flex h-10 shrink-0 items-center gap-2 px-3', TOOLBAR_V)}
+      >
+        {children}
+      </div>
       <ChromeSeparator />
     </>
   )

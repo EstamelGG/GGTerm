@@ -9,6 +9,7 @@ import {
 import { deleteSecrets, loadSecrets, saveSecrets } from '../../data/secrets'
 import { sshTest } from '../../sshTest'
 import { removeLink } from '../../ssh/link'
+import { portForwards } from '../../portForward'
 import { listAgentConnections, closeAgentConnection } from '../agentLinks'
 import { probeDetail } from '../../probe'
 import { hostIdSchema, intentSchema, type AnyTool } from './shared'
@@ -131,6 +132,7 @@ export const manageTools: AnyTool[] = [
     handler: async ({ hostId }) => {
       if (!listConnections().some((c) => c.id === hostId))
         throw new Error(`Connection not found: ${hostId}`)
+      await portForwards.detachHost(hostId)
       removeLink(hostId)
       for (const item of listAgentConnections()) {
         if (item.hostId === hostId) closeAgentConnection(hostId, item.connectionId)

@@ -53,6 +53,13 @@ import { registerHumanInputIpc } from './ai/humanInputIpc'
 import { getApiKey, setApiKey } from './data/aiSecrets'
 import type { HostLinkEvents } from './ssh/link'
 import type { SftpSession } from './ssh/sftp'
+import {
+  configureForward,
+  controlForward,
+  portForwards,
+  setForwardLinkResolver
+} from './portForward'
+import type { PortForwardAction, PortForwardInput } from '../shared/portForward'
 
 /** IPC 通道命名约定：<域>:<动作>；invoke 请求-响应 */
 export const channels = {
@@ -135,6 +142,14 @@ export const channels = {
 
 /** 阶段② 接表单回填用：更新连接时顺带回填凭据 */
 export function registerIpc(): void {
+  ipcMain.handle('port-forward:list', () => portForwards.list())
+  ipcMain.handle('port-forward:configure', (_e, input: PortForwardInput, id?: string) =>
+    configureForward(input, id)
+  )
+  ipcMain.handle('port-forward:control', (_e, id: string, action: PortForwardAction) =>
+    controlForward(id, action)
+  )
+  ipcMain.handle('port-forward:probe', (_e, id: string) => portForwards.probe(id))
   registerExecutionIpc()
   // 人工输入（敏感提示）通道：与只读查看器 API 分开，密码只经此写入 PTY
   registerHumanInputIpc()
@@ -161,9 +176,10 @@ export function registerIpc(): void {
     }
   )
 
-  ipcMain.handle(channels.connDelete, (_e, id: string): boolean => {
+  ipcMain.handle(channels.connDelete, async (_e, id: string): Promise<boolean> => {
     const ok = connections.deleteConnection(id)
     if (ok) {
+      await portForwards.detachHost(id)
       secrets.deleteSecrets(id)
       perfForget(id)
     }
@@ -277,9 +293,18 @@ export function registerIpc(): void {
   ipcMain.handle(channels.sshTest, (_e, input: SshTestInput) => sshTest(input))
 
   /** 主机链路事件转发器（固定回发起连接的 renderer） */
+  const forwardConnectedHosts = new Set<string>()
   const linkEvents = (sender: Electron.WebContents): HostLinkEvents => ({
     onHostState: (payload) => {
       if (!sender.isDestroyed()) sender.send('host:state', payload)
+      if (payload.phase === 'connected' && !forwardConnectedHosts.has(payload.hostId)) {
+        forwardConnectedHosts.add(payload.hostId)
+        portForwards.autoStart(payload.hostId)
+      }
+      if (payload.phase === 'idle') {
+        forwardConnectedHosts.delete(payload.hostId)
+        void portForwards.closeHost(payload.hostId, 'user')
+      }
     },
     onShellState: (payload) => {
       if (!sender.isDestroyed()) sender.send('shell:state', payload)
@@ -299,6 +324,17 @@ export function registerIpc(): void {
     onSftpMeasure: (payload) => {
       if (!sender.isDestroyed()) sender.send('sftp:measure', payload)
     }
+  })
+
+  setForwardLinkResolver(async (hostId) => {
+    const conn = connections.listConnections().find((c) => c.id === hostId)
+    const sender = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed())?.webContents
+    if (!conn || !sender) throw new Error('SSH host or app window not found')
+    const link = getOrCreateLink(conn, linkEvents(sender))
+    if (link.awaitingCredentials)
+      throw new Error('Connect this host and enter its credentials first')
+    link.start()
+    return link
   })
 
   ipcMain.handle(channels.linksList, () => listLinks())

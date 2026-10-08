@@ -29,6 +29,7 @@ import {
 } from './agent'
 import { reclaimAgentSession } from './agentLinks'
 import { executions } from './exec'
+import { portForwards } from '../portForward'
 import {
   judgeCommand,
   judgeConfig,
@@ -58,6 +59,7 @@ Rules:
 7. Local file access (sftp_upload and all local_* tools): macOS may deny reading Downloads/Documents/Desktop (EPERM/EACCES in the tool error). Do NOT retry, and do NOT work around it with another local path, write_temp_file or a different tool. Do NOT claim the file is empty. Tell the user to grant access in System Settings → Privacy & Security → Files and Folders, then stop and wait.
 8. Respect user-interruption markers in conversation history and summaries. Unfinished work from an interrupted turn is paused, not a standing instruction: follow the latest user request and resume earlier work only when the user explicitly asks to continue it. Never infer that interruption rolled back a command or that a missing result means it is safe to rerun.
 9. Local machine (the user's own computer; this machine runs ${LOCAL_OS}): local_exec runs a single command in a login shell (PowerShell on Windows) and exits — there is no session to return to (pass an absolute path or fold cd into the same command) and no stdin (commands that prompt get EOF instead of hanging; never use it for interactive prompts such as passwords, editors or pagers). Write the command for that platform: POSIX syntax and paths on macOS/Linux, PowerShell syntax and drives/backslashes on Windows — do not assume the local OS is the same as the remote host's. Long output is capped to head+tail: redirect to a file and page it with local_read. Local paths are absolute, or relative to the home directory (~ accepted).
+10. SSH port forwarding: use list_port_forwards, configure_port_forward, control_port_forward and probe_port_forward instead of spawning ssh -L/-R commands. Local forwarding listens on this computer and accesses its target from the SSH host; remote forwarding listens on the SSH host and accesses its target from this computer. Rules created by you are temporary and scoped to this conversation; never operate another owner's rule. A running listener does not prove the target service is reachable. Default to loopback listening unless the user requests wider access.
 Always respond in the language the user writes in.`
 
 /* ---------------- 事件广播（增量合并） ---------------- */
@@ -275,6 +277,18 @@ const gateTool: NonNullable<AgentDeps['gate']> = async (
   let command = ''
 
   switch (name) {
+    case 'configure_port_forward':
+    case 'control_port_forward':
+      command = `${name} ${String(input.action ?? input.type ?? '')} ${String(input.forwardId ?? input.hostId ?? '')}`
+      if (name === 'configure_port_forward')
+        command += ` ${String(input.listenAddress ?? '127.0.0.1')}:${String(input.listenPort)} → ${String(input.targetHost)}:${String(input.targetPort)}`
+      else {
+        const rule = portForwards.list().find((r) => r.id === input.forwardId)
+        if (rule)
+          command += ` ${rule.listenAddress}:${rule.listenPort} → ${rule.targetHost}:${rule.targetPort}`
+      }
+      decision = judgeConfig('Port forwarding', prefs)
+      break
     case 'execute': {
       const action = String(input.action ?? '')
       // poll/list 只读查询：自动放行（与 HEAD 一致；漏掉会让后台执行环路全部被拒）
@@ -501,6 +515,7 @@ export async function createSession(): Promise<AiSessionSummary> {
 
 export async function closeSession(sessionId: string): Promise<void> {
   pausedExecutions.add(sessionId)
+  await portForwards.closeSession(sessionId)
   deleteAgentSession(sessionId)
   // 回收该对话占用的链路：空闲即关，执行在跑的等全部完结后自动关
   reclaimAgentSession(sessionId)

@@ -9,6 +9,7 @@ import { sftpTools } from './sftp'
 import { transferTools } from './transfer'
 import { manageTools } from './manage'
 import { noteTools } from './note'
+import { portForwardTools } from './portForward'
 
 // execute 的远程命令经活动 SSH 客户端执行（解析器来自连接域的自动建连助手）
 setExecutionClientResolver(activeClientOf)
@@ -39,6 +40,10 @@ const store: LockKeyFn = () => 'store'
  * Record<AiToolName, ...> 即穷尽性检查：新增工具必须在此明确其并发归属。
  */
 const LOCK_KEYS: Record<AiToolName, LockKeyFn> = {
+  list_port_forwards: none,
+  configure_port_forward: () => 'port-forwards',
+  control_port_forward: () => 'port-forwards',
+  probe_port_forward: () => 'port-forwards',
   list_hosts: none,
   list_connections: none,
   list_groups: none,
@@ -88,6 +93,7 @@ function withLockKey(tool: AnyTool): AnyTool {
 }
 
 export const aiTools: AnyTool[] = [
+  ...portForwardTools,
   ...connectionTools,
   ...sftpTools,
   ...executeTools,
@@ -101,6 +107,10 @@ export const aiTools: AnyTool[] = [
   .map(withLockKey)
 
 export type AiToolName =
+  | 'list_port_forwards'
+  | 'configure_port_forward'
+  | 'control_port_forward'
+  | 'probe_port_forward'
   | 'list_hosts'
   | 'list_connections'
   | 'connect'

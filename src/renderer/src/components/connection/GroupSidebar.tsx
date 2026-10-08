@@ -1,6 +1,7 @@
 import { useSessionStore } from '@/stores/session'
 import { useAiStore } from '@/stores/ai'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { usePortForwardsStore } from '@/stores/portForwards'
 import { errorMessage } from '@shared/error'
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -346,6 +347,7 @@ function GroupRowMenu({
 }
 
 function ConnRowMenu({
+  hostId,
   onConnectOnly,
   onSendToAi,
   onConnect,
@@ -353,6 +355,7 @@ function ConnRowMenu({
   onCopyAddress,
   onDelete
 }: {
+  hostId: string
   onConnectOnly: () => void
   onSendToAi: () => void
   onConnect: () => void
@@ -378,6 +381,15 @@ function ConnRowMenu({
       <ContextMenuItem onClick={onEdit}>
         <Pencil />
         {t('common.edit')}
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem onClick={() => usePortForwardsStore.getState().open(hostId, true)}>
+        <Plus />
+        {t('forward.new')}
+      </ContextMenuItem>
+      <ContextMenuItem onClick={() => usePortForwardsStore.getState().open(hostId)}>
+        <Plug />
+        {t('forward.view')}
       </ContextMenuItem>
       <ContextMenuSeparator className="bg-line" />
       <ContextMenuItem onClick={onCopyAddress}>
@@ -608,6 +620,7 @@ function ConnRow({
         </p>
       )}
       <ConnRowMenu
+        hostId={conn.id}
         onConnectOnly={() => {
           setActionError(null)
           void useSessionStore

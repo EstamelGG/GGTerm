@@ -7,6 +7,7 @@ import { useSessionStore, type HostWorkspaceMirror } from '../src/renderer/src/s
 import { useSftpStore, type SftpPaneState } from '../src/renderer/src/stores/sftp'
 import { useConnectionsStore } from '../src/renderer/src/stores/connections'
 import { useCommandsStore } from '../src/renderer/src/stores/commands'
+import { usePortForwardsStore } from '../src/renderer/src/stores/portForwards'
 import type { HostConnection, SftpTransferMirror } from '../src/shared/types'
 
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
@@ -51,7 +52,14 @@ beforeEach(() => {
     value: {
       perf: { watchSession: watch },
       shells: { input },
-      sftp: { cancelTransfer: cancel, stop, revealDownloads: vi.fn() }
+      sftp: { cancelTransfer: cancel, stop, revealDownloads: vi.fn() },
+      portForwards: {
+        list: vi.fn(async () => []),
+        onChanged: vi.fn(() => () => {}),
+        configure: vi.fn(),
+        control: vi.fn(),
+        probe: vi.fn()
+      }
     }
   })
   useWorkspaceStore.setState({
@@ -64,8 +72,81 @@ beforeEach(() => {
   useConnectionsStore.setState({ connections: [host('a').conn, host('b').conn] })
   useCommandsStore.setState({ commands: [{ id: 'cmd', name: 'List files', command: 'ls' }] })
   useSftpStore.setState({ panes: {} })
+  usePortForwardsStore.setState({ rules: [], filterHostId: '', editor: null })
 })
 afterEach(cleanup)
+
+it('starts a tunnel through its background service without opening a host workspace', async () => {
+  useSessionStore.setState({ hosts: [], tab: { kind: 'connections' } })
+  render(<ActivityRail />)
+  await screen.findByLabelText('AI draft')
+  act(() => {
+    usePortForwardsStore.setState({
+      rules: [
+        {
+          id: 'tunnel',
+          name: 'Database tunnel',
+          hostId: 'a',
+          type: 'local',
+          listenAddress: '127.0.0.1',
+          listenPort: 13306,
+          targetHost: '127.0.0.1',
+          targetPort: 3306,
+          startPolicy: 'manual',
+          owner: 'user',
+          status: 'stopped',
+          connections: 0,
+          bytesUp: 0,
+          bytesDown: 0,
+          error: null
+        }
+      ]
+    })
+    usePortForwardsStore.getState().open()
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'forward.start' }))
+  await vi.waitFor(() =>
+    expect(window.aterm.portForwards.control).toHaveBeenCalledWith('tunnel', 'start')
+  )
+  expect(useSessionStore.getState().hosts).toEqual([])
+  expect(useSessionStore.getState().tab).toEqual({ kind: 'connections' })
+})
+
+it('opens port forwarding globally without a shell and preselects a host for creating a rule', async () => {
+  render(<ActivityRail />)
+  fireEvent.click(screen.getByRole('button', { name: 'forward.title' }))
+  expect(screen.getByText('forward.empty')).toBeTruthy()
+  expect(screen.queryByText('activity.noFocusedHost')).toBeNull()
+  act(() => usePortForwardsStore.getState().open('b', true))
+  const dialog = await screen.findByRole('dialog')
+  expect(within(dialog).getByText('Host b · b')).toBeTruthy()
+  expect(useWorkspaceStore.getState()).toMatchObject({ activePanel: 'forwards', sidebarOpen: true })
+  const rule = {
+    ...host('b').conn,
+    name: 'Preview',
+    hostId: 'b',
+    type: 'local',
+    listenAddress: '127.0.0.1',
+    listenPort: 8080,
+    targetHost: '127.0.0.1',
+    targetPort: 80,
+    startPolicy: 'manual'
+  }
+  vi.mocked(window.aterm.portForwards.configure).mockResolvedValue(rule as never)
+  fireEvent.click(within(dialog).getByRole('button', { name: 'common.save' }))
+  await vi.waitFor(() =>
+    expect(window.aterm.portForwards.configure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hostId: 'b',
+        type: 'local',
+        listenAddress: '127.0.0.1',
+        startPolicy: 'manual'
+      }),
+      undefined
+    )
+  )
+  expect(window.aterm.portForwards.control).not.toHaveBeenCalled()
+})
 
 it('keeps AI mounted when switching and collapsing, and host references reopen AI', async () => {
   render(<ActivityRail />)

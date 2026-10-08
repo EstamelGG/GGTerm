@@ -8,6 +8,7 @@ import { initMainI18n } from './i18n'
 import { installMenu } from './menu'
 import { installTerminalFontKeys } from './terminalFont'
 import { appLog } from './log'
+import { portForwards } from './portForward'
 
 // 进程级兜底：网络瞬断等场景的零星 socket 错误不应击穿为 Uncaught Exception
 // 崩掉整个应用（终端/SFTP 会话全丢）。只记录不退出；真正的结构性错误仍会在日志中显现。
@@ -21,6 +22,7 @@ process.on('unhandledRejection', (reason) => {
 let quitRequested = false
 app.on('before-quit', () => {
   quitRequested = true
+  portForwards.dispose()
 })
 
 function createWindow(): void {

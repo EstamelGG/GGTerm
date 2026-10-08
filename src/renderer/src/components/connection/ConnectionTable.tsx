@@ -34,6 +34,7 @@ import { usePerfStore } from '@/stores/perf'
 import { useSessionStore } from '@/stores/session'
 import { useAiStore } from '@/stores/ai'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { usePortForwardsStore } from '@/stores/portForwards'
 import { errorMessage } from '@shared/error'
 import { Button } from '@/components/form/Buttons'
 import { CheckBox } from '@/components/form/Fields'
@@ -1111,6 +1112,15 @@ function RowMenu({
         <DropdownMenuItem onClick={onEdit}>
           <Pencil />
           {t('common.edit')}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => usePortForwardsStore.getState().open(conn.id, true)}>
+          <Plug />
+          {t('forward.new')}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => usePortForwardsStore.getState().open(conn.id)}>
+          <Plug />
+          {t('forward.view')}
         </DropdownMenuItem>
         <DropdownMenuSeparator className="bg-line" />
         <DropdownMenuItem

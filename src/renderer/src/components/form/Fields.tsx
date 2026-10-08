@@ -43,17 +43,20 @@ export function ATTextField({
 export function ATNumberField({
   value,
   onChange,
-  className
+  className,
+  disabled
 }: {
   value: number
   onChange: (v: number) => void
   className?: string
+  disabled?: boolean
 }): React.JSX.Element {
   const labelId = useFieldLabel()
   return (
     <input
       aria-labelledby={labelId}
       type="number"
+      disabled={disabled}
       className={cn(fieldBase, 'h-8 px-2', className)}
       value={Number.isFinite(value) ? value : ''}
       onChange={(e) => onChange(e.target.valueAsNumber)}

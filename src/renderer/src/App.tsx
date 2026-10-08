@@ -31,6 +31,7 @@ import { applyAccent, applyBgTransparency, applyUiScale } from '@/lib/accent'
 import { applyTerminalFontSize } from '@/terminal/registry'
 import { ActivityRail } from '@/components/activity/ActivityRail'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { usePortForwardsStore } from '@/stores/portForwards'
 import ConnectionPage from '@/pages/ConnectionPage'
 import { useHumanInputStore } from '@/stores/humanInput'
 
@@ -101,6 +102,15 @@ function App(): React.JSX.Element {
   const [toast, setToast] = useState<{ text: string; danger?: boolean } | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [pendingClose, setPendingClose] = useState<{ ids: string[]; quit: boolean } | null>(null)
+  const affectedForwardCount = usePortForwardsStore((s) =>
+    pendingClose
+      ? s.rules.filter(
+          (rule) =>
+            !['stopped', 'error'].includes(rule.status) &&
+            (pendingClose.quit || (rule.owner === 'user' && pendingClose.ids.includes(rule.hostId)))
+        ).length
+      : 0
+  )
   const prefs = usePrefsStore((s) => s.data)
 
   const flash = (text: string, danger = false): void => {
@@ -415,9 +425,12 @@ function App(): React.JSX.Element {
                 .filter((f) => f.text !== f.saved || f.saving)
                 .map((f) => ({ hostId: h.id, fileId: f.id, name: `${h.title}: ${f.path}` }))
             )}
-          message={t(
-            pendingClose.quit ? 'session.closeSessionMessage' : 'session.closeUserConnections'
-          )}
+          message={[
+            t(pendingClose.quit ? 'session.closeSessionMessage' : 'session.closeUserConnections'),
+            affectedForwardCount ? t('forward.disconnectHint', { count: affectedForwardCount }) : ''
+          ]
+            .filter(Boolean)
+            .join('\n')}
           hostIds={pendingClose.quit ? undefined : pendingClose.ids}
           onCancel={() => setPendingClose(null)}
           onClose={(agentConnectionIds) => {

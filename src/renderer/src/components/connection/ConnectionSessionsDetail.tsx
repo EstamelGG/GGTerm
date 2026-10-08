@@ -6,6 +6,7 @@ import { errorMessage } from '@shared/error'
 import { cn } from '@/lib/utils'
 import { useSessionStore } from '@/stores/session'
 import { useAiStore } from '@/stores/ai'
+import { usePortForwardsStore } from '@/stores/portForwards'
 import { Button } from '@/components/form/Buttons'
 import { CloseDocumentsDialog } from '@/components/editor/CloseDocumentsDialog'
 import { linkStateDot, linkStateLabelKey } from '@/lib/linkPhase'
@@ -28,6 +29,19 @@ export function ConnectionSessionsDetail({
   const { t } = useTranslation()
   const [selected, setSelected] = useState<string[]>([])
   const [pending, setPending] = useState<SshConnectionSession[] | null>(null)
+  const affectedForwardCount = usePortForwardsStore(
+    (s) =>
+      s.rules.filter(
+        (rule) =>
+          rule.hostId === hostId &&
+          !['stopped', 'error'].includes(rule.status) &&
+          pending?.some(
+            (item) =>
+              item.owner === rule.owner &&
+              (rule.owner === 'user' || item.sessionId === rule.sessionId)
+          )
+      ).length
+  )
   const [closing, setClosing] = useState(false)
   /** 命令执行会话弹窗：值 = 该 agent 连接所属 AI 会话 id（只看此连接的执行） */
   const hosts = useSessionStore((s) => s.hosts)
@@ -174,7 +188,12 @@ export function ConnectionSessionsDetail({
                   )
               : []
           }
-          message={t('conn.live.confirm', { count: pending.length })}
+          message={[
+            t('conn.live.confirm', { count: pending.length }),
+            affectedForwardCount ? t('forward.disconnectHint', { count: affectedForwardCount }) : ''
+          ]
+            .filter(Boolean)
+            .join('\n')}
           onCancel={() => setPending(null)}
           onClose={() => void close()}
         />

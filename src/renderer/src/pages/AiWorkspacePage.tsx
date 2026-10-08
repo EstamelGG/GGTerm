@@ -117,6 +117,10 @@ type HostResolver = (hostId: string) => string
 
 /** 工具卡图标映射（与 main/ai/tools 的 35 个工具一一对应），未知工具兜底 Wrench */
 const TOOL_ICONS: Record<string, LucideIcon> = {
+  list_port_forwards: Waypoints,
+  configure_port_forward: Plug,
+  control_port_forward: Plug,
+  probe_port_forward: Gauge,
   list_hosts: Server,
   list_connections: Waypoints,
   connect: Plug,

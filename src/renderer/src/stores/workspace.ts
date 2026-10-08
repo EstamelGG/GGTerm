@@ -1,7 +1,7 @@
 import type { AiFileReference } from '@shared/types'
 import { create } from 'zustand'
 
-export type ActivityPanelId = 'ai' | 'performance' | 'transfers' | 'commands'
+export type ActivityPanelId = 'ai' | 'performance' | 'transfers' | 'commands' | 'forwards'
 
 interface WorkspaceState {
   sidebarOpen: boolean
