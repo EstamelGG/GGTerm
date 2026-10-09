@@ -19,11 +19,12 @@ import {
   tool,
   toUIMessageStream
 } from 'ai'
-import type { LanguageModel, ToolApprovalStatus, ToolSet, UIMessageChunk } from 'ai'
+import type { LanguageModel, ModelMessage, ToolApprovalStatus, ToolSet, UIMessageChunk } from 'ai'
 import { toJSONSchema, type ZodType } from 'zod'
 import type {
   AiContextSettings,
   AiContextUsage,
+  AiRecoveryState,
   AiSessionSummary,
   AiUIMessage
 } from '../../shared/types'
@@ -36,6 +37,7 @@ import {
   type ContextSummary
 } from './context'
 import { abortableStream } from './abortableStream'
+import { recoveringModel } from './recovery'
 
 /**
  * 进程内 agent 运行时（AI SDK v7 原生形态）：
@@ -82,6 +84,8 @@ export interface AgentDeps {
   getModelKey?: () => string
   onContextUsage?: (sessionId: string, turnId: string, usage: AiContextUsage) => void
   modelTimeout?: { firstChunkMs: number; chunkMs: number }
+  recoveryDelays?: number[]
+  onRecovery?: (sessionId: string, turnId: string, recovery?: AiRecoveryState) => void
 }
 
 let deps: AgentDeps | null = null
@@ -143,6 +147,10 @@ interface Turn {
   model?: LanguageModel
   contextUsage?: AiContextUsage
   finishReason?: string
+  tokenScale: number
+  estimatedInputTokens?: number
+  repairCount: number
+  discardedSamples: Set<string>
 }
 
 /**
@@ -173,6 +181,7 @@ interface Session extends AgentSessionRecord {
   agent: ToolLoopAgent | null
   turn: Turn | null
   toolQueue: ToolSerialQueue
+  tokenScales?: Map<string, number>
 }
 
 const sessions = new Map<string, Session>()
@@ -301,6 +310,34 @@ function reportContext(s: Session, turn: Turn, usage: AiContextUsage): void {
   requireDeps().onContextUsage?.(s.id, turn.id, usage)
 }
 
+async function summarizeContext(
+  s: Session,
+  turn: Turn,
+  transcript: string,
+  previous: string,
+  budget: number
+): Promise<string> {
+  if (turn.contextUsage) reportContext(s, turn, { ...turn.contextUsage, phase: 'compressing' })
+  // Retry malformed/truncated summaries once with a stronger size instruction.
+  // Never truncate a summary locally: doing so can erase constraints or task state.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = await generateText({
+      model: turn.model ?? requireDeps().getModel(),
+      system: `${SUMMARY_INSTRUCTIONS}\nKeep the summary within ${Math.max(128, Math.floor(budget * 0.3))} UTF-8 bytes. ${attempt ? 'The previous attempt did not fit. Use shorter factual bullets and omit all verbose logs.' : ''}`,
+      prompt: `Previous summary:\n${previous}\n\nNext transcript fragment (may continue across fragments):\n${transcript}`,
+      abortSignal: turn.controller.signal,
+      maxRetries: 0,
+      maxOutputTokens: Math.max(128, Math.min(2048, Math.floor(budget * (attempt ? 0.2 : 0.1))))
+    })
+    const text = result.text.trim()
+    if (result.finishReason !== 'length' && text && estimateTokens(text) <= budget * 0.2)
+      return text
+  }
+  throw new Error(
+    'Context compression failed: summary is empty, truncated or too large. / 上下文压缩失败：摘要为空、被截断或过长。'
+  )
+}
+
 function toolSetFor(s: Session): ToolSet {
   return Object.fromEntries(
     requireDeps().tools.map((t) => [
@@ -339,18 +376,19 @@ function agentFor(s: Session): ToolLoopAgent {
     instructions,
     tools: toolSetFor(s),
     stopWhen: stepCountIs(MAX_STEPS),
-    timeout: d.modelTimeout ?? { firstChunkMs: 120_000, chunkMs: 90_000 },
+    // Recovery owns deadlines and retry budgets; avoid nested SDK request retries.
+    maxRetries: 0,
     // 每一步重新检查：工具循环也可能在单轮内填满窗口。
     prepareStep: async ({ messages, stepNumber }) => {
       const instructions = typeof d.instructions === 'function' ? d.instructions() : d.instructions
       const promptTokens = toolTokens + estimateTokens(instructions)
       const turn = s.turn!
       const { contextWindow, autoCompress } = turn.contextSettings
-      const budget = Math.floor(contextWindow * 0.75) - promptTokens
+      const budget = Math.floor((contextWindow * 0.7) / turn.tokenScale) - promptTokens
       const usage: AiContextUsage = {
         modelKey: turn.modelKey,
         contextWindow,
-        inputTokens: promptTokens + estimateTokens(messages),
+        inputTokens: Math.ceil((promptTokens + estimateTokens(messages)) * turn.tokenScale),
         source: 'estimate',
         phase: 'ready'
       }
@@ -365,28 +403,14 @@ function agentFor(s: Session): ToolLoopAgent {
         autoCompress,
         cached: stepNumber === 0 ? s.contextSummary : undefined,
         signal: turn.controller.signal,
-        summarize: async (transcript, previous) => {
-          reportContext(s, turn, { ...usage, phase: 'compressing' })
-          const result = await generateText({
-            model: turn.model ?? d.getModel(),
-            system: SUMMARY_INSTRUCTIONS,
-            prompt: `Previous summary:\n${previous}\n\nNext transcript fragment (may continue across fragments):\n${transcript}`,
-            abortSignal: turn.controller.signal,
-            timeout: 120_000,
-            maxRetries: 0,
-            maxOutputTokens: Math.max(128, Math.min(2048, Math.floor(budget * 0.05)))
-          })
-          if (result.finishReason === 'length')
-            throw new Error(
-              'Context summary was truncated; retry or shorten the conversation. / 上下文摘要被截断，请重试或缩短对话。'
-            )
-          return result.text
-        }
+        summarize: (transcript, previous, summaryBudget) =>
+          summarizeContext(s, turn, transcript, previous, summaryBudget)
       })
       reportContext(s, turn, {
         ...usage,
-        inputTokens: promptTokens + estimateTokens(fitted.messages)
+        inputTokens: Math.ceil((promptTokens + estimateTokens(fitted.messages)) * turn.tokenScale)
       })
+      turn.estimatedInputTokens = promptTokens + estimateTokens(fitted.messages)
       if (fitted.compressed) turn.contextCompressed = true
       if (stepNumber === 0 && fitted.summary) {
         s.contextSummary = fitted.summary
@@ -398,6 +422,8 @@ function agentFor(s: Session): ToolLoopAgent {
     // 每次调用重新解析模型：BYOK 绑定/密钥变化下一回合即时生效
     prepareCall: (call) => ({
       ...call,
+      // AI SDK v7 forwards these to streamText, although Agent settings omit the field.
+      streamRetries: (d.recoveryDelays?.length ?? 5) + 2,
       model: s.turn?.model ?? d.getModel(),
       maxOutputTokens: Math.min(8192, Math.floor(s.turn!.contextSettings.contextWindow * 0.15))
     })
@@ -437,10 +463,14 @@ export function startTurn(
     settled,
     settle,
     contextCompressed: false,
+    tokenScale: 1,
+    repairCount: 0,
+    discardedSamples: new Set(),
     modelKey: requireDeps().getModelKey?.() ?? '',
     contextSettings: requireDeps().getContextSettings?.() ?? DEFAULT_CONTEXT_SETTINGS
   }
   s.turn = turn
+  turn.tokenScale = s.tokenScales?.get(turn.modelKey) ?? 1
   return new ReadableStream<UIMessageChunk>({
     start: (ctrl) =>
       runTurn(s, turn, (chunk) => {
@@ -463,7 +493,68 @@ async function runTurn(
   let error: string | undefined
   try {
     // 模型、窗口和统计标识在回合开始时一起固定；设置变更下一轮生效。
-    turn.model = d.getModel()
+    turn.model = recoveringModel(d.getModel(), {
+      signal: turn.controller.signal,
+      timeout: d.modelTimeout,
+      delays: d.recoveryDelays,
+      onDiscardSample: (id) => turn.discardedSamples.add(id),
+      onRecovery: (state) => {
+        if (!turn.done && sessions.get(s.id) === s) d.onRecovery?.(s.id, turn.id, state)
+      },
+      repairContext: async (params) => {
+        if (!turn.contextSettings.autoCompress)
+          throw new Error(
+            'Context budget exceeded; enable automatic compression. / 上下文已满，请开启自动压缩。'
+          )
+        turn.repairCount++
+        const system = params.prompt.filter((m) => m.role === 'system')
+        const budget =
+          Math.floor(
+            (turn.contextSettings.contextWindow * (0.45 / turn.repairCount)) / turn.tokenScale
+          ) -
+          estimateTokens(system) -
+          estimateTokens(params.tools ?? [])
+        if (budget < 512)
+          throw new Error(
+            'Context window is too small for tools and instructions. / 上下文窗口不足以容纳工具与指令。'
+          )
+        if (turn.contextUsage)
+          reportContext(s, turn, { ...turn.contextUsage, phase: 'compressing' })
+        // Provider prompts retain their original structured parts; compactContext only
+        // reads roles/IDs and serializes them. Only its new summary needs conversion.
+        const fitted = await compactContext({
+          messages: params.prompt.filter((m) => m.role !== 'system') as unknown as ModelMessage[],
+          budget,
+          autoCompress: true,
+          force: true,
+          signal: turn.controller.signal,
+          summarize: (transcript, previous, summaryBudget) =>
+            summarizeContext(s, turn, transcript, previous, summaryBudget)
+        })
+        const prompt = [
+          ...system,
+          ...fitted.messages.map((m) =>
+            m.role === 'assistant' && typeof m.content === 'string'
+              ? { ...m, content: [{ type: 'text' as const, text: m.content }] }
+              : m
+          )
+        ] as typeof params.prompt
+        turn.contextCompressed = true
+        turn.estimatedInputTokens = estimateTokens(prompt) + estimateTokens(params.tools ?? [])
+        if (turn.contextUsage)
+          reportContext(s, turn, {
+            ...turn.contextUsage,
+            phase: 'ready',
+            source: 'estimate',
+            inputTokens: Math.ceil(turn.estimatedInputTokens * turn.tokenScale)
+          })
+        return {
+          ...params,
+          prompt,
+          maxOutputTokens: Math.min(params.maxOutputTokens ?? 8192, Math.floor(budget * 0.15))
+        }
+      }
+    })
     const agent = agentFor(s)
     // 元数据不会被 SDK 转为模型输入：显式插入中断边界，避免将旧任务当成待办。
     const modelHistory = s.messages.map((m): AiUIMessage =>
@@ -490,6 +581,14 @@ async function runTurn(
       abortSignal: turn.controller.signal,
       onStepFinish: ({ finishReason, usage, stepNumber }) => {
         if (turn.done) return
+        if (turn.estimatedInputTokens && usage.inputTokens) {
+          turn.tokenScale = Math.max(
+            turn.tokenScale,
+            Math.min(4, usage.inputTokens / turn.estimatedInputTokens)
+          )
+          s.tokenScales ??= new Map()
+          s.tokenScales.set(turn.modelKey, turn.tokenScale)
+        }
         if (
           turn.contextUsage &&
           typeof usage.inputTokens === 'number' &&
@@ -527,7 +626,34 @@ async function runTurn(
         return part.type === 'start' && !isContinuation ? { createdAt: Date.now() } : undefined
       },
       onError: (err) => (error = errorMessage(err)),
-      onEnd: ({ messages }) => finalize(s, messages, error, turn.controller.signal.aborted, turn)
+      onEnd: ({ messages }) => {
+        const lastId = messages.at(-1)?.id
+        const cleaned = messages.map((m) =>
+          m.id !== lastId
+            ? m
+            : {
+                ...m,
+                parts: m.parts.flatMap<AiUIMessage['parts'][number]>((p) => {
+                  if (p.type !== 'text' && p.type !== 'reasoning') return [p]
+                  const tag = p.providerMetadata?.atermRecovery
+                  if (!tag) return [p]
+                  if (typeof tag.sample === 'string' && turn.discardedSamples.has(tag.sample))
+                    return []
+                  const providerMetadata = { ...p.providerMetadata }
+                  delete providerMetadata.atermRecovery
+                  return [
+                    {
+                      ...p,
+                      providerMetadata: Object.keys(providerMetadata).length
+                        ? providerMetadata
+                        : undefined
+                    }
+                  ]
+                })
+              }
+        )
+        finalize(s, cleaned, error, turn.controller.signal.aborted, turn)
+      }
     })
     for await (const chunk of ui) push(chunk)
   } catch (err) {
@@ -537,6 +663,7 @@ async function runTurn(
     else push({ type: 'abort' })
     finalize(s, s.messages, message, turn.controller.signal.aborted, turn)
   } finally {
+    d.onRecovery?.(s.id, turn.id, undefined)
     push(null)
   }
 }

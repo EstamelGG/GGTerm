@@ -114,3 +114,102 @@ it('不同供应商/模型分别保存设置，支持 1M，并对旧配置和无
     ).contextWindow
   ).toBe(32_768)
 })
+
+it('长任务在同一用户回合内压缩已完成工具步骤，保留最新请求及最近调用/结果', async () => {
+  const messages: ModelMessage[] = [
+    { role: 'user', content: 'Diagnose host=h1; do not restart services.' }
+  ]
+  for (let i = 0; i < 10; i++) {
+    messages.push(
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool-call', toolCallId: `t${i}`, toolName: 'read', input: { path: `/log/${i}` } }
+        ]
+      },
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: `t${i}`,
+            toolName: 'read',
+            output: { type: 'text', value: 'log '.repeat(100) }
+          }
+        ]
+      }
+    )
+  }
+  const original = structuredClone(messages)
+  const config = options()
+  const fitted = await compactContext({ ...config, messages })
+  expect(fitted.compressed).toBe(true)
+  expect(fitted.summary?.pinnedUserIndex).toBe(0)
+  expect(fitted.messages[1]).toEqual(messages[0])
+  expect(fitted.messages.slice(-2)).toEqual(messages.slice(-2))
+  expect(estimateTokens(fitted.messages)).toBeLessThanOrEqual(config.budget)
+  expect(messages).toEqual(original)
+  config.summarize.mockClear()
+  const reused = await compactContext({ ...config, messages, cached: fitted.summary })
+  expect(reused.messages[1]).toEqual(messages[0])
+  expect(config.summarize).not.toHaveBeenCalled()
+})
+
+it('单个超大工具输出只缩减模型输入，原始日志和工具配对保留', async () => {
+  const messages: ModelMessage[] = [
+    { role: 'user', content: 'Read logs' },
+    {
+      role: 'assistant',
+      content: [{ type: 'tool-call', toolCallId: 'large', toolName: 'read', input: {} }]
+    },
+    {
+      role: 'tool',
+      content: [
+        {
+          type: 'tool-result',
+          toolCallId: 'large',
+          toolName: 'read',
+          output: { type: 'text', value: 'START\n' + 'x'.repeat(20_000) + '\nEND' }
+        }
+      ]
+    }
+  ]
+  const fitted = await compactContext({ ...options(), messages })
+  expect(estimateTokens(fitted.messages)).toBeLessThanOrEqual(1000)
+  expect(JSON.stringify(fitted.messages)).toContain('shortened for model context')
+  expect(JSON.stringify(fitted.messages)).toContain('START')
+  expect(JSON.stringify(fitted.messages)).toContain('END')
+  expect(JSON.stringify(messages)).toContain('x'.repeat(20_000))
+  const ids = fitted.messages
+    .filter((m) => m.role === 'assistant' || m.role === 'tool')
+    .flatMap((m) =>
+      Array.isArray(m.content)
+        ? m.content.filter((p) => 'toolCallId' in p).map((p) => p.toolCallId)
+        : []
+    )
+  expect(ids).toEqual(['large', 'large'])
+})
+
+it('强制压缩即使低于配置阈值也会明显减小输入', async () => {
+  const messages: ModelMessage[] = [
+    { role: 'user', content: 'old' },
+    { role: 'assistant', content: 'x'.repeat(4000) },
+    { role: 'user', content: 'current' }
+  ]
+  const before = estimateTokens(messages)
+  const fitted = await compactContext({ ...options(), budget: 20_000, force: true, messages })
+  expect(estimateTokens(fitted.messages)).toBeLessThan(before * 0.55)
+  expect(fitted.messages.at(-1)).toEqual(messages.at(-1))
+})
+
+it('不能在未配对的工具调用之前切割上下文', async () => {
+  const messages: ModelMessage[] = [
+    { role: 'user', content: 'request' },
+    {
+      role: 'assistant',
+      content: [{ type: 'tool-call', toolCallId: 'pending', toolName: 'read', input: {} }]
+    },
+    { role: 'assistant', content: 'x'.repeat(4000) }
+  ]
+  await expect(compactContext({ ...options(), messages })).rejects.toThrow('context budget')
+})

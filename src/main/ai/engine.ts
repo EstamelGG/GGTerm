@@ -442,6 +442,8 @@ function ensureAgent(): void {
     },
     onContextUsage: (sessionId, turnId, usage) =>
       broadcast({ type: 'context-usage', sessionId, turnId, usage }),
+    onRecovery: (sessionId, turnId, recovery) =>
+      broadcast({ type: 'recovery', sessionId, turnId, recovery }),
     tools: aiTools,
     instructions: () =>
       SYSTEM +

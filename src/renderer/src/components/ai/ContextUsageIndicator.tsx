@@ -1,17 +1,38 @@
 import { Loader2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { AiContextUsage } from '@shared/types'
+import type { AiContextUsage, AiRecoveryState } from '@shared/types'
 
 const compactNumber = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
+
+function RecoveryStatus({ recovery }: { recovery: AiRecoveryState }): React.JSX.Element {
+  const { t } = useTranslation()
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+  return (
+    <span className="text-warn" role="status">
+      {t(now >= recovery.retryAt ? 'ai.reconnecting' : 'ai.recovering', {
+        attempt: recovery.attempt,
+        max: recovery.maxAttempts,
+        seconds: Math.max(0, Math.ceil((recovery.retryAt - now) / 1000))
+      })}
+    </span>
+  )
+}
 
 export function ContextUsageIndicator({
   usage,
   modelKey,
-  contextWindow
+  contextWindow,
+  recovery
 }: {
   usage?: AiContextUsage
   modelKey: string
   contextWindow: number
+  recovery?: AiRecoveryState
 }): React.JSX.Element {
   const { t } = useTranslation()
   // 切换模型/窗口后不能沿用旧模型的请求统计，等待下一次实际请求更新。
@@ -33,6 +54,7 @@ export function ContextUsageIndicator({
       title={title}
       aria-label={`${t('ai.contextUsage')}: ${text}. ${title}`}
     >
+      {recovery && <RecoveryStatus key={recovery.retryAt} recovery={recovery} />}
       {current?.phase === 'compressing' && (
         <>
           <Loader2 size={11} className="animate-spin" />

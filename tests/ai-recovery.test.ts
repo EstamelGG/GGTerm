@@ -44,6 +44,24 @@ beforeEach(() => {
   })
 })
 
+it('恢复事件仅更新当前回合，等待期间保持忙碌并在收尾清除', async () => {
+  await send('A')
+  const recovery = {
+    attempt: 1,
+    maxAttempts: 5,
+    retryAt: Date.now() + 2000,
+    reason: 'network' as const
+  }
+  useAiStore.getState().applyEvent({ type: 'recovery', sessionId: id, turnId: 'stale', recovery })
+  expect(state().recovery).toBeUndefined()
+  useAiStore.getState().applyEvent({ type: 'recovery', sessionId: id, turnId: turn(), recovery })
+  expect(state().recovery).toEqual(recovery)
+  expect(isBusy(state())).toBe(true)
+  end()
+  await ready()
+  expect(state().recovery).toBeUndefined()
+})
+
 it('上下文事件隔离旧回合，并从持久化历史恢复占用信息', async () => {
   await send('A')
   const usage: AiContextUsage = {

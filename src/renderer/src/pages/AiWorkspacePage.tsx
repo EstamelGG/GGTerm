@@ -1224,6 +1224,7 @@ function ChatComposer({
   /** 对话场景当前绑定（下拉选中值） */
   const chatBinding = ai?.scenarios.chat ?? null
   const contextUsage = useAiStore((s) => s.sessions.find((x) => x.id === sessionId)?.contextUsage)
+  const recovery = useAiStore((s) => s.sessions.find((x) => x.id === sessionId)?.recovery)
   /** 可选对话模型 = 供应商 × 已缓存模型列表（缓存来自设置页自动拉取） */
   const chatOptions = (ai?.providers ?? []).flatMap((p) =>
     (ai?.modelCache?.[p.id] ?? []).map((model) => ({ providerId: p.id, label: p.label, model }))
@@ -1640,6 +1641,7 @@ function ChatComposer({
         {ai && chatBinding?.model && (
           <ContextUsageIndicator
             usage={contextUsage}
+            recovery={recovery}
             modelKey={modelSettingsKey(chatBinding)}
             contextWindow={contextSettingsFor(ai).contextWindow}
           />

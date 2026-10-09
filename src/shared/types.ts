@@ -469,6 +469,13 @@ export interface AiContextUsage {
   phase: 'ready' | 'compressing'
 }
 
+export interface AiRecoveryState {
+  attempt: number
+  maxAttempts: number
+  retryAt: number
+  reason: 'network' | 'rate-limit' | 'server' | 'timeout'
+}
+
 /** AI 配置（非密钥；API Key 经 aiSecrets 按 providerId 单独 safeStorage）。
  *  场景回退链 title → judge → chat：最少只配 chat 即可全功能工作。
  *  modelCache = 各供应商最近一次拉取的模型 id 列表（对话切换器/场景下拉共用）。 */
@@ -523,6 +530,7 @@ export type AiEvent = { sessionId: string } & (
   | { type: 'chunk'; turnId: string; chunk: UIMessageChunk }
   | { type: 'turn-end'; turnId: string }
   | { type: 'context-usage'; turnId: string; usage: AiContextUsage }
+  | { type: 'recovery'; turnId: string; recovery?: AiRecoveryState }
   | { type: 'title'; title: string }
   /** 标题生成中（true 开始 / false 结束）：UI 在标题位置显示转圈 */
   | { type: 'title-pending'; pending: boolean }

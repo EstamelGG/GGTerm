@@ -6,7 +6,13 @@ import type { ChatState, ChatStatus, ChatTransport, UIMessageChunk } from 'ai'
 import { buildPayload } from '@/lib/aiInput'
 import { useConnectionsStore } from '@/stores/connections'
 import { useLinksStore } from '@/stores/links'
-import type { AiContextUsage, AiEvent, AiSessionSummary, AiUIMessage } from '@shared/types'
+import type {
+  AiContextUsage,
+  AiRecoveryState,
+  AiEvent,
+  AiSessionSummary,
+  AiUIMessage
+} from '@shared/types'
 
 /**
  * AI 多会话渲染层状态：每会话一个 AI SDK Chat（AbstractChat），状态直接落在 zustand（ChatState 适配），
@@ -26,6 +32,7 @@ export interface AiSession {
   stopping?: boolean
   activeTurnId?: string
   contextUsage?: AiContextUsage
+  recovery?: AiRecoveryState
   /** 历史是否已从 main 水合 */
   loaded: boolean
   /** 标题生成中（main 经 title-pending 事件同步）：UI 在标题位置显示转圈 */
@@ -147,7 +154,11 @@ const transport: ChatTransport<AiUIMessage> = {
       resolve
     })
     useAiStore.setState((st) => ({
-      sessions: patchSession(st.sessions, chatId, (s) => ({ ...s, activeTurnId: turnId }))
+      sessions: patchSession(st.sessions, chatId, (s) => ({
+        ...s,
+        activeTurnId: turnId,
+        recovery: undefined
+      }))
     }))
     const abort = (): void => {
       void window.aterm.ai.cancel(chatId, turnId).catch(() => {})
@@ -245,6 +256,7 @@ function chatOf(id: string): SessionChat {
         sessions: patchSession(st.sessions, id, (s) => ({
           ...s,
           activeTurnId: undefined,
+          recovery: undefined,
           updatedAt: Date.now()
         }))
       }))
@@ -566,6 +578,14 @@ export const useAiStore = create<AiState>((set, get) => ({
   },
 
   applyEvent: (e) => {
+    if (e.type === 'recovery') {
+      set((st) => ({
+        sessions: patchSession(st.sessions, e.sessionId, (s) =>
+          s.activeTurnId === e.turnId ? { ...s, recovery: e.recovery } : s
+        )
+      }))
+      return
+    }
     if (e.type === 'context-usage') {
       set((st) => ({
         sessions: patchSession(st.sessions, e.sessionId, (s) =>

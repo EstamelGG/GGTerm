@@ -109,6 +109,7 @@ describe('agent（离线 mock 模型）', () => {
       getModel: () => model,
       tools,
       instructions: 'test system',
+      recoveryDelays: [],
       ...extra
     })
   }

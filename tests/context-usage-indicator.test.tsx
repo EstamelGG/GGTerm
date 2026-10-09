@@ -34,3 +34,18 @@ it('区分估算、供应商输入量和压缩状态，切换模型/窗口后不
   view.rerender(<ContextUsageIndicator usage={usage} modelKey="a" contextWindow={1048576} />)
   expect(screen.getByText('— / 1M')).toBeTruthy()
 })
+
+it('显示恢复次数和倒计时，恢复后移除状态', () => {
+  const recovery = {
+    attempt: 2,
+    maxAttempts: 5,
+    retryAt: Date.now() + 4000,
+    reason: 'network' as const
+  }
+  const view = render(
+    <ContextUsageIndicator modelKey="a" contextWindow={32768} recovery={recovery} />
+  )
+  expect(screen.getByRole('status').textContent).toBe('ai.recovering')
+  view.rerender(<ContextUsageIndicator modelKey="a" contextWindow={32768} />)
+  expect(screen.queryByRole('status')).toBeNull()
+})
