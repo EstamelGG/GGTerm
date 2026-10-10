@@ -2,7 +2,9 @@ export interface BrowserTab {
   id: string
   url: string
   title: string
+  ready?: boolean
   loading: boolean
+  controlling?: boolean
   error?: string
   certificateError?: BrowserCertificateError
   certificateTrust?: BrowserCertificateTrust
@@ -20,13 +22,24 @@ export interface BrowserBounds {
   height: number
 }
 
+export interface BrowserFrame {
+  frame: string
+  url: string
+  title?: string
+  accessible: boolean
+  visible: boolean
+  readyState?: string
+  reason?: string
+}
 export interface BrowserContent {
   url: string
   title: string
   content: string
   totalCharacters: number
   nextOffset: number | null
-  links: { text: string; url: string }[]
+  frames?: BrowserFrame[]
+  framesTruncated?: boolean
+  links: { text: string; url: string; frame?: string }[]
   note: string
 }
 export interface BrowserElement {

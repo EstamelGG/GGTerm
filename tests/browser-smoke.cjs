@@ -2,15 +2,20 @@ const assert = require('node:assert/strict')
 const path = require('node:path')
 const fs = require('node:fs')
 const http = require('node:http')
-const { app, BrowserWindow, webContents } = require('electron')
-const deadline = setTimeout(() => app.exit(1), 30000)
+const { app, BrowserWindow, webContents, Menu } = require('electron')
+const deadline = setTimeout(() => app.exit(1), 60000)
 app
   .whenReady()
   .then(async () => {
     const bundle = path.resolve('node_modules/.cache/browser-smoke.cjs')
     fs.mkdirSync(path.dirname(bundle), { recursive: true })
     require('esbuild').buildSync({
-      entryPoints: ['src/main/browser.ts'],
+      stdin: {
+        contents:
+          "export * from './src/main/browser'; export { evaluateBrowserScript } from './src/main/browserAutomation'; export {browserHumanInputs} from './src/main/ai/browserHumanInput';",
+        resolveDir: process.cwd(),
+        loader: 'ts'
+      },
       outfile: bundle,
       bundle: true,
       platform: 'node',
@@ -18,9 +23,48 @@ app
       packages: 'external',
       logLevel: 'silent'
     })
+    require('esbuild').buildSync({
+      entryPoints: ['src/main/browserPlaywrightWorker.ts'],
+      outfile: path.resolve('node_modules/.cache/browserPlaywrightWorker.js'),
+      bundle: true,
+      platform: 'node',
+      format: 'cjs',
+      packages: 'external'
+    })
     console.log('Browser smoke: Electron ready')
     const browser = require(bundle)
     const server = http.createServer((req, res) => {
+      if (req.url.startsWith('/frames')) {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8')
+        if (req.url === '/frames') {
+          res.end(`<h1>Outer menu</h1><button id="duplicate">Outer</button>
+            <iframe id="assets" style="width:90%;height:500px;border:6px solid" src="/frames/child"></iframe>
+            <iframe style="display:none" src="/frames/hidden"></iframe>
+            <iframe src="http://localhost:${server.address().port}/frames/cross"></iframe>`)
+        } else if (req.url === '/frames/child') {
+          res.end(`<h1>共 34 条数据</h1><input id="frame-input" aria-label="Frame input"><button id="duplicate">Frame button</button>
+            <table>${Array.from({ length: 10 }, (_, i) => '<tr><td>server-' + i + '</td><td><button class="row-action" onclick="document.querySelector(\'#frame-status\').textContent=\'selected server-' + i + '\'">连接</button></td></tr>').join('')}</table>
+            <select id="frame-select"><option value="a">A</option><option value="b">B</option></select><div id="frame-status"></div>
+            <iframe style="width:400px;height:200px;border:4px solid" src="/frames/nested"></iframe>
+            <script>document.querySelector('button').onclick=e=>document.querySelector('#frame-status').textContent='frame click:'+e.isTrusted;
+            document.querySelector('input').oninput=e=>document.querySelector('#frame-status').textContent='frame input:'+e.target.value+':'+e.isTrusted;
+            document.querySelector('select').onchange=e=>document.querySelector('#frame-status').textContent='selected:'+e.target.value;</script>`)
+        } else if (req.url === '/frames/nested') {
+          res.end(
+            `<button id="nested-button">Nested button</button><div id="nested-status"></div><script>document.querySelector('button').onclick=e=>document.querySelector('#nested-status').textContent='nested click:'+e.isTrusted;</script>`
+          )
+        } else res.end('<p>Hidden or cross-origin content must not be read</p>')
+        return
+      }
+      if (req.url === '/slow-resource') {
+        setTimeout(() => res.end('slow image'), 3000)
+        return
+      }
+      if (req.url === '/slow-page') {
+        res.setHeader('Content-Type', 'text/html')
+        res.end('<title>Progressive page</title><h1>Body is usable</h1><img src="/slow-resource">')
+        return
+      }
       if (req.url === '/failed') {
         req.socket.destroy()
         return
@@ -28,7 +72,7 @@ app
       res.setHeader('Content-Type', 'text/html')
       if (req.url === '/interact') {
         res.end(`<title>Interaction</title><body>
-          <label for="name">Name</label><input id="name" value="old"><textarea id="notes"></textarea>
+          <p id="selection">Selectable browser text for copying.</p><label for="name">Name</label><input id="name" value="old"><textarea id="notes"></textarea>
           <input id="password" type="password" value="secret"><input id="locked" readonly value="locked">
           <button id="save">Save</button><button disabled id="disabled">Disabled</button>
           <button class="duplicate">One</button><button class="duplicate">Two</button>
@@ -53,6 +97,7 @@ app
     })
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
     const win = new BrowserWindow({ show: false })
+    await win.loadURL('about:blank')
     browser.installBrowser(win)
     const url = `http://127.0.0.1:${server.address().port}`
     try {
@@ -66,6 +111,189 @@ app
       browser.closeBrowser(blank.id)
       assert.equal(browser.browserState().tabs[0].id, anotherBlank.id)
       browser.closeBrowser(anotherBlank.id)
+      const started = Date.now()
+      const progressive = await browser.openBrowser(url + '/slow-page')
+      assert(Date.now() - started < 2000, 'opening must not wait for the slow image')
+      assert.equal(progressive.ready, true)
+      assert.equal(progressive.loading, true)
+      const earlyRead = await browser.readBrowser(progressive.id)
+      assert.match(earlyRead.content, /Body is usable/)
+      const earlySnapshot = await browser.interactBrowser(progressive.id, { action: 'snapshot' })
+      assert.match(earlySnapshot.content, /Body is usable/)
+      assert(Date.now() - started < 2000, 'reading must not wait for the slow image')
+      browser.closeBrowser(progressive.id)
+      const framed = await browser.openBrowser(url + '/frames')
+      const frameAct = (action, extra = {}) =>
+        browser.interactBrowser(framed.id, { action, ...extra })
+      const initialFrameRead = await browser.readBrowser(framed.id)
+      assert(
+        initialFrameRead.frames.some((f) => f.frame === 'main/0' && f.visible),
+        'background read gives responsive iframe a viewport'
+      )
+      await frameAct('wait', { selector: '#nested-button', timeoutMs: 5000 })
+      const frameRead = await browser.readBrowser(framed.id)
+      assert.match(frameRead.content, /共 34 条数据/)
+      assert(!frameRead.content.includes('Hidden or cross-origin content'))
+      let frameMetadata = frameRead.frames
+      const frameDeadline = Date.now() + 3000
+      while (
+        !frameMetadata.some((f) => !f.accessible && f.url.includes('localhost')) &&
+        Date.now() < frameDeadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        frameMetadata = (await browser.readBrowser(framed.id)).frames
+      }
+      assert(frameMetadata.some((f) => !f.accessible && f.url.includes('localhost')))
+      let frameSnapshot = await frameAct('snapshot')
+      const frameInput = frameSnapshot.elements.find((el) => el.name === 'Frame input')
+      assert.equal(frameInput.frame, 'main/0')
+      frameSnapshot = await frameAct('fill', { ref: frameInput.ref, text: 'iframe typing' })
+      assert.match(frameSnapshot.content, /frame input:iframe typing:true/)
+      await assert.rejects(frameAct('click', { selector: '.row-action' }), /matched 10.*server-7/)
+      const candidates = await frameAct('snapshot', {
+        selector: '.row-action',
+        frame: 'main/0',
+        offset: 5,
+        limit: 3
+      })
+      assert.equal(candidates.total, 10)
+      assert.equal(candidates.nextOffset, 8)
+      assert.equal(candidates.elements.length, 3)
+      const desired = candidates.elements.find((el) => el.context.includes('server-7'))
+      assert.equal(desired.name, '连接')
+      frameSnapshot = await frameAct('click', { ref: desired.ref })
+      assert.match(frameSnapshot.content, /selected server-7/)
+      await assert.rejects(frameAct('click', { selector: '#duplicate' }), /exactly one/)
+      frameSnapshot = await frameAct('click', { selector: '#duplicate', frame: 'main/0' })
+      assert.match(frameSnapshot.content, /frame click:true/)
+      frameSnapshot = await frameAct('select', { selector: '#frame-select', value: 'b' })
+      assert.match(frameSnapshot.content, /selected:b/)
+      await assert.rejects(
+        frameAct('wait', { selector: '.el-table', timeoutMs: 100 }),
+        /frames.*matched.*0/
+      )
+      const framedView = win.contentView.children.find(
+        (v) => v.webContents?.getURL() === url + '/frames'
+      )
+      framedView.setBounds({ x: 20, y: 20, width: 1000, height: 700 })
+      win.show()
+      framedView.setVisible(true)
+      frameSnapshot = await frameAct('click', { selector: '#duplicate', frame: 'main/0' })
+      assert.match(frameSnapshot.content, /frame click:true/)
+      frameSnapshot = await frameAct('click', { selector: '#nested-button' })
+      assert.match(frameSnapshot.content, /nested click:true/)
+      const overlapWc = framedView.webContents
+      await browser.evaluateBrowserScript(
+        overlapWc,
+        `(() => {
+        const cover=document.createElement('div');cover.id='test-cover';cover.style='position:fixed;inset:0;background:#8888;z-index:2147483647';document.body.append(cover);
+        const doc=document.querySelector('#assets').contentDocument;
+        const input=doc.querySelector('#frame-input');input.readOnly=true;
+        const button=doc.querySelector('#duplicate');button.disabled=true;
+        button.onmouseover=()=>doc.querySelector('#frame-status').textContent='disabled hover';
+      })()`
+      )
+      await assert.rejects(
+        frameAct('click', { selector: '.row-action', mode: 'mouse' }),
+        /matched 10/
+      )
+      await assert.rejects(
+        frameAct('click', { selector: '#nested-button', mode: 'mouse', timeoutMs: 200 }),
+        /intercepts pointer events|Timeout/
+      )
+      frameSnapshot = await frameAct('click', { selector: '#nested-button', mode: 'dom' })
+      assert.match(frameSnapshot.content, /nested click:false/)
+      await frameAct('hover', { selector: '#duplicate', frame: 'main/0', mode: 'dom' })
+      assert.match((await frameAct('snapshot')).content, /disabled hover/)
+      await assert.rejects(
+        frameAct('click', { selector: '#duplicate', frame: 'main/0', mode: 'dom' }),
+        /disabled/
+      )
+      await frameAct('press', { selector: '#frame-input', key: 'Tab' })
+      await assert.rejects(
+        frameAct('fill', { selector: '#frame-input', text: 'forbidden', timeoutMs: 200 }),
+        /read-only|editable/
+      )
+      framedView.setVisible(false)
+      frameSnapshot = await frameAct('click', { selector: '#nested-button', mode: 'dom' })
+      assert.match(frameSnapshot.content, /nested click:false/)
+      await frameAct('hover', { selector: '#duplicate', frame: 'main/0', mode: 'dom' })
+      await assert.rejects(
+        frameAct('click', { selector: '#nested-button', mode: 'mouse', timeoutMs: 200 }),
+        /intercepts pointer events|Timeout/
+      )
+      await browser.evaluateBrowserScript(
+        overlapWc,
+        `document.querySelector('#test-cover').remove();document.querySelector('#assets').contentDocument.querySelector('#frame-input').readOnly=false`
+      )
+      framedView.setVisible(true)
+      const inputPending = new Promise((resolve) =>
+        browser.browserHumanInputs.once('request', resolve)
+      )
+      const secretCall = browser.requestBrowserInput(
+        framed.id,
+        { action: 'fill', selector: '#frame-input' },
+        'test-session',
+        '请输入验证码'
+      )
+      const request = await inputPending
+      await assert.rejects(
+        browser.browserHumanInputs.submit('wrong-session', request.executionId, 'never-used'),
+        /conversation/
+      )
+      await browser.browserHumanInputs.submit(
+        'test-session',
+        request.executionId,
+        'unique-secret-7359'
+      )
+      assert.deepEqual(await secretCall, { humanInputOutcome: 'submitted' })
+      frameSnapshot = await frameAct('snapshot')
+      assert.equal(
+        frameSnapshot.elements.find((el) => el.name === 'Frame input').value,
+        '[redacted]'
+      )
+      assert.ok(!JSON.stringify(frameSnapshot).includes('unique-secret-7359'))
+      const secretRead = await browser.runBrowserPlaywright(
+        framed.id,
+        "return await page.frameLocator('#assets').locator('#frame-input').inputValue()"
+      )
+      assert.equal(secretRead.result, '[redacted]')
+      assert.ok(
+        !JSON.stringify(await browser.readBrowser(framed.id)).includes('unique-secret-7359')
+      )
+      await assert.rejects(
+        frameAct('fill', { selector: '#frame-input', text: 'forbidden', timeoutMs: 200 }),
+        /request_input/
+      )
+      const secondPending = new Promise((resolve) =>
+        browser.browserHumanInputs.once('request', resolve)
+      )
+      const expiredCall = browser.requestBrowserInput(
+        framed.id,
+        { action: 'fill', selector: '#frame-input' },
+        'test-session',
+        '请输入验证码'
+      )
+      const secondRequest = await secondPending
+      // Frame navigation makes old DOM refs invalid even while the old document still exists.
+      const oldFrameRef = frameSnapshot.elements.find((el) => el.name === 'Frame input').ref
+      const frameWc = framedView.webContents
+      await browser.evaluateBrowserScript(
+        frameWc,
+        `document.querySelector('#assets').src='/frames/hidden'`
+      )
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      assert.deepEqual(await expiredCall, { humanInputOutcome: 'cancelled' })
+      await assert.rejects(
+        browser.browserHumanInputs.submit('test-session', secondRequest.executionId, 'never-used'),
+        /not found/
+      )
+      await assert.rejects(frameAct('fill', { ref: oldFrameRef, text: 'stale' }), /stale/)
+      browser.closeBrowser(framed.id)
+      win.hide()
+      console.log(
+        'Browser smoke: same-origin frames, nested trusted clicks, input, diagnostics and stale refs passed'
+      )
       console.log('Browser smoke: opening page')
       const first = await browser.openBrowser(url)
       assert.equal(browser.browserState().foregroundId, null)
@@ -84,9 +312,14 @@ app
       assert.match(snapshot.content, /Dynamic text/)
       const pageContents = webContents.getAllWebContents().find((wc) => wc.getURL() === url + '/')
       const selection = browser.pickBrowserElement(first.id, '#3388ff')
-      await pageContents.executeJavaScriptInIsolatedWorld(999, [
-        { code: 'Boolean(globalThis.__atPickerCancel)' }
-      ])
+      while (
+        !(await browser.evaluateBrowserScript(
+          pageContents,
+          'Boolean(globalThis.__atPickerCancel)',
+          999
+        ))
+      )
+        await new Promise((resolve) => setTimeout(resolve, 10))
       await pageContents.executeJavaScript(
         "document.querySelector('a').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))"
       )
@@ -97,15 +330,25 @@ app
       assert.match(element.element.html, /href="\/next"/)
       assert.equal(pageContents.getURL(), url + '/')
       const cancellation = browser.pickBrowserElement(first.id, '#3388ff')
-      await pageContents.executeJavaScriptInIsolatedWorld(999, [
-        { code: 'Boolean(globalThis.__atPickerCancel)' }
-      ])
+      while (
+        !(await browser.evaluateBrowserScript(
+          pageContents,
+          'Boolean(globalThis.__atPickerCancel)',
+          999
+        ))
+      )
+        await new Promise((resolve) => setTimeout(resolve, 10))
       await browser.cancelBrowserPicker(first.id)
       assert.equal(await cancellation, null)
       const escape = browser.pickBrowserElement(first.id, '#3388ff')
-      await pageContents.executeJavaScriptInIsolatedWorld(999, [
-        { code: 'Boolean(globalThis.__atPickerCancel)' }
-      ])
+      while (
+        !(await browser.evaluateBrowserScript(
+          pageContents,
+          'Boolean(globalThis.__atPickerCancel)',
+          999
+        ))
+      )
+        await new Promise((resolve) => setTimeout(resolve, 10))
       await pageContents.executeJavaScript(
         "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))"
       )
@@ -128,7 +371,7 @@ app
       observed = await act('type', { selector: '#name', text: '!' })
       assert.match(observed.content, /typed:你好 Browser!:true/)
       observed = await act('click', { selector: '#save' })
-      assert.match(observed.content, /saved:你好 Browser!:false/)
+      assert.match(observed.content, /saved:你好 Browser!:true/)
       observed = await act('press', { selector: '#name', key: 'Enter' })
       assert.match(observed.content, /Enter:true/)
       observed = await act('select', { selector: '#choice', value: 'b' })
@@ -140,8 +383,11 @@ app
       observed = await act('fill', { selector: '#name', text: '' })
       assert.equal(observed.elements.find((el) => el.name === 'Name').value, '')
       await assert.rejects(act('click', { selector: '.duplicate' }), /exactly one/)
-      await assert.rejects(act('click', { selector: '#disabled' }), /disabled/)
-      await assert.rejects(act('fill', { selector: '#locked', text: 'x' }), /read-only/)
+      await assert.rejects(act('click', { selector: '#disabled', timeoutMs: 200 }), /disabled/)
+      await assert.rejects(
+        act('fill', { selector: '#locked', text: 'x', timeoutMs: 200 }),
+        /read-only|editable/
+      )
       observed = await act('snapshot')
       const shadowRef = observed.elements.find((el) => el.name === 'Shadow button').ref
       observed = await act('click', { ref: shadowRef })
@@ -166,6 +412,82 @@ app
       interactiveView.setBounds({ x: 0, y: 0, width: 1000, height: 700 })
       interactiveView.setVisible(true)
       await new Promise((resolve) => setTimeout(resolve, 100))
+      const selectionPoint = await interactiveView.webContents.executeJavaScript(`(() => {
+        const rect = document.querySelector('#selection').getBoundingClientRect();
+        return {x: Math.round(rect.x + 20), y: Math.round(rect.y + rect.height / 2)};
+      })()`)
+      interactiveView.webContents.sendInputEvent({
+        type: 'mouseDown',
+        button: 'left',
+        clickCount: 2,
+        ...selectionPoint
+      })
+      interactiveView.webContents.sendInputEvent({
+        type: 'mouseUp',
+        button: 'left',
+        clickCount: 2,
+        ...selectionPoint
+      })
+      const selectedText = await interactiveView.webContents.executeJavaScript(
+        'getSelection().toString()'
+      )
+      assert.match(selectedText, /Selectable/)
+      const originalBuildMenu = Menu.buildFromTemplate
+      let contextItems
+      Menu.buildFromTemplate = (items) => {
+        contextItems = items
+        return {
+          popup() {
+            /* Avoid opening a native menu during this assertion. */
+          }
+        }
+      }
+      try {
+        interactiveView.webContents.emit(
+          'context-menu',
+          {},
+          {
+            selectionText: selectedText,
+            isEditable: false,
+            linkURL: '',
+            editFlags: { canCopy: true }
+          }
+        )
+        assert.equal(contextItems.find((item) => item.role === 'copy').enabled, true)
+        assert.ok(contextItems.find((item) => item.role === 'selectAll'))
+      } finally {
+        Menu.buildFromTemplate = originalBuildMenu
+      }
+      await browser.withBrowserControl(interactive.id, async () => {
+        const overlay = win.contentView.children.find((view) =>
+          view.webContents?.getURL().startsWith('data:text/html')
+        )
+        assert.equal(
+          browser.browserState().tabs.find((tab) => tab.id === interactive.id).controlling,
+          true
+        )
+        assert.equal(overlay.getVisible(), true)
+        assert.equal(interactiveView.getVisible(), true)
+        assert.deepEqual(overlay.getBounds(), interactiveView.getBounds())
+        await act('fill', { selector: '#name', text: 'Controlled' })
+        const result = await act('click', { selector: '#save' })
+        assert.match(result.content, /saved:Controlled:true/)
+      })
+      assert.equal(
+        browser.browserState().tabs.find((tab) => tab.id === interactive.id).controlling,
+        false
+      )
+      const overlay = win.contentView.children.find((view) =>
+        view.webContents?.getURL().startsWith('data:text/html')
+      )
+      assert.equal(overlay.getVisible(), false)
+      await assert.rejects(
+        browser.withBrowserControl(interactive.id, async () => {
+          throw new Error('control failed')
+        }),
+        /control failed/
+      )
+      assert.equal(overlay.getVisible(), false)
       observed = await act('fill', { selector: '#name', text: 'Foreground' })
       observed = await act('click', { selector: '#save' })
       assert.match(observed.content, /saved:Foreground:true/)

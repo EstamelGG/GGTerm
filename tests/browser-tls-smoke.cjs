@@ -3,6 +3,7 @@ const path = require('node:path')
 const fs = require('node:fs')
 const os = require('node:os')
 const https = require('node:https')
+const { createHash } = require('node:crypto')
 const { spawnSync } = require('node:child_process')
 const { app, BrowserWindow, webContents } = require('electron')
 const deadline = setTimeout(() => {
@@ -54,9 +55,30 @@ app
       secondCert = certificate('changed-cert')
     const servers = new Set()
     const start = async (cert, port = 0) => {
-      const server = https.createServer(cert, (_req, res) => {
+      const server = https.createServer(cert, (req, res) => {
         res.setHeader('Content-Type', 'text/html')
-        res.end('<title>TLS page</title><h1>Trusted by user</h1>')
+        res.end(
+          req.url === '/connections'
+            ? `<h1>Connection test</h1><div id="status">pending</div><iframe src="/child"></iframe><script>
+            const socket = new WebSocket('wss://' + location.host + '/socket');
+            socket.onopen = () => document.querySelector('#status').textContent = 'WSS connected';
+            socket.onerror = () => document.querySelector('#status').textContent = 'WSS failed';
+            </script>`
+            : '<title>TLS page</title><h1>Trusted by user</h1>'
+        )
+      })
+      server.on('upgrade', (req, socket) => {
+        const accept = createHash('sha1')
+          .update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
+          .digest('base64')
+        socket.write(
+          'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ' +
+            accept +
+            '\r\n\r\n'
+        )
+        socket.on('error', () => {})
+        socket.on('data', () => socket.destroy())
+        server.once('close', () => socket.destroy())
       })
       server.on('tlsClientError', () => {})
       servers.add(server)
@@ -92,7 +114,29 @@ app
       assert.match((await browser.readBrowser(tab.id)).content, /Trusted by user/)
       console.log('TLS smoke: exact certificate approval and reload succeeded')
       const other = await browser.openBrowser(otherOrigin)
-      assert.ok(other.certificateError, 'same certificate on another port must remain blocked')
+      assert.equal(
+        other.certificateError,
+        undefined,
+        'same host and certificate must reuse approval across ports'
+      )
+      await browser.navigateBrowser(other.id, otherOrigin + '/connections')
+      let content
+      for (let attempt = 0; attempt < 50; attempt++) {
+        content = await browser.readBrowser(other.id)
+        if (
+          content.content.includes('WSS connected') &&
+          content.content.includes('Trusted by user')
+        )
+          break
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      assert.match(content.content, /WSS connected/)
+      assert.match(content.content, /Trusted by user/)
+      assert.equal(
+        browser.browserState().tabs.find((t) => t.id === other.id).certificateError,
+        undefined
+      )
+      console.log('TLS smoke: HTTPS iframe and WSS reuse approval across ports')
       const outsider = new BrowserWindow({ show: false })
       await assert.rejects(outsider.loadURL(origin), /CERT/)
       outsider.destroy()
@@ -114,7 +158,7 @@ app
       const fresh = await browser.openBrowser(otherOrigin)
       assert.ok(fresh.certificateError, 'new app window must not inherit approvals')
       console.log(
-        'TLS smoke passed: blocked by default, manual approval, exact origin/port/certificate scope, other windows isolated, certificate rotation, no persisted trust'
+        'TLS smoke passed: blocked by default, manual approval, host/certificate scope, iframe/WSS reuse, other windows isolated, certificate rotation, no persisted trust'
       )
     } finally {
       win.destroy()

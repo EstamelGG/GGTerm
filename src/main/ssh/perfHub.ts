@@ -9,7 +9,7 @@ import { appLog } from '../log'
 import * as connections from '../data/connections'
 import * as secretsStore from '../data/secrets'
 import { getPreferences } from '../data/prefs'
-import { getLink } from './link'
+import { getResourceLink } from './resourceLink'
 import { PerfMonitor, HUB_INTERVAL_MS } from './perf'
 
 /**
@@ -83,9 +83,10 @@ function connectProbeClient(conn: HostConnection, secrets: ConnectionSecrets): P
 /** 条目的 client 来源：活跃 HostLink 借用共享连接；否则懒建/复用专用连接（会话上线自动归还） */
 async function clientFor(hostId: string): Promise<Client | null> {
   const e = entries.get(hostId)
-  if (!e || authFailedHosts.has(hostId)) return null
-  const linkClient = getLink(hostId)?.activeClient ?? null
+  if (!e) return null
+  const linkClient = getResourceLink(hostId)?.activeClient ?? null
   if (linkClient) {
+    authFailedHosts.delete(hostId)
     // 会话在用共享连接：释放专用探测连接（如有），零额外连接
     if (e.client) {
       try {
@@ -97,6 +98,7 @@ async function clientFor(hostId: string): Promise<Client | null> {
     }
     return linkClient
   }
+  if (authFailedHosts.has(hostId)) return null
   if (e.client) return e.client
   if (e.building) return null
 

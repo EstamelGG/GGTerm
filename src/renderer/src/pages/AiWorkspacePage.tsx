@@ -1,3 +1,5 @@
+import { QuestionCard } from '@/components/ai/QuestionCard'
+import { useQuestionsStore } from '@/stores/questions'
 import { BrowserReferenceChip } from '@/components/ai/BrowserReferenceChip'
 import { FileReferenceChip } from '@/components/ai/FileReferenceChip'
 import { ActivityPanelHeader } from '@/components/activity/ActivityPanelHeader'
@@ -544,11 +546,18 @@ const HumanInputCard = memo(function HumanInputCard({
   const conn = useConnectionsStore((s) => s.connections.find((c) => c.id === request.hostId))
   /** 待提交的敏感值：本组件 state → 一次 IPC → PTY，不落任何持久层 */
   const [secret, setSecret] = useState('')
+  const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
-  const hostLabel = conn ? `${conn.name} (${conn.host})` : request.hostId
+  const hostLabel =
+    request.target === 'browser'
+      ? request.url
+      : conn
+        ? `${conn.name} (${conn.host})`
+        : request.hostId
 
   const submit = (): void => {
-    if (secret.trim() === '') return
+    if (secret.trim() === '' || submitting) return
+    setSubmitting(true)
     setError('')
     void window.aterm.humanInput
       .submit(request.sessionId, request.executionId, secret)
@@ -557,6 +566,7 @@ const HumanInputCard = memo(function HumanInputCard({
         setSecret('')
         setError(errorMessage(err))
       })
+      .finally(() => setSubmitting(false))
   }
   const terminate = (): void => {
     setError('')
@@ -574,8 +584,12 @@ const HumanInputCard = memo(function HumanInputCard({
       <div className="flex items-center gap-2">
         <Lock size={12} strokeWidth={2.2} className="shrink-0 text-warn" />
         <SquareTerminal size={12} strokeWidth={2.2} className="shrink-0 text-muted" />
-        <span className="shrink-0 font-mono text-fg">execute</span>
-        <span className="min-w-0 truncate text-caption text-muted">@ {hostLabel}</span>
+        <span className="shrink-0 font-mono text-fg">
+          {request.target === 'browser' ? 'browser' : 'execute'}
+        </span>
+        <span title={hostLabel} className="min-w-0 truncate text-caption text-muted">
+          @ {hostLabel}
+        </span>
         <span className="min-w-0 flex-1" />
         <span className="shrink-0 rounded bg-warn/15 px-1 py-0.5 text-caption text-warn">
           {t('ai.inputNeeded')}
@@ -602,7 +616,7 @@ const HumanInputCard = memo(function HumanInputCard({
         />
         <button
           type="button"
-          disabled={secret.trim() === ''}
+          disabled={secret.trim() === '' || submitting}
           className={cn(
             ghostPillCls,
             'flex h-6 items-center gap-1 bg-ok/40 px-3 text-minor font-medium text-fg hover:bg-ok/50 disabled:opacity-35'
@@ -614,6 +628,7 @@ const HumanInputCard = memo(function HumanInputCard({
         </button>
         <button
           type="button"
+          disabled={submitting}
           className={cn(
             ghostPillCls,
             'flex h-6 items-center gap-1 px-3 text-minor font-medium text-danger hover:bg-hover'
@@ -621,7 +636,7 @@ const HumanInputCard = memo(function HumanInputCard({
           onClick={terminate}
         >
           <X size={12} strokeWidth={2.4} />
-          {t('ai.inputTerminate')}
+          {request.target === 'browser' ? t('common.cancel') : t('ai.inputTerminate')}
         </button>
       </div>
       {error && <p className="mt-1 text-caption text-danger">{error}</p>}
@@ -1202,7 +1217,10 @@ function ChatComposer({
     (s) => Object.values(s.pending).filter((r) => r.sessionId === sessionId).length
   )
   /** 需要人处理的挂起项总数：驱动跳转胶囊与输入区黄闪光圈 */
-  const humanPending = pendingCount + pendingInputCount
+  const pendingQuestionCount = useQuestionsStore(
+    (s) => Object.values(s.pending).filter((r) => r.sessionId === sessionId).length
+  )
+  const humanPending = pendingCount + pendingInputCount + pendingQuestionCount
   /** 会话内是否仍有 running 执行：对话 turn 已结束但后台命令还在跑时，光圈保持彩虹 */
   const [hasRunningExec, setHasRunningExec] = useState(false)
   useEffect(() => {
@@ -1428,7 +1446,13 @@ function ChatComposer({
             ) : (
               <ShieldAlert size={11} strokeWidth={2.2} className="shrink-0" />
             )}
-            {t(pendingInputCount > 0 ? 'ai.viewInput' : 'ai.viewApprovals')}
+            {t(
+              pendingQuestionCount > 0
+                ? 'ai.viewQuestion'
+                : pendingInputCount > 0
+                  ? 'ai.viewInput'
+                  : 'ai.viewApprovals'
+            )}
           </button>
         )}
       </div>
@@ -1750,6 +1774,9 @@ export function AiWorkspacePage(): React.JSX.Element {
   const active = sessions.find((s) => s.id === activeId) ?? null
   const initError = useAiStore((s) => s.initError)
   /** 本会话挂起的人工输入待办：卡片排在对话末尾（见 HumanInputCard），不嵌进历史工具卡 */
+  const questionRequests = useQuestionsStore(
+    useShallow((s) => Object.values(s.pending).filter((r) => r.sessionId === activeId))
+  )
   const inputRequests = useHumanInputStore(
     useShallow((s) => Object.values(s.pending).filter((r) => r.sessionId === activeId))
   )
@@ -1781,7 +1808,7 @@ export function AiWorkspacePage(): React.JSX.Element {
     const el = scrollRef.current
     if (el && following) el.scrollTop = el.scrollHeight
     // 末尾的输入卡片出现/收起时同样贴底（只在跟随态）
-  }, [active?.messages, following, inputRequests.length])
+  }, [active?.messages, following, inputRequests.length, questionRequests.length])
 
   // 切换会话回到跟随态（不同会话的滚动位置无回看意义）；渲染期调整，避免 effect 级联
   const [prevActiveId, setPrevActiveId] = useState(activeId)
@@ -1913,6 +1940,9 @@ export function AiWorkspacePage(): React.JSX.Element {
                         </p>
                       )}
                     {/* 人工输入卡片：排在对话末尾（agent 提示之后），与 VS Code 提问卡同位 */}
+                    {questionRequests.map((request) => (
+                      <QuestionCard key={request.toolCallId} request={request} />
+                    ))}
                     {inputRequests.map((request) => (
                       <HumanInputCard key={request.executionId} request={request} />
                     ))}

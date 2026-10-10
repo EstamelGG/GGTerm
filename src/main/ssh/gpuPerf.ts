@@ -3,7 +3,7 @@ import { listConnections } from '../data/connections'
 import { BrowserWindow } from 'electron'
 import type { PerfGpu, PerfGpuProc, PerfGpuSample } from '../../shared/types'
 import { appLog } from '../log'
-import { getLink } from './link'
+import { getResourceLink } from './resourceLink'
 import { parseGpuAppRow, parseGpuRow } from './perf'
 import { GPU_SCRIPT } from './remoteScripts'
 import { execCommand } from './sftp'
@@ -43,7 +43,7 @@ export function sessionGpuWatch(hostId: string | null): void {
   if (timer) clearInterval(timer)
   timer = null
   watched = hostId
-  if (!hostId || !getLink(hostId)) return
+  if (!hostId || !getResourceLink(hostId)) return
   void sample(hostId)
   timer = setInterval(() => void sample(hostId), GPU_INTERVAL_MS)
 }
@@ -54,7 +54,7 @@ async function sample(hostId: string): Promise<void> {
     return
   }
   if (sampling || watched !== hostId) return
-  const client = getLink(hostId)?.activeClient
+  const client = getResourceLink(hostId)?.activeClient
   if (!client) return
   sampling = true
   try {
@@ -84,7 +84,7 @@ async function sample(hostId: string): Promise<void> {
   } catch (err) {
     if (!loggedFail) {
       loggedFail = true
-      const label = getLink(hostId)?.connection.name ?? hostId
+      const label = getResourceLink(hostId)?.connection.name ?? hostId
       appLog('ssh', `GPU sampling failed "${label}": ${(err as Error).message}`, 'error')
     }
   } finally {

@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -20,12 +20,14 @@ import { useWorkspaceStore } from '@/stores/workspace'
 import type { AiBrowserReference } from '@shared/browser'
 import type { BrowserState } from '@shared/browser'
 import { IconButton, CopyIconButton } from '@/components/ui/IconButton'
+import { BrowserBookmarks } from '@/components/chrome/BrowserBookmarks'
 import { BrowserCertificateWarning } from '@/components/chrome/BrowserCertificateWarning'
 import { ChromeRow } from '@/components/chrome/ChromeRow'
 import { Button } from '@/components/form/Buttons'
 import { TabChip, TabScrollArea } from '@/components/chrome/TabChip'
 import { useSessionStore } from '@/stores/session'
 import { errorMessage } from '@shared/error'
+import { useBrowserSurface } from '@/lib/useBrowserSurface'
 
 export function BrowserPage({
   active,
@@ -51,7 +53,13 @@ export function BrowserPage({
   const current = state.tabs.find((tab) => tab.id === selected)
   const certificateBlocked = !!current?.certificateError
   const blank = !current || current.url === 'about:blank'
-  const pageBlocked = blank || certificateBlocked || !!current?.error || !!current?.loading
+  const waitingForDocument = !!current?.loading && !(current.ready ?? false)
+  const pageBlocked = blank || certificateBlocked || !!current?.error || waitingForDocument
+  const { occluded, preview } = useBrowserSurface(
+    viewport,
+    selected,
+    active && !obscured && !pageBlocked
+  )
   const addressKey = `${selected ?? ''}:${current?.url ?? ''}`
   const address = draft?.key === addressKey ? draft.value : blank ? '' : (current?.url ?? '')
   const setAddress = (value: string): void => setDraft({ key: addressKey, value })
@@ -111,28 +119,6 @@ export function BrowserPage({
     })
     return off
   }, [])
-  useLayoutEffect(() => {
-    const layout = (): void => {
-      const rect = viewport.current?.getBoundingClientRect()
-      void window.aterm.browser
-        .layout(
-          active && !obscured && !pageBlocked ? selected : null,
-          rect && active && !obscured && !pageBlocked
-            ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
-            : null
-        )
-        .catch(() => {})
-    }
-    layout()
-    const observer = new ResizeObserver(layout)
-    if (viewport.current) observer.observe(viewport.current)
-    window.addEventListener('resize', layout)
-    return () => {
-      observer.disconnect()
-      window.removeEventListener('resize', layout)
-      void window.aterm.browser.layout(null, null).catch(() => {})
-    }
-  }, [active, obscured, selected, pageBlocked, notification, picking])
   const attach = async (reference: AiBrowserReference): Promise<void> => {
     useWorkspaceStore.getState().setAiOpen(true)
     if (!useAiStore.getState().activeId) {
@@ -172,7 +158,7 @@ export function BrowserPage({
     }
   }
   const submit = (): void => {
-    if (!address.trim()) return
+    if (current?.controlling || !address.trim()) return
     const url = /^https?:\/\//i.test(address) ? address : `https://${address}`
     run(current ? window.aterm.browser.navigate(current.id, url) : window.aterm.browser.open(url))
   }
@@ -187,7 +173,7 @@ export function BrowserPage({
               icon={Globe}
               loading={tab.loading}
               selected={selected === tab.id}
-              showClose
+              showClose={!tab.controlling}
               maxWidth={180}
               onClick={() => {
                 setSelected(tab.id)
@@ -216,6 +202,14 @@ export function BrowserPage({
             )
           }}
         />
+        <BrowserBookmarks
+          current={current}
+          onOpen={(url) => {
+            const existing = state.tabs.find((tab) => tab.url === url)
+            run(existing ? window.aterm.browser.show(existing.id) : window.aterm.browser.open(url))
+          }}
+          onError={(message) => onToast(message, true)}
+        />
       </ChromeRow>
       <form
         className="flex h-10 shrink-0 items-center gap-1.5 border-b border-line px-3"
@@ -224,67 +218,69 @@ export function BrowserPage({
           submit()
         }}
       >
-        <IconButton
-          icon={ArrowLeft}
-          title={t('browser.back')}
-          disabled={!current?.canGoBack}
-          onClick={() => current && run(window.aterm.browser.control(current.id, 'back'))}
-        />
-        <IconButton
-          icon={ArrowRight}
-          title={t('browser.forward')}
-          disabled={!current?.canGoForward}
-          onClick={() => current && run(window.aterm.browser.control(current.id, 'forward'))}
-        />
-        <IconButton
-          icon={current?.loading ? Square : RefreshCw}
-          title={t(current?.loading ? 'browser.stop' : 'browser.reload')}
-          disabled={blank}
-          onClick={() =>
-            current &&
-            run(window.aterm.browser.control(current.id, current.loading ? 'stop' : 'reload'))
-          }
-        />
-        <div className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-full border border-line bg-raised px-3 transition-colors focus-within:border-at-accent/60">
-          {current?.loading ? (
-            <LoaderCircle
-              size={12}
-              className="shrink-0 animate-spin text-at-accent motion-reduce:animate-none"
-            />
-          ) : current?.error || certificateBlocked ? (
-            <ShieldAlert size={12} className="shrink-0 text-warn" />
-          ) : (
-            <Globe size={12} className="shrink-0 text-muted" />
-          )}
-          <input
-            ref={addressInput}
-            className="h-full min-w-0 flex-1 bg-transparent font-mono text-minor text-fg outline-none"
-            aria-label={t('browser.address')}
-            placeholder={t('browser.address')}
-            value={address}
-            onChange={(event) => setAddress(event.target.value)}
+        <fieldset disabled={!!current?.controlling} className="contents">
+          <IconButton
+            icon={ArrowLeft}
+            title={t('browser.back')}
+            disabled={!current?.canGoBack}
+            onClick={() => current && run(window.aterm.browser.control(current.id, 'back'))}
           />
-        </div>
-        <IconButton
-          icon={ArrowRight}
-          title={t('browser.open')}
-          disabled={!address.trim()}
-          onClick={submit}
-        />
-        <div className="mx-1 h-4 w-px shrink-0 bg-line" />
-        <IconButton
-          icon={MessageSquarePlus}
-          title={t('browser.attachPage')}
-          disabled={pageBlocked || picking}
-          onClick={() => current && run(window.aterm.browser.capture(current.id).then(attach))}
-        />
-        <IconButton
-          icon={MousePointer2}
-          title={t(picking ? 'browser.cancelPick' : 'browser.pickElement')}
-          selected={picking}
-          disabled={pageBlocked}
-          onClick={() => run(pick())}
-        />
+          <IconButton
+            icon={ArrowRight}
+            title={t('browser.forward')}
+            disabled={!current?.canGoForward}
+            onClick={() => current && run(window.aterm.browser.control(current.id, 'forward'))}
+          />
+          <IconButton
+            icon={current?.loading ? Square : RefreshCw}
+            title={t(current?.loading ? 'browser.stop' : 'browser.reload')}
+            disabled={blank}
+            onClick={() =>
+              current &&
+              run(window.aterm.browser.control(current.id, current.loading ? 'stop' : 'reload'))
+            }
+          />
+          <div className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-full border border-line bg-raised px-3 transition-colors focus-within:border-at-accent/60">
+            {current?.loading ? (
+              <LoaderCircle
+                size={12}
+                className="shrink-0 animate-spin text-at-accent motion-reduce:animate-none"
+              />
+            ) : current?.error || certificateBlocked ? (
+              <ShieldAlert size={12} className="shrink-0 text-warn" />
+            ) : (
+              <Globe size={12} className="shrink-0 text-muted" />
+            )}
+            <input
+              ref={addressInput}
+              className="h-full min-w-0 flex-1 bg-transparent font-mono text-minor text-fg outline-none"
+              aria-label={t('browser.address')}
+              placeholder={t('browser.address')}
+              value={address}
+              onChange={(event) => setAddress(event.target.value)}
+            />
+          </div>
+          <IconButton
+            icon={ArrowRight}
+            title={t('browser.open')}
+            disabled={!address.trim()}
+            onClick={submit}
+          />
+          <div className="mx-1 h-4 w-px shrink-0 bg-line" />
+          <IconButton
+            icon={MessageSquarePlus}
+            title={t('browser.attachPage')}
+            disabled={pageBlocked || picking}
+            onClick={() => current && run(window.aterm.browser.capture(current.id).then(attach))}
+          />
+          <IconButton
+            icon={MousePointer2}
+            title={t(picking ? 'browser.cancelPick' : 'browser.pickElement')}
+            selected={picking}
+            disabled={pageBlocked}
+            onClick={() => run(pick())}
+          />
+        </fieldset>
       </form>
       {notification && (
         <div
@@ -308,19 +304,44 @@ export function BrowserPage({
           {t('browser.pickHint')}
         </div>
       )}
-      {current?.certificateTrust && (
-        <div
-          className="px-3 py-2 text-minor text-warn"
-          title={current.certificateTrust.fingerprint}
-        >
-          {t('browser.certificateTrusted', { origin: current.certificateTrust.origin })}
-        </div>
-      )}
       <div
         ref={viewport}
+        tabIndex={pageBlocked || current?.controlling ? -1 : 0}
+        onFocus={(event) => {
+          if (
+            event.target === event.currentTarget &&
+            active &&
+            !obscured &&
+            !occluded &&
+            !pageBlocked &&
+            !current?.controlling &&
+            selected
+          )
+            run(window.aterm.browser.focus(selected))
+        }}
         className="relative min-h-0 flex-1 overflow-hidden"
-        aria-busy={current?.loading}
+        aria-busy={current?.loading || current?.controlling}
       >
+        {!pageBlocked && preview && (
+          <img
+            src={preview}
+            alt=""
+            aria-hidden
+            draggable={false}
+            className="pointer-events-none absolute inset-0 h-full w-full select-none object-fill"
+          />
+        )}
+        {current?.controlling && (pageBlocked || occluded) && (
+          <div
+            role="status"
+            className="absolute inset-0 z-10 grid cursor-wait place-items-center bg-muted/35"
+          >
+            <div className="flex items-center gap-2 rounded-xl border border-line bg-raised px-5 py-3 text-body text-fg shadow-lg">
+              <LoaderCircle size={16} className="animate-spin motion-reduce:animate-none" />
+              Agent 正在控制
+            </div>
+          </div>
+        )}
         {current?.certificateError && (
           <BrowserCertificateWarning
             certificate={current.certificateError}
@@ -335,7 +356,7 @@ export function BrowserPage({
             }
           />
         )}
-        {!certificateBlocked && (blank || current?.error || current?.loading) && (
+        {!certificateBlocked && (blank || current?.error || waitingForDocument) && (
           <div className="flex h-full overflow-y-auto p-6">
             <div
               className="m-auto flex w-full max-w-md flex-col items-center text-center"

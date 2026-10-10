@@ -1,3 +1,4 @@
+import { registerQuestionIpc } from './ai/questionIpc'
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { resolve as resolvePath, sep as pathSep } from 'node:path'
 import { errorMessage } from '../shared/error'
@@ -26,6 +27,7 @@ import { setPrefsNotifier } from './data/prefs'
 import { probeLatency, type ProbeTarget } from './probe'
 import { sshTest, type SshTestInput } from './sshTest'
 import { pickLocalPaths } from './ssh/sftp'
+import { getResourceLink, resourceSftp, stopResourceSftp } from './ssh/resourceLink'
 import { listLocalKeys, parseSshConfig, readLocalKey } from './ssh/localSsh'
 import { openFolderPrivacySettings } from './localAccess'
 import type { ProtectedFolder } from '../shared/localAccess'
@@ -153,6 +155,7 @@ export function registerIpc(): void {
   registerExecutionIpc()
   // 人工输入（敏感提示）通道：与只读查看器 API 分开，密码只经此写入 PTY
   registerHumanInputIpc()
+  registerQuestionIpc()
   // prefs 权威同步：main 侧任意写入（模型缓存等）广播最新偏好到所有窗口
   setPrefsNotifier((p) => {
     for (const w of BrowserWindow.getAllWindows()) {
@@ -343,7 +346,11 @@ export function registerIpc(): void {
     probeLinksOsName(hostIds)
   })
 
-  ipcMain.handle(channels.hostConnect, (e, conn: HostConnection) => {
+  ipcMain.handle(channels.hostConnect, (e, conn: HostConnection, inspectOnly = false) => {
+    const resource = inspectOnly ? getResourceLink(conn.id) : undefined
+    if (resource?.activeClient && resource !== getLink(conn.id))
+      return { awaiting: false, viewerOnly: true, phase: resource.phase }
+
     const link = getOrCreateLink(conn, linkEvents(e.sender))
     if (!link.awaitingCredentials) link.start()
     link.emitCurrentState()
@@ -489,15 +496,17 @@ export function registerIpc(): void {
   /* ---------------- SFTP（阶段④，对照 SftpController 的 IPC 化） ---------------- */
 
   const sftpOf = (hostId: string): SftpSession => {
-    const sftp = getLink(hostId)?.sftp
-    if (!sftp) throw new Error('host not connected')
-    return sftp
+    const sender = BrowserWindow.getAllWindows().find(
+      (window) => !window.isDestroyed()
+    )?.webContents
+    if (!sender) throw new Error('Application window is unavailable')
+    return resourceSftp(hostId, linkEvents(sender))
   }
 
   ipcMain.handle(channels.sftpStart, (_e, hostId: string) => sftpOf(hostId).start())
 
   ipcMain.on(channels.sftpStop, (_e, hostId: string) => {
-    getLink(hostId)?.sftp.stop()
+    stopResourceSftp(hostId)
   })
 
   // 列目录失败（如权限不足）不再打断 UI：错误进日志面板，树内以红色占位行呈现
@@ -615,20 +624,20 @@ export function registerIpc(): void {
   })
 
   ipcMain.on(channels.sftpMeasureCancel, (_e, hostId: string) => {
-    getLink(hostId)?.sftp.abortMeasure()
+    sftpOf(hostId).abortMeasure()
   })
 
   // 取消对应传输的字节流和专用通道。
   ipcMain.on(
     'sftp:retryCleanup',
     (_e, { hostId, transferId }: { hostId: string; transferId: string }) => {
-      void getLink(hostId)?.sftp.retryCleanup(transferId)
+      void sftpOf(hostId).retryCleanup(transferId)
     }
   )
   ipcMain.on(
     channels.sftpTransferCancel,
     (_e, { hostId, transferId }: { hostId: string; transferId: string }) => {
-      getLink(hostId)?.sftp.cancelTransfer(transferId)
+      sftpOf(hostId).cancelTransfer(transferId)
     }
   )
 

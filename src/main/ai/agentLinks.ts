@@ -16,6 +16,12 @@ export function getAgentLink(hostId: string): HostLink | undefined {
   return links.get(keyOf(hostId))?.link
 }
 
+/** UI resource viewers may borrow a transport without changing Agent ownership. */
+export function findAgentResourceLink(hostId: string): HostLink | undefined {
+  const candidates = [...links.values()].filter((entry) => entry.link.hostId === hostId)
+  return candidates.find((entry) => entry.link.activeClient)?.link ?? candidates[0]?.link
+}
+
 export function getOrCreateAgentLink(conn: HostConnection): HostLink {
   const key = keyOf(conn.id)
   const existing = links.get(key)

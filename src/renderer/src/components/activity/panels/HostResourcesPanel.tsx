@@ -2,43 +2,27 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { SshConnectionSession } from '@shared/types'
 import { isNetworkDevice } from '@shared/device'
-import { shellQuote } from '@shared/sftpPath'
 import { errorMessage } from '@shared/error'
 import { useAiStore } from '@/stores/ai'
 import { useConnectionsStore } from '@/stores/connections'
 import { useSessionStore } from '@/stores/session'
 import { useWorkspaceStore } from '@/stores/workspace'
-import { SftpPane } from '@/components/sftp/SftpPane'
 import { Button } from '@/components/form/Buttons'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue
-} from '@/components/ui/select'
 import { ActivityPanelHeader } from '../ActivityPanelHeader'
 import { PerformancePanel } from './PerformancePanel'
 import { resourceHostId } from '@/lib/resourceHost'
 
-/** Files and performance can be inspected without creating a terminal shell. */
-export function HostResourcesPanel({
-  panel,
-  visible
-}: {
-  visible: boolean
-  panel: 'files' | 'performance'
-}): React.JSX.Element {
+/** Inspect performance without creating a terminal shell. */
+export function HostResourcesPanel({ visible }: { visible: boolean }): React.JSX.Element {
   const { t } = useTranslation()
   const connections = useConnectionsStore((s) => s.connections)
   const hosts = useSessionStore((s) => s.hosts)
   const focusedId = useWorkspaceStore((s) => s.focusedHostId)
   const sessionId = useAiStore((s) => s.activeId)
   const [links, setLinks] = useState<SshConnectionSession[]>([])
-  const selectedId = useWorkspaceStore((s) => s.inspectedHostId)
   const [notice, setNotice] = useState<string | null>(null)
   const [retry, setRetry] = useState(0)
-  const hostId = resourceHostId(connections, links, sessionId, selectedId, focusedId)
+  const hostId = resourceHostId(connections, links, sessionId, focusedId)
   const conn = connections.find((c) => c.id === hostId)
   const host = hosts.find((h) => h.id === hostId)
   const unsupported = isNetworkDevice(conn)
@@ -83,37 +67,23 @@ export function HostResourcesPanel({
   }, [conn, unsupported, retry, visible])
 
   useEffect(() => {
-    if (!visible || panel !== 'performance' || unsupported || host?.phase !== 'connected') return
+    if (!visible || unsupported || host?.phase !== 'connected') return
     window.aterm.perf.watchSession(hostId)
     return () => window.aterm.perf.watchSession(null)
-  }, [panel, unsupported, hostId, host?.phase, visible])
+  }, [unsupported, hostId, host?.phase, visible])
 
   return (
     <div className="flex h-full min-w-0 flex-col">
       <ActivityPanelHeader>
-        <span className="shrink-0 text-body font-medium text-fg">
-          {t(panel === 'files' ? 'activity.files' : 'activity.performance')}
-        </span>
-        <div className="ml-auto min-w-0">
-          <Select
-            value={hostId ?? ''}
-            onValueChange={(id) => {
-              useWorkspaceStore.getState().inspectHost(id)
-              setNotice(null)
-            }}
+        <span className="shrink-0 text-body font-medium text-fg">{t('activity.performance')}</span>
+        {conn && (
+          <span
+            className="ml-auto min-w-0 truncate text-caption text-muted"
+            title={`${conn.username}@${conn.host}:${conn.port}`}
           >
-            <SelectTrigger aria-label={t('activity.selectHost')}>
-              <SelectValue placeholder={t('activity.selectHost')} />
-            </SelectTrigger>
-            <SelectContent>
-              {connections.map((connection) => (
-                <SelectItem key={connection.id} value={connection.id}>
-                  {connection.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+            {conn.name}
+          </span>
+        )}
       </ActivityPanelHeader>
       {notice && (
         <div
@@ -142,29 +112,9 @@ export function HostResourcesPanel({
           />
         </div>
       ) : host?.phase === 'connected' ? (
-        panel === 'files' ? (
-          <div className="min-h-0 flex-1">
-            <SftpPane
-              key={conn.id}
-              hostId={conn.id}
-              onToast={setNotice}
-              onOpenTerminal={(dir) => {
-                const store = useSessionStore.getState()
-                store.addShell(conn.id, `cd ${shellQuote(dir)}`)
-                store.setTab({ kind: 'host', id: conn.id })
-              }}
-              onOpenFile={(entry) => {
-                const store = useSessionStore.getState()
-                store.openFile(conn.id, entry)
-                store.setTab({ kind: 'host', id: conn.id })
-              }}
-            />
-          </div>
-        ) : (
-          <div className="min-h-0 flex-1 overflow-y-auto p-3">
-            <PerformancePanel key={conn.id} hostId={conn.id} />
-          </div>
-        )
+        <div className="min-h-0 flex-1 overflow-y-auto p-3">
+          <PerformancePanel key={conn.id} hostId={conn.id} />
+        </div>
       ) : (
         <div className="flex flex-col items-center gap-3 p-6 text-center text-minor text-muted">
           <p>

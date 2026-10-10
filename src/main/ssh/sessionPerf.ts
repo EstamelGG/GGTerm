@@ -3,7 +3,7 @@ import { listConnections } from '../data/connections'
 import { BrowserWindow } from 'electron'
 import type { PerfSample } from '../../shared/types'
 import { sessionGpuWatch } from './gpuPerf'
-import { getLink } from './link'
+import { getResourceLink } from './resourceLink'
 import { PerfMonitor, SESSION_INTERVAL_MS } from './perf'
 
 /**
@@ -31,11 +31,11 @@ export function sessionPerfWatch(hostId: string | null): void {
   }
   if (!hostId) return
   if (monitors.has(hostId)) return
-  const link = getLink(hostId)
+  const link = getResourceLink(hostId)
   if (!link) return
   const monitor = new PerfMonitor(
     hostId,
-    () => link.activeClient,
+    () => getResourceLink(hostId)?.activeClient ?? null,
     broadcast,
     link.connection.name,
     {

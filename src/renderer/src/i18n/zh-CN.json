@@ -1,5 +1,14 @@
 {
   "browser": {
+    "bookmarks": "书签",
+    "saveBookmark": "保存当前页面为书签",
+    "editBookmark": "编辑书签",
+    "newBookmark": "新增书签",
+    "bookmarkTitle": "名称",
+    "searchBookmarks": "搜索名称或网址",
+    "noBookmarks": "暂无书签，点击星标保存当前页面",
+    "noBookmarksMatch": "没有匹配的书签",
+    "deleteBookmark": "删除书签",
     "blankTab": "空白页",
     "welcome": "浏览网页，随时与 AI 协作",
     "loading": "正在加载页面",
@@ -519,9 +528,8 @@
     "systemColorPicker": "系统取色器"
   },
   "activity": {
-    "files": "文件",
     "selectHost": "选择主机",
-    "selectHostHint": "选择主机即可查看文件和性能，无需打开终端。",
+    "selectHostHint": "聚焦一台主机，或让当前对话的 Agent 连接主机，即可查看性能。",
     "retryResources": "重试连接",
     "resourcesAuth": "此主机需要输入登录凭据。",
     "openHost": "前往主机登录",
@@ -712,6 +720,10 @@
     "approvalWaiting": "等待",
     "inputNeeded": "需要输入",
     "inputPlaceholder": "密码或验证码",
+    "viewQuestion": "回答问题",
+    "questionOther": "其他",
+    "questionPlaceholder": "请输入你的想法或具体要求",
+    "questionSkip": "跳过",
     "inputSubmit": "提交",
     "inputTerminate": "终止命令",
     "inputToast": "AI 正在等待你输入",

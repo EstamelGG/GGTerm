@@ -195,9 +195,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         hosts: s.hosts.map((h) => (h.id === conn.id ? { ...h, conn, title: conn.name } : h))
       }))
       if (existing.viewerOnly) {
-        const { awaiting } = await window.aterm.hosts.connect(conn)
+        const { awaiting, viewerOnly, phase } = await window.aterm.hosts.connect(conn, !enter)
         set((s) => ({
-          hosts: s.hosts.map((h) => (h.id === conn.id ? { ...h, viewerOnly: false, awaiting } : h))
+          hosts: s.hosts.map((h) =>
+            h.id === conn.id
+              ? { ...h, viewerOnly: !!viewerOnly, awaiting, phase: phase ?? h.phase }
+              : h
+          )
         }))
         const pending = pendingHostStates.get(conn.id)
         if (pending) {
@@ -205,14 +209,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           get().applyHostState(pending)
         }
       }
-      if (!enter && (existing.phase === 'offline' || existing.phase === 'idle')) {
+      if (
+        !enter &&
+        !existing.viewerOnly &&
+        (existing.phase === 'offline' || existing.phase === 'idle')
+      ) {
         get().reconnectHost(conn.id)
       }
       if (enter) get().addShell(conn.id)
       if (enter) get().setTab({ kind: 'host', id: conn.id })
       return
     }
-    const { awaiting } = await window.aterm.hosts.connect(conn)
+    const { awaiting, viewerOnly, phase } = await window.aterm.hosts.connect(conn, !enter)
     // 同一主机的并发请求可能一起通过前面的存在性检查；IPC 返回后再次检查。
     // 保留重复连接新增 shell 的既有行为，但工作区只创建一次。
     if (get().hosts.some((h) => h.id === conn.id)) {
@@ -224,7 +232,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       id: conn.id,
       conn,
       title: conn.name,
-      phase: 'connecting',
+      phase: phase ?? 'connecting',
+      viewerOnly,
       attempt: 0,
       offlineReason: '',
       awaiting,

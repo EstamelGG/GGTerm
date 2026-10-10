@@ -2,7 +2,7 @@ import type { AiBrowserReference } from '@shared/browser'
 import type { AiFileReference } from '@shared/types'
 import { create } from 'zustand'
 
-export type ActivityPanelId = 'ai' | 'files' | 'performance' | 'transfers' | 'commands' | 'forwards'
+export type ActivityPanelId = 'ai' | 'performance' | 'transfers' | 'commands' | 'forwards'
 
 interface WorkspaceState {
   browserAttachments: Record<string, AiBrowserReference[]>
@@ -13,8 +13,6 @@ interface WorkspaceState {
   setSidebarOpen: (open: boolean) => void
   selectPanel: (panel: ActivityPanelId) => void
   /** 最近进入的主机会话；目录选择和显式引用均不得改变它。 */
-  inspectedHostId: string | null
-  inspectHost: (id: string | null) => void
   focusedHostId: string | null
   fileAttachments: Record<string, AiFileReference[]>
   attachFile: (sessionId: string, file: AiFileReference) => void
@@ -57,8 +55,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     })),
   sidebarOpen: false,
   activePanel: 'ai',
-  inspectedHostId: null,
-  inspectHost: (inspectedHostId) => set({ inspectedHostId }),
   focusedHostId: null,
   attachments: {},
   fileAttachments: {},

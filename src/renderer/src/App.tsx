@@ -1,3 +1,4 @@
+import { useQuestionsStore } from '@/stores/questions'
 import { useExecutionTabs } from '@/stores/executionTabs'
 import { OverflowTabs } from '@/components/chrome/OverflowTabs'
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
@@ -94,6 +95,7 @@ function App(): React.JSX.Element {
     s.sessions.some((session) => pendingApprovals(session.messages).length > 0)
   )
   const aiBusy = useAiStore((s) => s.sessions.some(isBusy))
+  const aiNeedsQuestion = useQuestionsStore((s) => Object.keys(s.pending).length > 0)
   const aiNeedsInput = useHumanInputStore((s) => Object.keys(s.pending).length > 0)
   const sidebarOpen = useWorkspaceStore((s) => s.sidebarOpen)
   const setSidebarOpen = useWorkspaceStore((s) => s.setSidebarOpen)
@@ -145,6 +147,34 @@ function App(): React.JSX.Element {
         applyUiScale(p.uiScale)
         applyTerminalFontSize(p.terminalFontSize)
       })
+    const viewerRevisions = new Map<string, number>()
+    const offAgentViewer = window.aterm.hosts.onAgentState((state) => {
+      if (
+        !useSessionStore
+          .getState()
+          .hosts.some((host) => host.id === state.hostId && host.viewerOnly)
+      )
+        return
+      const revision = (viewerRevisions.get(state.hostId) ?? 0) + 1
+      viewerRevisions.set(state.hostId, revision)
+      // Another Agent may still own a live transport for this host.
+      void window.aterm.hosts
+        .listAgentLinks()
+        .then((links) => {
+          if (viewerRevisions.get(state.hostId) !== revision) return
+          if (
+            !useSessionStore
+              .getState()
+              .hosts.some((host) => host.id === state.hostId && host.viewerOnly)
+          )
+            return
+          const live = links.find(
+            (link) => link.hostId === state.hostId && link.phase === 'connected'
+          )
+          useSessionStore.getState().applyHostState(live ?? state)
+        })
+        .catch(() => {})
+    })
     const offHost = window.aterm.hosts.onState((e) => useSessionStore.getState().applyHostState(e))
     // 链路相位全局镜像：连接列表状态列与拓扑图共用（主进程为唯一权威）
     const offLinks = useLinksStore.getState().watch()
@@ -179,6 +209,7 @@ function App(): React.JSX.Element {
         flash(i18next.t('ai.approvalToast'))
     })
     // 人工输入待办（密码/验证码）：主进程推送 → 对应工具卡挂出输入区；启动时恢复未收尾的待办
+    const offQuestions = useQuestionsStore.getState().watch()
     const humanInput = useHumanInputStore.getState()
     const offInputRequest = window.aterm.humanInput.onRequest((request) => {
       humanInput.request(request)
@@ -190,6 +221,8 @@ function App(): React.JSX.Element {
       .then(humanInput.replaceAll)
       .catch(() => {})
     return () => {
+      offQuestions()
+      offAgentViewer()
       offHost()
       offLinks()
       offShell()
@@ -378,11 +411,11 @@ function App(): React.JSX.Element {
             selected={sidebarOpen}
             onClick={() => setSidebarOpen(!sidebarOpen)}
           />
-          {(aiBusy || aiNeedsAttention || aiNeedsInput) && (
+          {(aiBusy || aiNeedsAttention || aiNeedsInput || aiNeedsQuestion) && (
             <span
               className={cn(
                 'pointer-events-none absolute right-0 top-0 h-1.5 w-1.5 rounded-full',
-                aiNeedsAttention || aiNeedsInput ? 'bg-danger' : 'bg-at-accent'
+                aiNeedsAttention || aiNeedsInput || aiNeedsQuestion ? 'bg-danger' : 'bg-at-accent'
               )}
             />
           )}
@@ -399,7 +432,7 @@ function App(): React.JSX.Element {
           >
             <BrowserPage
               active={tab.kind === 'browser'}
-              obscured={logOpen || pendingClose !== null}
+              obscured={pendingClose !== null}
               onToast={flash}
               notification={toast}
               onDismissNotification={() => setToast(null)}

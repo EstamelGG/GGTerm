@@ -1,5 +1,6 @@
 import { BrowserWindow, ipcMain } from 'electron'
 import { executions } from './exec'
+import { browserHumanInputs } from './browserHumanInput'
 import type { HumanInputRequest, HumanInputResolved } from '../../shared/execution'
 
 /**
@@ -24,22 +25,29 @@ function broadcast(channel: string, payload: unknown): void {
 }
 
 export function registerHumanInputIpc(): void {
+  browserHumanInputs.on('request', (request: HumanInputRequest) => broadcast(REQUEST, request))
+  browserHumanInputs.on('resolved', (info: HumanInputResolved) => broadcast(RESOLVED, info))
   executions.onHumanInputRequest((request: HumanInputRequest) => broadcast(REQUEST, request))
   executions.onHumanInputResolved((info: HumanInputResolved) => broadcast(RESOLVED, info))
 
   // 渲染层启动/刷新后恢复未收尾的卡片（执行仍挂在主进程上）
-  ipcMain.handle(LIST, (_event, sessionId?: string) =>
-    executions.pendingHumanInput(typeof sessionId === 'string' && sessionId ? sessionId : undefined)
-  )
+  ipcMain.handle(LIST, (_event, sessionId?: string) => [
+    ...executions.pendingHumanInput(
+      typeof sessionId === 'string' && sessionId ? sessionId : undefined
+    ),
+    ...browserHumanInputs.list(typeof sessionId === 'string' && sessionId ? sessionId : undefined)
+  ])
   ipcMain.handle(SUBMIT, (_event, sessionId: string, id: string, value: string) => {
     if (typeof sessionId !== 'string' || !sessionId) throw new Error('AI session id is required')
     if (typeof id !== 'string' || !id) throw new Error('Execution id is required')
     if (typeof value !== 'string' || value.trim() === '') throw new Error('Input value is required')
-    executions.submitHumanInput(sessionId, id, value)
+    if (id.startsWith('browser-input:')) return browserHumanInputs.submit(sessionId, id, value)
+    return executions.submitHumanInput(sessionId, id, value)
   })
   ipcMain.handle(CANCEL, (_event, sessionId: string, id: string) => {
     if (typeof sessionId !== 'string' || !sessionId) throw new Error('AI session id is required')
     if (typeof id !== 'string' || !id) throw new Error('Execution id is required')
-    executions.cancelHumanInput(sessionId, id)
+    if (id.startsWith('browser-input:')) return browserHumanInputs.cancel(sessionId, id)
+    return executions.cancelHumanInput(sessionId, id)
   })
 }

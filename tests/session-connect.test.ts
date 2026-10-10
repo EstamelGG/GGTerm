@@ -78,3 +78,20 @@ it('keeps the entered shell host as AI context when connecting to another host i
     .connect({ id: 'background', name: 'Background' } as HostConnection)
   expect(useWorkspaceStore.getState().focusedHostId).toBe('background')
 })
+
+it('creates a viewer workspace for an Agent connection without opening a shell or replacing focus', async () => {
+  const connect = vi.fn(async () => ({ awaiting: false, viewerOnly: true, phase: 'connected' }))
+  Object.defineProperty(window, 'aterm', { configurable: true, value: { hosts: { connect } } })
+  const addShell = vi.fn()
+  useSessionStore.setState({ hosts: [], addShell, tab: { kind: 'ai' } })
+  const conn = { id: 'agent-viewer', name: 'Server' } as HostConnection
+  await useSessionStore.getState().connect(conn, false)
+  expect(connect).toHaveBeenCalledWith(conn, true)
+  expect(useSessionStore.getState().hosts[0]).toMatchObject({
+    viewerOnly: true,
+    phase: 'connected',
+    shells: []
+  })
+  expect(useSessionStore.getState().tab).toEqual({ kind: 'ai' })
+  expect(addShell).not.toHaveBeenCalled()
+})

@@ -1,5 +1,14 @@
 {
   "browser": {
+    "bookmarks": "Bookmarks",
+    "saveBookmark": "Bookmark this page",
+    "editBookmark": "Edit bookmark",
+    "newBookmark": "Add bookmark",
+    "bookmarkTitle": "Name",
+    "searchBookmarks": "Search name or URL",
+    "noBookmarks": "No bookmarks yet. Star a page to save it.",
+    "noBookmarksMatch": "No matching bookmarks",
+    "deleteBookmark": "Delete bookmark",
     "blankTab": "Blank page",
     "welcome": "Browse and collaborate with AI",
     "loading": "Loading page",
@@ -519,9 +528,8 @@
     "systemColorPicker": "System color picker"
   },
   "activity": {
-    "files": "Files",
     "selectHost": "Select host",
-    "selectHostHint": "Select a host to browse files and monitor performance without opening a terminal.",
+    "selectHostHint": "Focus a host or connect one through the current Agent conversation to view performance.",
     "retryResources": "Reconnect",
     "resourcesAuth": "This host requires login credentials.",
     "openHost": "Open host login",
@@ -712,6 +720,10 @@
     "approvalWaiting": "Waiting",
     "inputNeeded": "Input needed",
     "inputPlaceholder": "Password or code",
+    "viewQuestion": "Answer question",
+    "questionOther": "Other",
+    "questionPlaceholder": "Enter your preference or specific requirements",
+    "questionSkip": "Skip",
     "inputSubmit": "Submit",
     "inputTerminate": "Terminate",
     "inputToast": "AI is waiting for your input",

@@ -13,7 +13,7 @@ app
     const bundle = path.resolve('node_modules/.cache/connection-isolation.cjs')
     require('esbuild').buildSync({
       stdin: {
-        contents: `export * from './src/main/ai/agentLinks'; export * from './src/main/ai/exec'; export * from './src/main/ssh/link';`,
+        contents: `export * from './src/main/ai/agentLinks'; export * from './src/main/ai/exec'; export * from './src/main/ssh/link'; export * from './src/main/ssh/resourceLink';`,
         resolveDir: process.cwd(),
         loader: 'ts'
       },
@@ -37,6 +37,13 @@ app
         peer.on('ready', () =>
           peer.on('session', (accept) => {
             const session = accept()
+            session.on('sftp', (accept) => {
+              const channel = accept()
+              channel.on('INIT', () => channel.version(3))
+              channel.on('REALPATH', (id) =>
+                channel.name(id, [{ filename: '/', longname: '/', attrs: {} }])
+              )
+            })
             session.on('pty', (accept) => accept())
             session.on('exec', (accept) => {
               const channel = accept()
@@ -98,6 +105,23 @@ app
       })
       await delay(100)
       assert(a.isActive && b.isActive, 'closing user transport preserves both agents')
+      const borrowed = api.getResourceLink(conn.id)
+      assert.equal(borrowed, a)
+      const uiSftp = api.resourceSftp(conn.id, {
+        onHostState: noop,
+        onShellState: noop,
+        onShellData: noop,
+        onShellAnnounce: noop,
+        onSftpState: noop,
+        onSftpTransfer: noop,
+        onSftpMeasure: noop
+      })
+      assert.notEqual(uiSftp, a.sftp, 'UI owns a separate SFTP channel')
+      await a.sftp.start()
+      await uiSftp.start()
+      api.stopResourceSftp(conn.id)
+      assert.equal(await a.sftp.realpath('/'), '/', 'closing UI SFTP preserves Agent SFTP')
+      assert.equal(accepted, 3, 'resource viewing borrows an existing SSH transport')
       api.executions.input('ai-a', idA, 'after-user-close\n')
       await delay(100)
       assert(api.executions.snapshot('ai-a', idA).output.includes('after-user-close'))
@@ -109,6 +133,7 @@ app
       await delay(100)
       assert.equal(a.isActive, false)
       assert(b.isActive, 'unselected Agent remains connected')
+      assert.equal(api.getResourceLink(conn.id), b, 'resources fall back to the surviving Agent')
       assert(api.executions.snapshot('ai-a', idA).terminationRequested)
       assert.equal(api.executions.snapshot('ai-b', idB).terminationRequested, false)
       api.executions.input('ai-b', idB, 'unselected-survives\n')

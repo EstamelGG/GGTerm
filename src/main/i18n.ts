@@ -14,6 +14,8 @@ export type AppLocale = Exclude<LocalePref, 'auto'>
 const en = {
   menu: {
     logPanel: 'Log Panel',
+    openLink: 'Open Link in New Tab',
+    copyLink: 'Copy Link Address',
     terminalFontIncrease: 'Increase Terminal Font',
     terminalFontDecrease: 'Decrease Terminal Font',
     terminalFontReset: 'Reset Terminal Font'
@@ -40,6 +42,8 @@ const en = {
 const zhCN: typeof en = {
   menu: {
     logPanel: '日志面板',
+    openLink: '在新标签页中打开链接',
+    copyLink: '复制链接地址',
     terminalFontIncrease: '增大终端字号',
     terminalFontDecrease: '减小终端字号',
     terminalFontReset: '重置终端字号'

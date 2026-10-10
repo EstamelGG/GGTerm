@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowDownUp, Bot, Gauge, Zap, Network, Plus, FolderOpen } from 'lucide-react'
+import { ArrowDownUp, Bot, Gauge, Zap, Network, Plus } from 'lucide-react'
 import { useResizePreview } from '@/lib/useResizePreview'
 import { cn } from '@/lib/utils'
 import { IconButton } from '@/components/ui/IconButton'
@@ -29,14 +29,13 @@ function loadWidth(): number {
 
 const PANELS = [
   { id: 'ai', icon: Bot, titleKey: 'ai.title' },
-  { id: 'files', icon: FolderOpen, titleKey: 'activity.files' },
   { id: 'performance', icon: Gauge, titleKey: 'activity.performance' },
   { id: 'transfers', icon: ArrowDownUp, titleKey: 'activity.transfers' },
   { id: 'forwards', icon: Network, titleKey: 'forward.title' },
   { id: 'commands', icon: Zap, titleKey: 'activity.commands' }
 ] as const
 
-/** 全局右栏：AI 常驻；文件和性能可独立选择主机，快捷命令跟随最近进入的 shell 主机，传输跨主机汇总。 */
+/** 全局右栏：AI 常驻；性能跟随当前聚焦主机，快捷命令跟随最近进入的 shell 主机，传输跨主机汇总。 */
 export function ActivityRail(): React.JSX.Element {
   const { t } = useTranslation()
   const active = useWorkspaceStore((s) => s.activePanel)
@@ -117,8 +116,8 @@ export function ActivityRail(): React.JSX.Element {
             <AiWorkspacePage />
           </Suspense>
         </div>
-        {active === 'files' || active === 'performance' ? (
-          <HostResourcesPanel panel={active} visible={open} />
+        {active === 'performance' ? (
+          <HostResourcesPanel visible={open} />
         ) : (
           active !== 'ai' && (
             <div className="flex h-full min-w-0 flex-col">

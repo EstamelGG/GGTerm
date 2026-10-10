@@ -36,6 +36,9 @@ export interface ExecutionStart {
  * 注意它不是 execution:* 只读查看器 API 的一部分（查看器永不暴露 stdin）。
  */
 export interface HumanInputRequest {
+  target?: 'browser'
+  tabId?: string
+  url?: string
   sessionId: string
   executionId: string
   hostId: string

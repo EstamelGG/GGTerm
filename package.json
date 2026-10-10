@@ -11,6 +11,7 @@
     "test:smoke": "node tests/run-electron-smoke.cjs",
     "test:browser-tls": "node tests/run-electron-smoke.cjs tests/browser-tls-smoke.cjs",
     "test:browser": "node tests/run-electron-smoke.cjs tests/browser-smoke.cjs",
+    "test:browser-playwright": "node tests/run-electron-smoke.cjs tests/browser-playwright-smoke.cjs",
     "test:execution": "node tests/run-electron-smoke.cjs tests/execution-smoke.cjs",
     "test:connection-isolation": "node tests/run-electron-smoke.cjs tests/connection-isolation-smoke.cjs",
     "test:execution-sdk": "node tests/execution-sdk-smoke.cjs",
@@ -38,6 +39,7 @@
     "i18next": "^26.4.2",
     "iconv-lite": "^0.7.3",
     "node-pty": "^1.1.0",
+    "playwright-core": "^1.64.0",
     "ssh2": "^1.17.0",
     "tar": "^7.5.22",
     "zod": "^4.6.2"

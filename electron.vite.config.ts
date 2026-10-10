@@ -20,7 +20,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve('src/main/index.ts'),
-          tarWorker: resolve('src/main/ssh/tarWorker.ts')
+          tarWorker: resolve('src/main/ssh/tarWorker.ts'),
+          browserPlaywrightWorker: resolve('src/main/browserPlaywrightWorker.ts')
         }
       }
     }

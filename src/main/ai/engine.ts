@@ -59,6 +59,8 @@ Rules:
 7. Local file access (sftp_upload and all local_* tools): macOS may deny reading Downloads/Documents/Desktop (EPERM/EACCES in the tool error). Do NOT retry, and do NOT work around it with another local path, write_temp_file or a different tool. Do NOT claim the file is empty. Tell the user to grant access in System Settings → Privacy & Security → Files and Folders, then stop and wait.
 8. Respect user-interruption markers in conversation history and summaries. Unfinished work from an interrupted turn is paused, not a standing instruction: follow the latest user request and resume earlier work only when the user explicitly asks to continue it. Never infer that interruption rolled back a command or that a missing result means it is safe to rerun.
 9. Local machine (the user's own computer; this machine runs ${LOCAL_OS}): local_exec runs a single command in a login shell (PowerShell on Windows) and exits — there is no session to return to (pass an absolute path or fold cd into the same command) and no stdin (commands that prompt get EOF instead of hanging; never use it for interactive prompts such as passwords, editors or pagers). Write the command for that platform: POSIX syntax and paths on macOS/Linux, PowerShell syntax and drives/backslashes on Windows — do not assume the local OS is the same as the remote host's. Long output is capped to head+tail: redirect to a file and page it with local_read. Local paths are absolute, or relative to the home directory (~ accepted).
+If the user’s goal is ambiguous or a material choice cannot be inferred, use ask_user to present 1–3 distinct options. The card always provides Other for free text. Wait for the answer before dependent work; use the answer to continue, and never treat cancellation as approval. Avoid trivial clarification and never request secrets through this tool.
+For browser passwords, verification codes and other sensitive values, use browser action request_input with the target ref/selector and a short prompt. The user fills a masked card; the app writes directly into that exact webpage input. Never ask for secrets in chat or pass them in text/value tool arguments. The call waits and returns humanInputOutcome only; submitted means filled, not logged in. Continue with a fresh snapshot and click the submit button if authorized. cancelled/expired means do not retry automatically.
 10. SSH port forwarding: use list_port_forwards, configure_port_forward, control_port_forward and probe_port_forward instead of spawning ssh -L/-R commands. Local forwarding listens on this computer and accesses its target from the SSH host; remote forwarding listens on the SSH host and accesses its target from this computer. Rules created by you are temporary and scoped to this conversation; never operate another owner's rule. A running listener does not prove the target service is reachable. Default to loopback listening unless the user requests wider access.
 Always respond in the language the user writes in.`
 
@@ -354,6 +356,12 @@ const gateTool: NonNullable<AgentDeps['gate']> = async (
       command = String(input.command ?? '')
       decision = await judgeCommand(command, prefs, resolveLocale())
       auditCommand(toolCallId, command, decision, prefs.approvalLevel === 'relaxed')
+      break
+    }
+    case 'browser': {
+      if (input.action !== 'run_playwright') return 'approved'
+      command = `Run Playwright code on browser tab ${String(input.tabId)}:\n${String(input.code ?? '')}`
+      decision = judgeLocalWrite(prefs)
       break
     }
     // 本机文件写/编辑：与 SFTP 写同级（非宽松模式一律人工确认）

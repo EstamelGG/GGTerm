@@ -1,4 +1,6 @@
+import type { AgentQuestion } from '../shared/agentQuestion'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import type { BrowserBookmark, BrowserBookmarkInput } from '../shared/browserBookmarks'
 import type { BrowserState, BrowserTab, BrowserBounds, AiBrowserReference } from '../shared/browser'
 import { electronAPI } from '@electron-toolkit/preload'
 import type { EncodingMode, FileEncoding } from '../shared/encoding'
@@ -81,6 +83,21 @@ import type { PortForward, PortForwardAction, PortForwardInput } from '../shared
 /** 渲染进程可用的 API（对照 Swift 层：SwiftData/Keychain/UserDefaults 通道） */
 const api = {
   browser: {
+    bookmarks: {
+      list: (): Promise<BrowserBookmark[]> => ipcRenderer.invoke('browser:bookmarks-list'),
+      save: (input: BrowserBookmarkInput): Promise<BrowserBookmark> =>
+        ipcRenderer.invoke('browser:bookmarks-save', input),
+      update: (id: string, input: Partial<BrowserBookmarkInput>): Promise<BrowserBookmark> =>
+        ipcRenderer.invoke('browser:bookmarks-update', id, input),
+      delete: (id: string): Promise<void> => ipcRenderer.invoke('browser:bookmarks-delete', id),
+      onChanged: (cb: (items: BrowserBookmark[]) => void): (() => void) => {
+        const listener = (_event: unknown, items: BrowserBookmark[]): void => cb(items)
+        ipcRenderer.on('browser:bookmarks-changed', listener)
+        return () => {
+          ipcRenderer.removeListener('browser:bookmarks-changed', listener)
+        }
+      }
+    },
     approveCertificate: (id: string, requestId: string): Promise<BrowserState> =>
       ipcRenderer.invoke('browser:approve-certificate', id, requestId),
     capture: (id: string): Promise<AiBrowserReference> => ipcRenderer.invoke('browser:capture', id),
@@ -100,6 +117,8 @@ const api = {
       ipcRenderer.invoke('browser:navigate', id, url),
     close: (id: string): Promise<BrowserState> => ipcRenderer.invoke('browser:close', id),
     show: (id: string): Promise<BrowserState> => ipcRenderer.invoke('browser:show', id),
+    focus: (id: string): Promise<void> => ipcRenderer.invoke('browser:focus', id),
+    preview: (id: string): Promise<string | null> => ipcRenderer.invoke('browser:preview', id),
     layout: (id: string | null, bounds: BrowserBounds | null): Promise<void> =>
       ipcRenderer.invoke('browser:layout', id, bounds),
     control: (id: string, action: 'back' | 'forward' | 'reload' | 'stop'): Promise<void> =>
@@ -136,6 +155,23 @@ const api = {
    * 人工输入（敏感提示）通道：独立于只读查看器 API。
    * 卡片提交的值由主进程直写 PTY，不经模型 / 不落盘 / 不进输出缓冲。
    */
+  questions: {
+    list: (): Promise<AgentQuestion[]> => ipcRenderer.invoke('question:list'),
+    answer: (sessionId: string, id: string, index: number | null, text?: string): Promise<void> =>
+      ipcRenderer.invoke('question:answer', sessionId, id, index, text),
+    cancel: (sessionId: string, id: string): Promise<void> =>
+      ipcRenderer.invoke('question:cancel', sessionId, id),
+    onRequest: (cb: (request: AgentQuestion) => void): (() => void) => {
+      const listener = (_e: unknown, request: AgentQuestion): void => cb(request)
+      ipcRenderer.on('question:request', listener)
+      return () => ipcRenderer.removeListener('question:request', listener)
+    },
+    onResolved: (cb: (id: string) => void): (() => void) => {
+      const listener = (_e: unknown, id: string): void => cb(id)
+      ipcRenderer.on('question:resolved', listener)
+      return () => ipcRenderer.removeListener('question:resolved', listener)
+    }
+  },
   humanInput: {
     /** 未收尾的待办（启动或刷新后恢复卡片） */
     list: (sessionId?: string): Promise<HumanInputRequest[]> =>
@@ -275,8 +311,11 @@ const api = {
     parseConfig: (): Promise<SshConfigHost[]> => ipcRenderer.invoke('sshConfig:parse')
   },
   hosts: {
-    connect: (conn: HostConnection): Promise<{ awaiting: boolean }> =>
-      ipcRenderer.invoke('host:connect', conn),
+    connect: (
+      conn: HostConnection,
+      inspectOnly = false
+    ): Promise<{ awaiting: boolean; viewerOnly?: boolean; phase?: HostStateEvent['phase'] }> =>
+      ipcRenderer.invoke('host:connect', conn, inspectOnly),
     /** 全部链路状态快照（拓扑图初始化：phase + 进入时刻 + 重试次数 + 失败原因） */
     listLinks: (): Promise<HostLinkSnapshot[]> => ipcRenderer.invoke('links:list'),
     submitAuth: (
