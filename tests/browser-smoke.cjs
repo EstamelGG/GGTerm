@@ -2,7 +2,8 @@ const assert = require('node:assert/strict')
 const path = require('node:path')
 const fs = require('node:fs')
 const http = require('node:http')
-const { app, BrowserWindow, webContents, Menu } = require('electron')
+const { app, BrowserWindow, webContents, Menu, Notification } = require('electron')
+Notification.isSupported = () => false // Notification behavior has isolated tests; avoid desktop alerts.
 const deadline = setTimeout(() => app.exit(1), 60000)
 app
   .whenReady()
@@ -34,6 +35,13 @@ app
     console.log('Browser smoke: Electron ready')
     const browser = require(bundle)
     const server = http.createServer((req, res) => {
+      if (req.url === '/resize') {
+        res.setHeader('Content-Type', 'text/html')
+        res.end(
+          '<!doctype html><title>Resize</title><div style="width:1600px;height:1800px">Wide content</div>'
+        )
+        return
+      }
       if (req.url.startsWith('/frames')) {
         res.setHeader('Content-Type', 'text/html; charset=utf-8')
         if (req.url === '/frames') {
@@ -101,6 +109,40 @@ app
     browser.installBrowser(win)
     const url = `http://127.0.0.1:${server.address().port}`
     try {
+      const resizable = await browser.openBrowser(url + '/resize')
+      const resizingView = win.contentView.children
+        .flatMap((view) => [view, ...view.children])
+        .find((view) => view.webContents?.getURL().endsWith('/resize'))
+      await browser.runBrowserPlaywright(
+        resizable.id,
+        'return await page.evaluate(() => innerWidth)',
+        3000
+      )
+      for (const [width, height] of [
+        [520, 400],
+        [1000, 700]
+      ]) {
+        resizingView.setBounds({ x: 20, y: 20, width, height })
+        resizingView.setVisible(true)
+        await resizingView.webContents.debugger.sendCommand('Emulation.clearDeviceMetricsOverride')
+        await new Promise((r) => setTimeout(r, 100))
+        await browser.runBrowserPlaywright(
+          resizable.id,
+          'return await page.evaluate(() => innerWidth)',
+          3000
+        )
+        const metrics = await browser.evaluateBrowserScript(
+          resizingView.webContents,
+          '({width:innerWidth,height:innerHeight,scale:visualViewport.scale,font:getComputedStyle(document.body).fontSize,scrollWidth:document.documentElement.scrollWidth,scrollHeight:document.documentElement.scrollHeight})'
+        )
+        assert.equal(metrics.width, width)
+        assert.equal(metrics.height, height)
+        assert.equal(metrics.scale, 1)
+        assert.equal(metrics.font, '16px')
+        assert.ok(metrics.scrollWidth >= 1600)
+        assert.ok(metrics.scrollHeight >= 1800)
+      }
+      browser.closeBrowser(resizable.id)
       const blank = await browser.openBrowser('about:blank')
       const anotherBlank = await browser.openBrowser('about:blank')
       assert.notEqual(blank.id, anotherBlank.id)
@@ -172,9 +214,9 @@ app
         frameAct('wait', { selector: '.el-table', timeoutMs: 100 }),
         /frames.*matched.*0/
       )
-      const framedView = win.contentView.children.find(
-        (v) => v.webContents?.getURL() === url + '/frames'
-      )
+      const framedView = win.contentView.children
+        .flatMap((view) => [view, ...view.children])
+        .find((v) => v.webContents?.getURL() === url + '/frames')
       framedView.setBounds({ x: 20, y: 20, width: 1000, height: 700 })
       win.show()
       framedView.setVisible(true)
@@ -417,9 +459,9 @@ app
       assert.equal(browser.browserState().foregroundId, null)
       assert.equal(win.isVisible(), false)
       browser.showBrowser(interactive.id)
-      const interactiveView = win.contentView.children.find((view) =>
-        view.webContents?.getURL().endsWith('/interact')
-      )
+      const interactiveView = win.contentView.children
+        .flatMap((view) => [view, ...view.children])
+        .find((view) => view.webContents?.getURL().endsWith('/interact'))
       interactiveView.setBounds({ x: 0, y: 0, width: 1000, height: 700 })
       interactiveView.setVisible(true)
       await new Promise((resolve) => setTimeout(resolve, 100))
@@ -443,6 +485,8 @@ app
         'getSelection().toString()'
       )
       assert.match(selectedText, /Selectable/)
+      const originalIsFocused = win.isFocused
+      win.isFocused = () => true // Simulate a user context-menu interaction in the active app.
       const originalBuildMenu = Menu.buildFromTemplate
       let contextItems
       Menu.buildFromTemplate = (items) => {
@@ -468,11 +512,12 @@ app
         assert.ok(contextItems.find((item) => item.role === 'selectAll'))
       } finally {
         Menu.buildFromTemplate = originalBuildMenu
+        win.isFocused = originalIsFocused
       }
       await browser.withBrowserControl(interactive.id, async () => {
-        const overlay = win.contentView.children.find((view) =>
-          view.webContents?.getURL().startsWith('data:text/html')
-        )
+        const overlay = win.contentView.children
+          .flatMap((view) => [view, ...view.children])
+          .find((view) => view.webContents?.getURL().startsWith('data:text/html'))
         assert.equal(
           browser.browserState().tabs.find((tab) => tab.id === interactive.id).controlling,
           true
@@ -488,9 +533,9 @@ app
         browser.browserState().tabs.find((tab) => tab.id === interactive.id).controlling,
         false
       )
-      const overlay = win.contentView.children.find((view) =>
-        view.webContents?.getURL().startsWith('data:text/html')
-      )
+      const overlay = win.contentView.children
+        .flatMap((view) => [view, ...view.children])
+        .find((view) => view.webContents?.getURL().startsWith('data:text/html'))
       assert.equal(overlay.getVisible(), false)
       await assert.rejects(
         browser.withBrowserControl(interactive.id, async () => {
@@ -517,7 +562,8 @@ app
         const original = object[key]
         object[key] = value
       }
-      patch(win, 'isFocused', () => false)
+      let appActive = false
+      patch(win, 'isFocused', () => appActive)
       patch(win, 'focus', () => {
         focusCalls++
       })
@@ -539,6 +585,12 @@ app
         interactiveView.setVisible(true)
         await browser.withBrowserControl(interactive.id, async () => {
           assert.equal(overlay.getVisible(), true)
+          assert.equal(focusCalls, 0)
+          appActive = true
+          win.emit('focus')
+          assert.equal(focusCalls, 1, 'returning to the app restores the control overlay')
+          appActive = false
+          focusCalls = 0
         })
         await browser.navigateBrowser(interactive.id, url + '/interact?background-reload')
         assert.equal(focusCalls, 0, 'loading and overlay updates cannot focus the app')
@@ -547,8 +599,8 @@ app
         assert.equal(focusCalls, 0, 'page-initiated tabs cannot focus the app')
         browser.closeBrowser(passive.id)
         browser.showBrowser(interactive.id)
-        assert.equal(showCalls, 1, 'explicit show remains available')
-        assert.equal(focusCalls, 1, 'explicit show can activate the app')
+        assert.equal(showCalls, 0, 'show selects a tab without raising the app')
+        assert.equal(focusCalls, 0, 'show cannot activate the app')
       } finally {
         for (const restore of originals.reverse()) restore()
       }
@@ -573,7 +625,7 @@ app
       browser.closeBrowser(interactive.id)
       browser.showBrowser(first.id)
       assert.equal(browser.browserState().foregroundId, first.id)
-      assert.equal(win.isVisible(), true)
+      // Selecting a tab leaves native window visibility unchanged.
       const second = await browser.openBrowser(url)
       assert.equal(browser.browserState().foregroundId, first.id)
       await assert.rejects(browser.openBrowser('file:///etc/passwd'), /HTTP/)

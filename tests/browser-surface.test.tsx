@@ -25,7 +25,9 @@ const bounds = (x: number, y: number, width: number, height: number): DOMRect =>
     top: y,
     right: x + width,
     bottom: y + height,
-    toJSON() {}
+    toJSON() {
+      return undefined
+    }
   }) as DOMRect
 beforeEach(() => {
   layout.mockClear()
@@ -33,8 +35,12 @@ beforeEach(() => {
   vi.stubGlobal(
     'ResizeObserver',
     class {
-      observe(): void {}
-      disconnect(): void {}
+      observe(): void {
+        return undefined
+      }
+      disconnect(): void {
+        return undefined
+      }
     }
   )
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
@@ -102,4 +108,13 @@ it('does not replace a new tab snapshot with a late capture from the previous ta
   })
   expect(screen.queryByText('old-image')).toBeNull()
   expect(layout).toHaveBeenLastCalledWith('new', expect.any(Object))
+})
+
+it('uses the available pane dimensions without a fixed canvas limit', () => {
+  render(<Surface />)
+  vi.spyOn(screen.getByTestId('page'), 'getBoundingClientRect').mockReturnValue(
+    bounds(200, 100, 1500, 900)
+  )
+  act(() => window.dispatchEvent(new Event('resize')))
+  expect(layout).toHaveBeenLastCalledWith('page', { x: 200, y: 100, width: 1500, height: 900 })
 })

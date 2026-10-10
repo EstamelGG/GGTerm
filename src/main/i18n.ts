@@ -12,6 +12,12 @@ import { getPreferences, setPreferences } from './data/prefs'
 export type AppLocale = Exclude<LocalePref, 'auto'>
 
 const en = {
+  browserNotice: {
+    certificateTitle: 'Browser certificate needs review',
+    certificateBody: 'Review the certificate for {{host}} in GGTerm to continue.',
+    pageTitle: 'Browser page ready to view',
+    pageBody: 'A browser tab has been selected in GGTerm. Click to view it.'
+  },
   menu: {
     logPanel: 'Log Panel',
     openLink: 'Open Link in New Tab',
@@ -40,6 +46,12 @@ const en = {
 }
 
 const zhCN: typeof en = {
+  browserNotice: {
+    certificateTitle: '浏览器证书需要确认',
+    certificateBody: '请在 GGTerm 中检查 {{host}} 的证书后继续。',
+    pageTitle: '有浏览器页面待查看',
+    pageBody: 'GGTerm 已选中一个浏览器标签页，点击查看。'
+  },
   menu: {
     logPanel: '日志面板',
     openLink: '在新标签页中打开链接',

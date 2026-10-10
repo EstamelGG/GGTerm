@@ -18,8 +18,6 @@ void (async () => {
   const browser = await chromium.connectOverCDP(transport, { timeout: 10000 })
   const page = browser.contexts()[0]?.pages()[0]
   if (!page) throw new Error('Browser page is unavailable')
-  const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
-  if (!viewport.width || !viewport.height) await page.setViewportSize({ width: 1280, height: 800 })
   page.setDefaultTimeout(workerData.timeoutMs)
   page.setDefaultNavigationTimeout(workerData.timeoutMs)
   const logs: string[] = []

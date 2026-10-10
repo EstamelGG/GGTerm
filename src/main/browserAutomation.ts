@@ -73,6 +73,7 @@ export async function browserSnapshot(
   full = true
 ): Promise<unknown> {
   await requireBrowserDocument(wc)
+  await ensureBrowserViewport(wc)
   const raw = await evaluate<PageSnapshot>(
     wc,
     `
@@ -192,21 +193,25 @@ export async function evaluateBrowserScript<T>(
   })
 }
 
-/** Give background pages a viewport before reading responsive iframe layouts. */
-export async function ensureBrowserViewport(wc: WebContents): Promise<void> {
+/** Hidden native views can report zero size; visible views always use their actual bounds. */
+export async function ensureBrowserViewport(wc: WebContents, visible = false): Promise<void> {
+  if (visible) {
+    await protocol(wc, (send) => send('Emulation.clearDeviceMetricsOverride', {}))
+    return
+  }
   const viewport = await evaluateBrowserScript<{ width: number; height: number }>(
     wc,
     '({width:innerWidth,height:innerHeight})'
   )
   if (!viewport.width || !viewport.height)
-    await protocol(wc, async (send) => {
-      await send('Emulation.setDeviceMetricsOverride', {
+    await protocol(wc, (send) =>
+      send('Emulation.setDeviceMetricsOverride', {
         width: 1280,
         height: 800,
-        deviceScaleFactor: 1,
+        deviceScaleFactor: 0,
         mobile: false
       })
-    })
+    )
 }
 
 async function perform(
@@ -332,8 +337,8 @@ export async function automateBrowser(
   return withBrowserQueue(wc, () =>
     protocol(wc, async (send) => {
       signal?.throwIfAborted()
-      await ensureBrowserViewport(wc)
       await send('Emulation.setFocusEmulationEnabled', { enabled: true })
+      await ensureBrowserViewport(wc)
       return perform(wc, args, signal)
     })
   )

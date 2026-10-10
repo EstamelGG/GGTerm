@@ -1,4 +1,5 @@
 import { browserDOM } from './browserDOM'
+import { notifyBrowserAttention, clearBrowserAttention } from './browserAttention'
 import { runPlaywright, replyPlaywrightDialog } from './browserPlaywright'
 import { browserHumanInputs } from './ai/browserHumanInput'
 import {
@@ -98,6 +99,19 @@ const onCertificateError = (
         validTo: certificate.validExpiry * 1000
       }
       callback(false)
+      const id = [...tabs].find(([, entry]) => entry === tab)?.[0]
+      if (id && window)
+        notifyBrowserAttention(
+          window,
+          `${id}:certificate:${origin}:${fingerprint}`,
+          t('browserNotice.certificateTitle'),
+          t('browserNotice.certificateBody', { host: new URL(url).host }),
+          () => {
+            if (!tabs.has(id) || !tab.certificateError) return false
+            showBrowser(id, false)
+            return true
+          }
+        )
     }
     publish()
   } catch {
@@ -228,7 +242,7 @@ export async function withBrowserControl<T>(id: string, work: () => Promise<T>):
     publish()
   }
 }
-export function showBrowser(id: string, activateWindow = true): BrowserState {
+export function showBrowser(id: string, notify = true): BrowserState {
   get(id)
   foregroundId = id
   for (const [key, tab] of tabs)
@@ -238,17 +252,25 @@ export function showBrowser(id: string, activateWindow = true): BrowserState {
     }
   publish()
   window?.webContents.send('browser:show-request', id)
-  if (activateWindow) {
-    window?.show()
-    window?.focus()
-  }
+  if (notify && window && !get(id).certificateError)
+    notifyBrowserAttention(
+      window,
+      `${id}:show`,
+      t('browserNotice.pageTitle'),
+      t('browserNotice.pageBody'),
+      () => {
+        if (!tabs.has(id)) return false
+        showBrowser(id, false)
+        return true
+      }
+    )
   return browserState()
 }
 export async function openBrowser(
   url: string,
   foreground = false,
   signal?: AbortSignal,
-  activateWindow = true
+  notify = true
 ): Promise<BrowserTab> {
   const target = browserUrl(url)
   if (!window || window.isDestroyed()) throw new Error('Application window is unavailable')
@@ -262,6 +284,8 @@ export async function openBrowser(
       nodeIntegration: false
     }
   })
+  // Give background tabs a usable initial viewport; visible tabs follow their pane size.
+  view.setBounds({ x: 0, y: 0, width: 1280, height: 800 })
   parkBrowserView(view)
   window.contentView.addChildView(view)
   const tab: BrowserTabEntry = { view, requestedUrl: target }
@@ -355,7 +379,7 @@ export async function openBrowser(
     }
   })
   publish()
-  if (foreground) showBrowser(id, activateWindow)
+  if (foreground) showBrowser(id, notify)
   try {
     void wc.loadURL(target).catch(() => {})
     await waitForBrowserDocument(wc, signal)
@@ -387,6 +411,7 @@ export function closeBrowser(id: string): BrowserState {
     window?.contentView.removeChildView(tab.overlay)
     tab.overlay.webContents.close()
   }
+  clearBrowserAttention(`${id}:`)
   tabs.delete(id)
   if (foregroundId === id) foregroundId = null
   publish()
@@ -395,7 +420,7 @@ export function closeBrowser(id: string): BrowserState {
 function assertBrowserCertificate(id: string): void {
   if (get(id).certificateError)
     throw new Error(
-      'TLS certificate verification failed. Show this tab and ask the user to review and manually allow the certificate in the browser UI.'
+      'TLS certificate verification failed. A system notification was requested when the app is in the background. Ask the user to manually review and allow the certificate in the browser UI; do not repeatedly call show or reload.'
     )
 }
 /** Called only by the app UI IPC; there is intentionally no Agent tool for certificate approval. */
@@ -407,6 +432,7 @@ export async function approveBrowserCertificate(
   const certificate = tab.certificateError
   if (!certificate || certificate.requestId !== requestId)
     throw new Error('Certificate request has changed; review the current certificate again')
+  clearBrowserAttention(`${id}:certificate:`)
   certificateApprovals.add(certificateKey(certificate.origin, certificate.fingerprint))
   // Verification results are cached. Reinstall the verifier after changing trust.
   const browserSession = tab.view.webContents.session
@@ -461,7 +487,10 @@ export async function runBrowserPlaywright(
 ): Promise<unknown> {
   assertBrowserCertificate(id)
   const wc = get(id).view.webContents
-  return withBrowserQueue(wc, () => runPlaywright(wc, code, timeoutMs, signal))
+  return withBrowserQueue(wc, async () => {
+    await ensureBrowserViewport(wc)
+    return runPlaywright(wc, code, timeoutMs, signal)
+  })
 }
 export async function requestBrowserInput(
   id: string,
@@ -574,15 +603,24 @@ export async function pickBrowserElement(
 export function installBrowser(target: BrowserWindow): void {
   // Window destruction can emit "closed" after the replacement window has already been installed.
   app.removeListener('certificate-error', onCertificateError)
+  clearBrowserAttention()
   certificateApprovals.clear()
   const previousTabs = [...tabs.values()]
   tabs.clear()
   for (const tab of previousTabs) {
+    if (window && !window.isDestroyed()) window.contentView.removeChildView(tab.view)
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close()
     if (tab.overlay && !tab.overlay.webContents.isDestroyed()) tab.overlay.webContents.close()
   }
   foregroundId = null
   window = target
+  target.on('focus', () => {
+    if (window !== target) return
+    // When the user returns during an Agent operation, keep keyboard input on the overlay.
+    for (const tab of tabs.values()) {
+      if (tab.controls && tab.overlay?.getVisible()) focusBrowserContent(tab.overlay.webContents)
+    }
+  })
   offBookmarks?.()
   offBookmarks = onBrowserBookmarksChanged((items) => {
     if (!target.isDestroyed()) target.webContents.send('browser:bookmarks-changed', items)
@@ -599,6 +637,7 @@ export function installBrowser(target: BrowserWindow): void {
     offBookmarks?.()
     offBookmarks = undefined
     app.removeListener('certificate-error', onCertificateError)
+    clearBrowserAttention()
     certificateApprovals.clear()
     const closingTabs = [...tabs.values()]
     tabs.clear()
@@ -663,7 +702,7 @@ export function registerBrowserIpc(): void {
     const tab = get(id)
     if (!tab.controls && tab.view.getVisible()) focusBrowserContent(tab.view.webContents)
   })
-  handle('layout', (id: string | null, bounds: BrowserBounds | null) => {
+  handle('layout', async (id: string | null, bounds: BrowserBounds | null) => {
     for (const [key, tab] of tabs) {
       const visible =
         key === id &&
@@ -673,18 +712,18 @@ export function registerBrowserIpc(): void {
         browserDocumentReady(tab.view.webContents)
       if (visible) {
         const scale = window!.webContents.getZoomFactor()
-        tab.view.setBounds(
-          Object.fromEntries(
-            Object.entries(bounds!).map(([key, value]) => [
-              key,
-              Math.max(0, Math.round(value * scale))
-            ])
-          ) as unknown as BrowserBounds
-        )
+        tab.view.setBounds({
+          x: Math.round(bounds!.x * scale),
+          y: Math.round(bounds!.y * scale),
+          width: Math.round(bounds!.width * scale),
+          height: Math.round(bounds!.height * scale)
+        })
+        await ensureBrowserViewport(tab.view.webContents, true)
       }
       if (!visible) void cancelBrowserPicker(key).catch(() => {})
-      if (visible) tab.view.setVisible(true)
-      else parkBrowserView(tab.view)
+      if (visible) {
+        tab.view.setVisible(true)
+      } else parkBrowserView(tab.view)
       updateControlOverlay(tab)
     }
   })

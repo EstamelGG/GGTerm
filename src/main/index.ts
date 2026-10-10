@@ -91,7 +91,7 @@ function createWindow(): void {
     ipcMain.removeListener('app:confirm-close', approve)
   })
   mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
+    mainWindow.showInactive()
   })
   // 开发期把渲染层 console 转发到终端，便于排障
   if (is.dev) {
