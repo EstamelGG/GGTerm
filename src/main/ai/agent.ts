@@ -132,6 +132,8 @@ export interface AgentSessionRecord {
   updatedAt: number
   messages: AiUIMessage[]
   contextSummary?: ContextSummary
+  /** Learned total input budget, in estimator units, per model and configured window. */
+  contextInputLimits?: Record<string, number>
 }
 
 /** 进行中回合：done 置位后本会话可开启新回合 */
@@ -200,11 +202,29 @@ function persist(s: Session): void {
   // 删除会话后，迟到的回合收尾不得重新创建文件。
   if (sessions.get(s.id) !== s) return
   s.updatedAt = Date.now()
-  const { id, title, titledAt, createdAt, updatedAt, messages, contextSummary } = s
+  const {
+    id,
+    title,
+    titledAt,
+    createdAt,
+    updatedAt,
+    messages,
+    contextSummary,
+    contextInputLimits
+  } = s
   const p = sessionPath(s.id)
   writeFileSync(
     `${p}.tmp`,
-    JSON.stringify({ id, title, titledAt, createdAt, updatedAt, messages, contextSummary })
+    JSON.stringify({
+      id,
+      title,
+      titledAt,
+      createdAt,
+      updatedAt,
+      messages,
+      contextSummary,
+      contextInputLimits
+    })
   )
   renameSync(`${p}.tmp`, p)
 }
@@ -318,23 +338,47 @@ async function summarizeContext(
   budget: number
 ): Promise<string> {
   if (turn.contextUsage) reportContext(s, turn, { ...turn.contextUsage, phase: 'compressing' })
-  // Retry malformed/truncated summaries once with a stronger size instruction.
-  // Never truncate a summary locally: doing so can erase constraints or task state.
-  for (let attempt = 0; attempt < 2; attempt++) {
+  // Visible summary size and generation budget are different: reasoning models
+  // can consume the output allowance before producing any summary text.
+  const summaryTokens = Math.max(32, Math.min(2048, Math.floor(budget * 0.15)))
+  const prompt = `Previous summary:\n${previous}\n\nNext transcript fragment (may continue across fragments):\n${transcript}`
+  const system = `${SUMMARY_INSTRUCTIONS}\nKeep the summary within ${summaryTokens * 2} UTF-8 bytes. Write short factual bullets; do not explain your summarization process.`
+  const availableOutput = Math.max(
+    128,
+    Math.floor(turn.contextSettings.contextWindow / turn.tokenScale) -
+      estimateTokens(prompt) -
+      estimateTokens(system) -
+      512
+  )
+  let failure = ''
+  // Never accept truncated summaries or discard earlier history on failure.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    turn.controller.signal.throwIfAborted()
+    const maxOutputTokens = Math.min(8192, availableOutput, 2048 * 2 ** attempt)
     const result = await generateText({
       model: turn.model ?? requireDeps().getModel(),
-      system: `${SUMMARY_INSTRUCTIONS}\nKeep the summary within ${Math.max(128, Math.floor(budget * 0.3))} UTF-8 bytes. ${attempt ? 'The previous attempt did not fit. Use shorter factual bullets and omit all verbose logs.' : ''}`,
-      prompt: `Previous summary:\n${previous}\n\nNext transcript fragment (may continue across fragments):\n${transcript}`,
+      system: `${system}${attempt ? `\nPrevious attempt failed: ${failure}. Produce a complete, shorter summary with only essential facts.` : ''}`,
+      prompt,
       abortSignal: turn.controller.signal,
       maxRetries: 0,
-      maxOutputTokens: Math.max(128, Math.min(2048, Math.floor(budget * (attempt ? 0.2 : 0.1))))
+      maxOutputTokens
     })
     const text = result.text.trim()
-    if (result.finishReason !== 'length' && text && estimateTokens(text) <= budget * 0.2)
-      return text
+    if (result.finishReason === 'stop' && text && estimateTokens(text) <= budget * 0.2) return text
+    failure =
+      result.finishReason === 'length'
+        ? 'generation reached the output limit'
+        : !text
+          ? 'no summary text was returned'
+          : estimateTokens(text) > budget * 0.2
+            ? 'summary exceeded the allowed size'
+            : `unexpected finish reason: ${result.finishReason}`
+    requireDeps().onLog?.(
+      `Context summary attempt ${attempt + 1}/3 failed: ${failure}; outputLimit=${maxOutputTokens}, summaryEstimate=${estimateTokens(text)}, finishReason=${result.finishReason}`
+    )
   }
   throw new Error(
-    'Context compression failed: summary is empty, truncated or too large. / 上下文压缩失败：摘要为空、被截断或过长。'
+    `Context compression failed after 3 attempts (${failure}). Original conversation is preserved; retry or check the model output limit. / 上下文压缩重试 3 次仍失败，原始对话已保留，请重试或检查模型输出限制。`
   )
 }
 
@@ -379,12 +423,20 @@ function agentFor(s: Session): ToolLoopAgent {
     // Recovery owns deadlines and retry budgets; avoid nested SDK request retries.
     maxRetries: 0,
     // 每一步重新检查：工具循环也可能在单轮内填满窗口。
-    prepareStep: async ({ messages, stepNumber }) => {
+    prepareStep: async ({ initialMessages, responseMessages }) => {
+      // Always summarize against the full history, so persisted prefix offsets remain valid.
+      const messages = pruneMessages({
+        messages: [...initialMessages, ...responseMessages],
+        reasoning: 'before-last-message'
+      })
       const instructions = typeof d.instructions === 'function' ? d.instructions() : d.instructions
       const promptTokens = toolTokens + estimateTokens(instructions)
       const turn = s.turn!
       const { contextWindow, autoCompress } = turn.contextSettings
-      const budget = Math.floor((contextWindow * 0.7) / turn.tokenScale) - promptTokens
+      const learnedLimit = s.contextInputLimits?.[`${turn.modelKey}:${contextWindow}`]
+      const budget =
+        Math.floor(Math.min((contextWindow * 0.7) / turn.tokenScale, learnedLimit ?? Infinity)) -
+        promptTokens
       const usage: AiContextUsage = {
         modelKey: turn.modelKey,
         contextWindow,
@@ -401,7 +453,7 @@ function agentFor(s: Session): ToolLoopAgent {
         messages,
         budget,
         autoCompress,
-        cached: stepNumber === 0 ? s.contextSummary : undefined,
+        cached: s.contextSummary,
         signal: turn.controller.signal,
         summarize: (transcript, previous, summaryBudget) =>
           summarizeContext(s, turn, transcript, previous, summaryBudget)
@@ -412,7 +464,7 @@ function agentFor(s: Session): ToolLoopAgent {
       })
       turn.estimatedInputTokens = promptTokens + estimateTokens(fitted.messages)
       if (fitted.compressed) turn.contextCompressed = true
-      if (stepNumber === 0 && fitted.summary) {
+      if (fitted.summary && fitted.summary !== s.contextSummary) {
         s.contextSummary = fitted.summary
         persist(s)
       }
@@ -541,6 +593,17 @@ async function runTurn(
         ] as typeof params.prompt
         turn.contextCompressed = true
         turn.estimatedInputTokens = estimateTokens(prompt) + estimateTokens(params.tools ?? [])
+        // Provider repair bypasses prepareStep. Carry its smaller budget into subsequent
+        // steps/turns (including after restart), instead of restoring the rejected size.
+        const limitKey = `${turn.modelKey}:${turn.contextSettings.contextWindow}`
+        s.contextInputLimits ??= {}
+        s.contextInputLimits[limitKey] = Math.min(
+          s.contextInputLimits[limitKey] ?? Infinity,
+          estimateTokens(system) +
+            estimateTokens(params.tools ?? []) +
+            Math.max(1024, estimateTokens(fitted.messages))
+        )
+        persist(s)
         if (turn.contextUsage)
           reportContext(s, turn, {
             ...turn.contextUsage,

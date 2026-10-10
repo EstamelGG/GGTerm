@@ -368,6 +368,84 @@ describe('agent（离线 mock 模型）', () => {
     expect(model.doGenerateCalls).toHaveLength(summaries)
   })
 
+  it('工具循环中压缩的摘要跨步骤、跨回合复用，保留完整工具结果', async () => {
+    const model = new MockLanguageModelV3({
+      doGenerate: async () => ({
+        content: [{ type: 'text', text: 'Read large logs; task remains in progress.' }],
+        finishReason: { unified: 'stop', raw: undefined },
+        usage,
+        warnings: []
+      }),
+      doStream: [
+        step([toolCall('large', 'logs'), finish('tool-calls')]),
+        step([toolCall('small', 'logs'), finish('tool-calls')]),
+        step([...textStep('done'), finish('stop')]),
+        step([...textStep('next'), finish('stop')])
+      ]
+    })
+    let count = 0
+    reinit(
+      model,
+      [
+        {
+          name: 'logs',
+          description: 'Read logs',
+          parameters: z.object({}),
+          handler: async () => (++count === 1 ? 'large-log '.repeat(3000) : 'done')
+        }
+      ],
+      { getContextSettings: () => ({ contextWindow: 8192, autoCompress: true }) }
+    )
+    const session = createAgentSession()
+    await collect(startTurn(session.id, [user('Read logs')]))
+    const record = getAgentSession(session.id)
+    expect(record.contextSummary).toBeDefined()
+    expect(JSON.stringify(model.doStreamCalls[2].prompt)).not.toContain('large-log large-log')
+    expect(JSON.stringify(record.messages)).toContain('large-log large-log')
+    const summaries = model.doGenerateCalls.length
+    await collect(startTurn(session.id, [...record.messages, user('Continue')]))
+    expect(model.doGenerateCalls).toHaveLength(summaries)
+    expect(JSON.stringify(model.doStreamCalls[3].prompt)).not.toContain('large-log large-log')
+  })
+
+  it('摘要推理耗尽输出额度后提高预算重试，完整摘要才写入缓存', async () => {
+    let attempts = 0
+    const model = new MockLanguageModelV3({
+      doGenerate: async () => {
+        attempts++
+        return {
+          content:
+            attempts < 3
+              ? [{ type: 'reasoning' as const, text: 'Reasoning consumed the output allowance' }]
+              : [{ type: 'text' as const, text: 'Earlier work completed; continue request B.' }],
+          finishReason: {
+            unified: attempts < 3 ? ('length' as const) : ('stop' as const),
+            raw: undefined
+          },
+          usage,
+          warnings: []
+        }
+      },
+      doStream: async () => step([...textStep('B completed'), finish('stop')])
+    })
+    reinit(model, [], { getContextSettings: () => ({ contextWindow: 32768, autoCompress: true }) })
+    const session = createAgentSession()
+    const old: AiUIMessage = {
+      id: 'old',
+      role: 'assistant',
+      parts: [{ type: 'text', text: 'old logs '.repeat(10000) }]
+    }
+    await collect(startTurn(session.id, [user('A'), old, user('B')]))
+    expect(model.doGenerateCalls.slice(0, 3).map((call) => call.maxOutputTokens)).toEqual([
+      2048, 4096, 8192
+    ])
+    expect(getAgentSession(session.id).contextSummary?.text).toBe(
+      'Earlier work completed; continue request B.'
+    )
+    expect(getAgentSession(session.id).messages[1].parts).toEqual(old.parts)
+    expect(JSON.stringify(model.doStreamCalls[0].prompt)).not.toContain('Reasoning consumed')
+  })
+
   it('网络失败后同一会话能够继续，新回合不会保留忙碌锁', async () => {
     let fail = true
     const model = new MockLanguageModelV3({

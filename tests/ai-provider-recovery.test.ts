@@ -256,6 +256,18 @@ it('provider overflow below the configured threshold compacts and retries withou
   expect(JSON.stringify(model.doStreamCalls[1].prompt)).not.toContain('old logs old logs')
   expect(getAgentSession(session.id).messages[1].parts).toEqual(old.parts)
   expect(getAgentSession(session.id).messages.at(-1)?.metadata?.contextCompressed).toBe(true)
+  expect(getAgentSession(session.id).contextInputLimits).toBeDefined()
+  // Reload the session from disk: the reduced budget must survive a restart.
+  initAgent({ storageDir: dir, getModel: () => model, tools: [], instructions: 'Test' })
+  await drain(startTurn(session.id, [...getAgentSession(session.id).messages, user('Continue')]))
+  expect(calls).toBe(3)
+  expect(JSON.stringify(model.doStreamCalls[2].prompt)).not.toContain('old logs old logs')
+  expect(getAgentSession(session.id).contextSummary).toBeDefined()
+  const summaries = model.doGenerateCalls.length
+  await drain(
+    startTurn(session.id, [...getAgentSession(session.id).messages, user('Continue again')])
+  )
+  expect(model.doGenerateCalls).toHaveLength(summaries)
 })
 
 it('recovers an actual OpenAI-compatible SSE disconnection against a local server', async () => {
@@ -395,7 +407,9 @@ it('retries a truncated summary with a stricter size instruction', async () => {
       user('Current')
     ])
   )
-  expect(JSON.stringify(model.doGenerateCalls[1].prompt)).toContain('previous attempt did not fit')
+  expect(JSON.stringify(model.doGenerateCalls[1].prompt)).toContain(
+    'Previous attempt failed: generation reached the output limit'
+  )
   expect(getAgentSession(session.id).messages.at(-1)?.metadata?.error).toBeUndefined()
 })
 
