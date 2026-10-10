@@ -14,6 +14,7 @@ import {
 } from 'recharts'
 import { CopyIconButton } from '@/components/ui/IconButton'
 import { cn } from '@/lib/utils'
+import { networkChart } from '@/lib/networkChart'
 import { usePerfStore } from '@/stores/perf'
 import { useConnectionsStore } from '@/stores/connections'
 import { fmtBytes, fmtSpeed } from '../format'
@@ -174,7 +175,7 @@ export function PerformancePanel({ hostId }: { hostId: string }): React.JSX.Elem
 
   const gpus = gpuSample?.gpus ?? []
   const cpuData = (history?.cpu ?? []).map((p) => ({ t: p.t, v: p.v }))
-  const netData = (history?.net ?? []).map((p) => ({ t: p.t, rx: p.rx, tx: p.tx }))
+  const { points: netData, bridges: netBridges } = networkChart(history?.net ?? [])
 
   // 固定 5 分钟滑动窗口（右对齐最新样本）：数据从右进入、向左滑出，缺失部分留空
   const xDomain: [number, number] = [sample.t - WINDOW_MS, sample.t]
@@ -385,12 +386,16 @@ export function PerformancePanel({ hostId }: { hostId: string }): React.JSX.Elem
           <span className="flex items-center gap-1.5 text-caption text-muted">
             <span className="h-2 w-2 rounded-full" style={{ background: C_OK }} />
             {t('activity.perfNetDown')}
-            <span className="font-mono text-fg">{fmtSpeed(sample.netRx ?? 0)}</span>
+            <span className="font-mono text-fg">
+              {sample.netRx == null ? '—' : fmtSpeed(sample.netRx)}
+            </span>
           </span>
           <span className="flex items-center gap-1.5 text-caption text-muted">
             <span className="h-2 w-2 rounded-full" style={{ background: C_DANGER }} />
             {t('activity.perfNetUp')}
-            <span className="font-mono text-fg">{fmtSpeed(sample.netTx ?? 0)}</span>
+            <span className="font-mono text-fg">
+              {sample.netTx == null ? '—' : fmtSpeed(sample.netTx)}
+            </span>
           </span>
         </div>
         <div className="h-16">
@@ -419,6 +424,7 @@ export function PerformancePanel({ hostId }: { hostId: string }): React.JSX.Elem
               <Line
                 type="monotone"
                 dataKey="rx"
+                connectNulls={false}
                 stroke={C_OK}
                 strokeWidth={1.5}
                 dot={false}
@@ -427,11 +433,28 @@ export function PerformancePanel({ hostId }: { hostId: string }): React.JSX.Elem
               <Line
                 type="monotone"
                 dataKey="tx"
+                connectNulls={false}
                 stroke={C_DANGER}
                 strokeWidth={1.5}
                 dot={false}
                 isAnimationActive={false}
               />
+              {netBridges.map(({ key, series }) => (
+                <Line
+                  key={key}
+                  type="linear"
+                  dataKey={key}
+                  stroke={series === 'rx' ? C_OK : C_DANGER}
+                  strokeWidth={1.5}
+                  strokeDasharray="4 4"
+                  connectNulls
+                  dot={false}
+                  activeDot={false}
+                  tooltipType="none"
+                  legendType="none"
+                  isAnimationActive={false}
+                />
+              ))}
             </LineChart>
           </ResponsiveContainer>
         </div>

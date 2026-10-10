@@ -64,8 +64,7 @@ tz=$(cat /etc/timezone 2>/dev/null)
 echo "T \${tz:-}"
 awk '/^cpu[0-9]+ / { t=0; for(i=2;i<=NF;i++) t+=$i; s=s sprintf(" %d %d", t, $4+$5); n++ } END { if(n>0) print "C " n s }' /proc/stat
 lsblk -P -bno NAME,TYPE,PKNAME,SIZE,MOUNTPOINT 2>/dev/null | sed 's/^/L /'
-mpts=$(lsblk -no MOUNTPOINT 2>/dev/null | grep '^/')
-[ -n "$mpts" ] && df -PTk $mpts 2>/dev/null | awk 'NR>1 { printf "F %s %s %s %s %s", $1, $2, $3, $4, $5; for(i=7;i<=NF;i++) printf " %s", $i; print "" }'
+df -PTk 2>/dev/null | awk 'NR>1 && index($1, "/dev/")==1 && $2 != "squashfs" { printf "F %s %s %s %s %s", $1, $2, $3, $4, $5; for(i=7;i<=NF;i++) printf " %s", $i; print "" }'
 disks=$(lsblk -bndo NAME,TYPE 2>/dev/null | awk '$2=="disk"{print $1}')
 awk -v disks="$disks" 'BEGIN { n=split(disks, d, " "); for(i=1;i<=n;i++) want[d[i]]=1 } $3 in want { print "R " $3 " " $6 " " $10 }' /proc/diskstats
 . /etc/os-release 2>/dev/null

@@ -1,7 +1,6 @@
-import { isNetworkDevice } from '@shared/device'
 import { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowDownUp, Bot, Gauge, Zap, Network, Plus } from 'lucide-react'
+import { ArrowDownUp, Bot, Gauge, Zap, Network, Plus, FolderOpen } from 'lucide-react'
 import { useResizePreview } from '@/lib/useResizePreview'
 import { cn } from '@/lib/utils'
 import { IconButton } from '@/components/ui/IconButton'
@@ -10,7 +9,7 @@ import { useSessionStore } from '@/stores/session'
 import { useWorkspaceStore, type ActivityPanelId } from '@/stores/workspace'
 import { isBusy, pendingApprovals, useAiStore } from '@/stores/ai'
 import { useHumanInputStore } from '@/stores/humanInput'
-import { PerformancePanel } from './panels/PerformancePanel'
+import { HostResourcesPanel } from './panels/HostResourcesPanel'
 import { TransfersPanel } from './panels/TransfersPanel'
 import { CommandsPanel } from './panels/CommandsPanel'
 import { ActivityPanelHeader } from './ActivityPanelHeader'
@@ -30,13 +29,14 @@ function loadWidth(): number {
 
 const PANELS = [
   { id: 'ai', icon: Bot, titleKey: 'ai.title' },
+  { id: 'files', icon: FolderOpen, titleKey: 'activity.files' },
   { id: 'performance', icon: Gauge, titleKey: 'activity.performance' },
   { id: 'transfers', icon: ArrowDownUp, titleKey: 'activity.transfers' },
   { id: 'forwards', icon: Network, titleKey: 'forward.title' },
   { id: 'commands', icon: Zap, titleKey: 'activity.commands' }
 ] as const
 
-/** 全局右栏：AI 常驻；性能与快捷命令跟随最近进入的 shell 主机，传输跨主机汇总。 */
+/** 全局右栏：AI 常驻；文件和性能可独立选择主机，快捷命令跟随最近进入的 shell 主机，传输跨主机汇总。 */
 export function ActivityRail(): React.JSX.Element {
   const { t } = useTranslation()
   const active = useWorkspaceStore((s) => s.activePanel)
@@ -44,7 +44,6 @@ export function ActivityRail(): React.JSX.Element {
   const focusedId = useWorkspaceStore((s) => s.focusedHostId)
   const host = useSessionStore((s) => s.hosts.find((h) => h.id === focusedId))
   const hostId = host?.id ?? null
-  const networkDevice = isNetworkDevice(host?.conn)
   const [width, setWidth] = useState(loadWidth)
   const previewRef = useRef<HTMLDivElement>(null)
   const transfersRunning = useSftpStore((s) =>
@@ -73,11 +72,6 @@ export function ActivityRail(): React.JSX.Element {
       unsubscribe()
     }
   }, [])
-
-  useEffect(() => {
-    window.aterm.perf.watchSession(networkDevice ? null : hostId)
-    return () => window.aterm.perf.watchSession(null)
-  }, [hostId, networkDevice])
 
   const resize = useResizePreview({
     value: width,
@@ -123,52 +117,48 @@ export function ActivityRail(): React.JSX.Element {
             <AiWorkspacePage />
           </Suspense>
         </div>
-        {active !== 'ai' && (
-          <div className="flex h-full min-w-0 flex-col">
-            <ActivityPanelHeader>
-              <span className="shrink-0 text-body font-medium text-fg">
-                {t(PANELS.find((p) => p.id === active)!.titleKey)}
-              </span>
-              {active !== 'transfers' && active !== 'forwards' && host && (
-                <span
-                  className="min-w-0 truncate text-caption text-muted"
-                  title={`${host.conn.username}@${host.conn.host}:${host.conn.port}`}
-                >
-                  {host.title}
+        {active === 'files' || active === 'performance' ? (
+          <HostResourcesPanel panel={active} visible={open} />
+        ) : (
+          active !== 'ai' && (
+            <div className="flex h-full min-w-0 flex-col">
+              <ActivityPanelHeader>
+                <span className="shrink-0 text-body font-medium text-fg">
+                  {t(PANELS.find((p) => p.id === active)!.titleKey)}
                 </span>
-              )}
-              {active === 'forwards' && (
-                <div className="ml-auto">
-                  <IconButton
-                    icon={Plus}
-                    title={t('forward.new')}
-                    onClick={() => usePortForwardsStore.getState().open(forwardFilter, true)}
-                  />
-                </div>
-              )}
-            </ActivityPanelHeader>
-            <div className="min-h-0 flex-1 overflow-y-auto p-3">
-              {active === 'forwards' ? (
-                <PortForwardsPanel />
-              ) : active === 'transfers' ? (
-                <TransfersPanel />
-              ) : hostId ? (
-                active === 'performance' ? (
-                  networkDevice ? (
-                    <p className="text-minor text-muted">{t('conn.form.networkHint')}</p>
-                  ) : (
-                    <PerformancePanel key={hostId} hostId={hostId} />
-                  )
-                ) : (
+                {active !== 'transfers' && active !== 'forwards' && host && (
+                  <span
+                    className="min-w-0 truncate text-caption text-muted"
+                    title={`${host.conn.username}@${host.conn.host}:${host.conn.port}`}
+                  >
+                    {host.title}
+                  </span>
+                )}
+                {active === 'forwards' && (
+                  <div className="ml-auto">
+                    <IconButton
+                      icon={Plus}
+                      title={t('forward.new')}
+                      onClick={() => usePortForwardsStore.getState().open(forwardFilter, true)}
+                    />
+                  </div>
+                )}
+              </ActivityPanelHeader>
+              <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                {active === 'forwards' ? (
+                  <PortForwardsPanel />
+                ) : active === 'transfers' ? (
+                  <TransfersPanel />
+                ) : hostId ? (
                   <CommandsPanel hostId={hostId} />
-                )
-              ) : (
-                <p className="py-8 text-center text-minor text-muted">
-                  {t('activity.noFocusedHost')}
-                </p>
-              )}
+                ) : (
+                  <p className="py-8 text-center text-minor text-muted">
+                    {t('activity.noFocusedHost')}
+                  </p>
+                )}
+              </div>
             </div>
-          </div>
+          )
         )}
       </div>
       <div className="flex w-10 shrink-0 flex-col items-center gap-1.5 border-l border-line bg-sidebar py-3">

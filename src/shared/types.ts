@@ -512,6 +512,7 @@ export interface AiFileReference {
 export interface AiMessageMetadata {
   createdAt: number
   display?: string
+  browserReferences?: import('./browser').AiBrowserReference[]
   fileReferences?: AiFileReference[]
   hostReferences?: { id: string; name: string; host: string; port: number }[]
   error?: string

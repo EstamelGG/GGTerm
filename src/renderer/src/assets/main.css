@@ -44,6 +44,11 @@
      alpha 0.78 + .glass 的大半径 blur（22px）配合：底下文字糊成色斑，透而不读 */
   --at-glass: rgb(50 55 62 / 0.78);
 
+  /* 工作区工具栏 / 标签栏共用几何；分隔线独立于内容行高度。 */
+  --at-chrome-row-height: 40px;
+  --at-chrome-row-padding-inline: 14px;
+  --at-chrome-row-gap: 6px;
+
   /* 分隔线 */
   --at-line: rgb(255 255 255 / 0.07);
   --at-chrome-sep: rgb(255 255 255 / 0.16);

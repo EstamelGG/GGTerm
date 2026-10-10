@@ -1,14 +1,20 @@
+import type { AiBrowserReference } from '@shared/browser'
 import type { AiFileReference } from '@shared/types'
 import { create } from 'zustand'
 
-export type ActivityPanelId = 'ai' | 'performance' | 'transfers' | 'commands' | 'forwards'
+export type ActivityPanelId = 'ai' | 'files' | 'performance' | 'transfers' | 'commands' | 'forwards'
 
 interface WorkspaceState {
+  browserAttachments: Record<string, AiBrowserReference[]>
+  attachBrowser: (sessionId: string, reference: AiBrowserReference) => void
+  removeBrowser: (sessionId: string, id: string) => void
   sidebarOpen: boolean
   activePanel: ActivityPanelId
   setSidebarOpen: (open: boolean) => void
   selectPanel: (panel: ActivityPanelId) => void
   /** 最近进入的主机会话；目录选择和显式引用均不得改变它。 */
+  inspectedHostId: string | null
+  inspectHost: (id: string | null) => void
   focusedHostId: string | null
   fileAttachments: Record<string, AiFileReference[]>
   attachFile: (sessionId: string, file: AiFileReference) => void
@@ -22,8 +28,37 @@ interface WorkspaceState {
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
+  browserAttachments: {},
+  attachBrowser: (sessionId, reference) =>
+    set((s) => ({
+      sidebarOpen: true,
+      activePanel: 'ai',
+      browserAttachments: {
+        ...s.browserAttachments,
+        [sessionId]: [
+          ...(s.browserAttachments[sessionId] ?? []).filter(
+            (item) =>
+              !(
+                item.tabId === reference.tabId &&
+                item.kind === reference.kind &&
+                item.element?.selector === reference.element?.selector
+              )
+          ),
+          reference
+        ]
+      }
+    })),
+  removeBrowser: (sessionId, id) =>
+    set((s) => ({
+      browserAttachments: {
+        ...s.browserAttachments,
+        [sessionId]: (s.browserAttachments[sessionId] ?? []).filter((item) => item.id !== id)
+      }
+    })),
   sidebarOpen: false,
   activePanel: 'ai',
+  inspectedHostId: null,
+  inspectHost: (inspectedHostId) => set({ inspectedHostId }),
   focusedHostId: null,
   attachments: {},
   fileAttachments: {},
@@ -74,6 +109,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   clearAttachments: (sessionId) =>
     set((s) => ({
       attachments: { ...s.attachments, [sessionId]: [] },
-      fileAttachments: { ...s.fileAttachments, [sessionId]: [] }
+      fileAttachments: { ...s.fileAttachments, [sessionId]: [] },
+      browserAttachments: { ...s.browserAttachments, [sessionId]: [] }
     }))
 }))

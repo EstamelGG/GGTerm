@@ -8,13 +8,12 @@ import type { HostConnection, HostGroup } from '@shared/types'
 import { cn } from '@/lib/utils'
 import { useResizePreview } from '@/lib/useResizePreview'
 import { errorMessage } from '@shared/error'
-import { TOOLBAR_V } from '@/components/chrome/layout'
 import { descendantsOf } from '@shared/groupTree'
 import { useConnectionsStore } from '@/stores/connections'
 import { usePortForwardsStore } from '@/stores/portForwards'
 import { useLatencyStore, type LatencyStatus } from '@/stores/latency'
 import { usePerfStore } from '@/stores/perf'
-import { ChromeSeparator } from '@/components/chrome/ChromeSeparator'
+import { ChromeRow } from '@/components/chrome/ChromeRow'
 import { Button } from '@/components/form/Buttons'
 import { GroupSidebar, type SidebarPick } from '@/components/connection/GroupSidebar'
 import { ConnectionTable, type SortColumn } from '@/components/connection/ConnectionTable'
@@ -366,13 +365,8 @@ export default function ConnectionPage({
             tab.kind !== 'connections' && 'hidden'
           )}
         >
-          {/* 工具栏：胶囊搜索 + 新增连接（TOOLBAR_V 常量 = 40px 高，与侧栏头部分割线对齐） */}
-          <div
-            className={cn(
-              'flex shrink-0 items-center gap-2.5 px-4 [&>button]:shrink-0 [&>button]:whitespace-nowrap',
-              TOOLBAR_V
-            )}
-          >
+          {/* 共用工具行：与分组侧栏、浏览器标签栏对齐。 */}
+          <ChromeRow className="[&>button]:shrink-0 [&>button]:whitespace-nowrap">
             <div className="flex h-6 w-64 min-w-0 items-center gap-1.5 rounded-full border border-line bg-raised px-2.5 transition-colors duration-100 focus-within:border-at-accent/50">
               <Search size={11} strokeWidth={2.2} className="shrink-0 text-muted" />
               <input
@@ -418,8 +412,7 @@ export default function ConnectionPage({
                 })
               }
             />
-          </div>
-          <ChromeSeparator />
+          </ChromeRow>
           {loadError && (
             <div role="alert" className="px-4 py-3 text-body text-danger">
               {loadError}

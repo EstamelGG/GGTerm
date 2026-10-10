@@ -39,6 +39,7 @@ function writeViaRegistry(key: string, data: string): void {
 
 /** 对照 ATerminal-Swift SessionCenter.WorkspaceTab */
 export type WorkspaceTab =
+  | { kind: 'browser' }
   | { kind: 'connections' }
   | { kind: 'ai' }
   | { kind: 'host'; id: string }

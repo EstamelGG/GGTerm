@@ -4,6 +4,7 @@ import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import i18next from 'i18next'
 import {
+  Globe,
   LayoutGrid,
   Settings,
   Waypoints,
@@ -32,6 +33,7 @@ import { applyTerminalFontSize } from '@/terminal/registry'
 import { ActivityRail } from '@/components/activity/ActivityRail'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { usePortForwardsStore } from '@/stores/portForwards'
+import { BrowserPage } from '@/pages/BrowserPage'
 import ConnectionPage from '@/pages/ConnectionPage'
 import { useHumanInputStore } from '@/stores/humanInput'
 
@@ -274,19 +276,26 @@ function App(): React.JSX.Element {
           window.aterm.window.platform === 'darwin' ? 'pl-[78px]' : 'pl-3'
         )}
       >
-        <TabChip
-          title={t('session.tabConnections')}
-          icon={LayoutGrid}
-          selected={tab.kind === 'connections'}
-          onClick={() => setTab({ kind: 'connections' })}
-        />
-        <div className="w-2 shrink-0" />
-        <TabChip
-          title={t('session.tabTopology')}
-          icon={Waypoints}
-          selected={tab.kind === 'ai'}
-          onClick={() => setTab({ kind: 'ai' })}
-        />
+        <div className="flex shrink-0 items-center gap-2">
+          <TabChip
+            title={t('session.tabConnections')}
+            icon={LayoutGrid}
+            selected={tab.kind === 'connections'}
+            onClick={() => setTab({ kind: 'connections' })}
+          />
+          <TabChip
+            title={t('session.tabTopology')}
+            icon={Waypoints}
+            selected={tab.kind === 'ai'}
+            onClick={() => setTab({ kind: 'ai' })}
+          />
+          <TabChip
+            title={t('browser.tab')}
+            icon={Globe}
+            selected={tab.kind === 'browser'}
+            onClick={() => setTab({ kind: 'browser' })}
+          />
+        </div>
         {hosts.length > 0 && <div className="mx-3 h-4 w-px shrink-0 bg-chrome-sep" />}
         <OverflowTabs
           tabs={hosts.map((host, idx) => ({
@@ -388,6 +397,13 @@ function App(): React.JSX.Element {
             onToast={flash}
             onConnect={handleConnect}
           >
+            <BrowserPage
+              active={tab.kind === 'browser'}
+              obscured={logOpen || pendingClose !== null}
+              onToast={flash}
+              notification={toast}
+              onDismissNotification={() => setToast(null)}
+            />
             <Suspense fallback={null}>
               <div className={cn('absolute inset-0', tab.kind !== 'settings' && 'hidden')}>
                 <SettingsPage onToast={flash} />
@@ -448,7 +464,7 @@ function App(): React.JSX.Element {
           toast ? 'translate-y-0 opacity-100' : 'translate-y-2 opacity-0'
         )}
       >
-        {toast && (
+        {toast && tab.kind !== 'browser' && (
           <span
             className={cn(
               'glass rounded-full px-3 py-[7px] text-minor font-medium',

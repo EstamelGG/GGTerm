@@ -490,7 +490,7 @@ export function parseGpuAppRow(s: string): { uuid: string; proc: PerfGpuProc } |
 }
 
 /** 由 lsblk 树 + df 挂载点 + 磁盘扇区计数器组装 PerfDisk[]（按挂载点匹配分区） */
-function buildDisks(
+export function buildDisks(
   nodes: LsblkNode[],
   dfRows: DfRow[],
   sectors: Record<string, SectorCounter>,
@@ -501,9 +501,20 @@ function buildDisks(
   for (const node of nodes) {
     if (node.type !== 'disk') continue
     const mounts: PerfDiskMount[] = []
-    for (const part of nodes.filter((n) => n.type === 'part' && n.pkname === node.name)) {
+    const descendants = new Set([node.name])
+    let changed = true
+    while (changed) {
+      changed = false
+      for (const child of nodes) {
+        if (descendants.has(child.pkname) && !descendants.has(child.name)) {
+          descendants.add(child.name)
+          changed = true
+        }
+      }
+    }
+    for (const part of nodes.filter((n) => descendants.has(n.name))) {
       const df = part.mount ? dfRows.find((d) => d.mount === part.mount) : undefined
-      if (!df) continue
+      if (!df || mounts.some((mount) => mount.mount === df.mount)) continue
       mounts.push({
         device: part.name,
         mount: df.mount,
@@ -523,6 +534,21 @@ function buildDisks(
       writeBps = Math.max(0, Math.round(((cur.write - prev.write) * 512) / dt))
     }
     disks.push({ name: node.name, total: node.size, readBps, writeBps, mounts })
+  }
+  // Preserve device-backed filesystems even when lsblk is absent or cannot describe the stack.
+  const represented = new Set(disks.flatMap((disk) => disk.mounts.map((mount) => mount.mount)))
+  for (const df of dfRows) {
+    if (represented.has(df.mount)) continue
+    if (!df.device || df.fstype === 'tmpfs' || df.fstype === 'devtmpfs' || df.fstype === 'squashfs')
+      continue
+    disks.push({
+      name: df.device,
+      total: df.size,
+      readBps: null,
+      writeBps: null,
+      mounts: [{ ...df, usePct: Math.round((df.used / df.size) * 1000) / 10 }]
+    })
+    represented.add(df.mount)
   }
   return disks
 }

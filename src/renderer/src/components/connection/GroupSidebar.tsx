@@ -23,11 +23,10 @@ import type { HostConnection, HostGroup } from '@shared/types'
 import { cn } from '@/lib/utils'
 import { hexToCss } from '@/lib/theme'
 import { childrenOf, descendantsOf, groupChain } from '@shared/groupTree'
-import { ChromeSeparator } from '@/components/chrome/ChromeSeparator'
+import { ChromeRow } from '@/components/chrome/ChromeRow'
 import { IconButton } from '@/components/ui/IconButton'
 import { useConnectionsStore } from '@/stores/connections'
 import { useLinksStore } from '@/stores/links'
-import { TOOLBAR_V } from '@/components/chrome/layout'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -239,7 +238,7 @@ export function GroupSidebar({
 
   return (
     <aside className="flex h-full w-full flex-col bg-sidebar">
-      <div className={cn('flex items-center px-3.5', TOOLBAR_V)}>
+      <ChromeRow>
         <span className="flex-1 text-caption font-semibold text-muted">{t('conn.groups')}</span>
         <span className="flex items-center gap-1">
           <IconButton
@@ -265,8 +264,7 @@ export function GroupSidebar({
             onClick={() => onNewGroup(null)}
           />
         </span>
-      </div>
-      <ChromeSeparator />
+      </ChromeRow>
       <div
         ref={scrollRef}
         className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-3 pt-2"

@@ -1,3 +1,4 @@
+import { BrowserReferenceChip } from '@/components/ai/BrowserReferenceChip'
 import { FileReferenceChip } from '@/components/ai/FileReferenceChip'
 import { ActivityPanelHeader } from '@/components/activity/ActivityPanelHeader'
 import { memo, useEffect, useRef, useState } from 'react'
@@ -980,6 +981,9 @@ const MessageItem = memo(function MessageItem({
     return (
       <div className="flex flex-col items-end gap-1">
         {stamp}
+        {m.metadata?.browserReferences?.map((reference) => (
+          <BrowserReferenceChip key={reference.id} reference={reference} />
+        ))}
         {m.metadata?.fileReferences?.map((file) => (
           <FileReferenceChip key={JSON.stringify([file.hostId, file.path])} file={file} />
         ))}
@@ -1179,6 +1183,7 @@ function ChatComposer({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const conns = useConnectionsStore((s) => s.connections)
+  const browserAttachments = useWorkspaceStore((s) => s.browserAttachments[sessionId])
   const fileAttachments = useWorkspaceStore((s) => s.fileAttachments[sessionId])
   const attachments = useWorkspaceStore((s) => s.attachments[sessionId])
   const focusedId = useWorkspaceStore((s) => s.focusedHostId)
@@ -1441,7 +1446,10 @@ function ChatComposer({
           )}
         >
           <div className="relative">
-            {(focusedHost || references.length > 0 || (fileAttachments?.length ?? 0) > 0) && (
+            {(focusedHost ||
+              references.length > 0 ||
+              (fileAttachments?.length ?? 0) > 0 ||
+              (browserAttachments?.length ?? 0) > 0) && (
               <div className="flex flex-wrap gap-1 px-2 pt-2">
                 {focusedHost && (
                   <span
@@ -1452,6 +1460,15 @@ function ChatComposer({
                     {t('ai.focusedHost')}: <span className="truncate">{focusedHost.name}</span>
                   </span>
                 )}
+                {browserAttachments?.map((reference) => (
+                  <BrowserReferenceChip
+                    key={reference.id}
+                    reference={reference}
+                    onRemove={() =>
+                      useWorkspaceStore.getState().removeBrowser(sessionId, reference.id)
+                    }
+                  />
+                ))}
                 {fileAttachments?.map((file) => (
                   <FileReferenceChip
                     key={JSON.stringify([file.hostId, file.path])}

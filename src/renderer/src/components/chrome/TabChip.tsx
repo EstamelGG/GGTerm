@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import { X } from 'lucide-react'
+import { X, LoaderCircle } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
@@ -10,6 +10,7 @@ import type { StateDotVisual } from '@/lib/linkPhase'
 interface TabChipProps {
   title: string
   icon?: LucideIcon
+  loading?: boolean
   /** 状态点视觉（lib/linkPhase 工厂产出：linkStateDot / shellStateDot / solidDot） */
   statusColor?: StateDotVisual
   selected: boolean
@@ -29,6 +30,7 @@ interface TabChipProps {
 export function TabChip({
   title,
   icon: Icon,
+  loading = false,
   statusColor,
   selected,
   accentBorder = true,
@@ -59,13 +61,24 @@ export function TabChip({
       <button
         type="button"
         className={cn(
-          'flex cursor-pointer items-center gap-1.5 rounded-full py-[3px] pl-2.5 outline-none',
+          'flex min-w-0 cursor-pointer items-center gap-1.5 rounded-full py-[3px] pl-2.5 outline-none',
           showClose ? 'pr-0.5' : 'pr-2.5'
         )}
         onClick={onClick}
       >
-        {Icon && (
-          <Icon size={11} strokeWidth={2.2} className={selected ? 'text-fg' : 'text-muted'} />
+        {loading ? (
+          <LoaderCircle
+            size={11}
+            className="shrink-0 animate-spin text-at-accent motion-reduce:animate-none"
+          />
+        ) : (
+          Icon && (
+            <Icon
+              size={11}
+              strokeWidth={2.2}
+              className={selected ? 'shrink-0 text-fg' : 'shrink-0 text-muted'}
+            />
+          )
         )}
         {statusColor && <StateDot visual={statusColor} />}
         <span

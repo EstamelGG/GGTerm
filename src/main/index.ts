@@ -9,6 +9,7 @@ import { installMenu } from './menu'
 import { installTerminalFontKeys } from './terminalFont'
 import { appLog } from './log'
 import { portForwards } from './portForward'
+import { installBrowser, registerBrowserIpc } from './browser'
 
 // 进程级兜底：网络瞬断等场景的零星 socket 错误不应击穿为 Uncaught Exception
 // 崩掉整个应用（终端/SFTP 会话全丢）。只记录不退出；真正的结构性错误仍会在日志中显现。
@@ -60,6 +61,8 @@ function createWindow(): void {
       ]
     }
   })
+
+  installBrowser(mainWindow)
 
   // 终端字号快捷键（Cmd/Ctrl +/-/0）：窗口级拦截，先于页面与 xterm 拿到按键
   installTerminalFontKeys(mainWindow)
@@ -128,6 +131,7 @@ app.whenReady().then(() => {
   initMainI18n()
   installMenu()
   registerIpc()
+  registerBrowserIpc()
   createWindow()
 
   app.on('activate', function () {

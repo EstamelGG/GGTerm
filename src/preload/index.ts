@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import type { BrowserState, BrowserTab, BrowserBounds, AiBrowserReference } from '../shared/browser'
 import { electronAPI } from '@electron-toolkit/preload'
 import type { EncodingMode, FileEncoding } from '../shared/encoding'
 import type {
@@ -79,6 +80,36 @@ import type { PortForward, PortForwardAction, PortForwardInput } from '../shared
 
 /** 渲染进程可用的 API（对照 Swift 层：SwiftData/Keychain/UserDefaults 通道） */
 const api = {
+  browser: {
+    approveCertificate: (id: string, requestId: string): Promise<BrowserState> =>
+      ipcRenderer.invoke('browser:approve-certificate', id, requestId),
+    capture: (id: string): Promise<AiBrowserReference> => ipcRenderer.invoke('browser:capture', id),
+    pick: (id: string, accent: string): Promise<AiBrowserReference | null> =>
+      ipcRenderer.invoke('browser:pick', id, accent),
+    cancelPick: (id: string): Promise<void> => ipcRenderer.invoke('browser:cancel-pick', id),
+    onShow: (cb: (id: string) => void): (() => void) => {
+      const listener = (_event: unknown, id: string): void => cb(id)
+      ipcRenderer.on('browser:show-request', listener)
+      return () => ipcRenderer.removeListener('browser:show-request', listener)
+    },
+    newTab: (foreground = false): Promise<BrowserTab> =>
+      ipcRenderer.invoke('browser:new-tab', foreground),
+    list: (): Promise<BrowserState> => ipcRenderer.invoke('browser:list'),
+    open: (url: string): Promise<BrowserTab> => ipcRenderer.invoke('browser:open', url),
+    navigate: (id: string, url: string): Promise<BrowserState> =>
+      ipcRenderer.invoke('browser:navigate', id, url),
+    close: (id: string): Promise<BrowserState> => ipcRenderer.invoke('browser:close', id),
+    show: (id: string): Promise<BrowserState> => ipcRenderer.invoke('browser:show', id),
+    layout: (id: string | null, bounds: BrowserBounds | null): Promise<void> =>
+      ipcRenderer.invoke('browser:layout', id, bounds),
+    control: (id: string, action: 'back' | 'forward' | 'reload' | 'stop'): Promise<void> =>
+      ipcRenderer.invoke('browser:control', id, action),
+    onChanged: (cb: (state: BrowserState) => void): (() => void) => {
+      const listener = (_event: unknown, state: BrowserState): void => cb(state)
+      ipcRenderer.on('browser:changed', listener)
+      return () => ipcRenderer.removeListener('browser:changed', listener)
+    }
+  },
   portForwards: {
     list: (): Promise<PortForward[]> => ipcRenderer.invoke('port-forward:list'),
     configure: (input: PortForwardInput, id?: string): Promise<PortForward> =>

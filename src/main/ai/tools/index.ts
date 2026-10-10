@@ -1,5 +1,6 @@
 import { agentConnectionContext } from '../agentLinks'
 import { setExecutionClientResolver } from '../exec'
+import { browserTools } from './browser'
 import { executeTools } from './execute'
 import { computeTools } from './compute'
 import { activeClientOf, type AnyTool } from './shared'
@@ -40,6 +41,7 @@ const store: LockKeyFn = () => 'store'
  * Record<AiToolName, ...> 即穷尽性检查：新增工具必须在此明确其并发归属。
  */
 const LOCK_KEYS: Record<AiToolName, LockKeyFn> = {
+  browser: () => 'browser',
   list_port_forwards: none,
   configure_port_forward: () => 'port-forwards',
   control_port_forward: () => 'port-forwards',
@@ -93,6 +95,7 @@ function withLockKey(tool: AnyTool): AnyTool {
 }
 
 export const aiTools: AnyTool[] = [
+  ...browserTools,
   ...portForwardTools,
   ...connectionTools,
   ...sftpTools,
@@ -107,6 +110,7 @@ export const aiTools: AnyTool[] = [
   .map(withLockKey)
 
 export type AiToolName =
+  | 'browser'
   | 'list_port_forwards'
   | 'configure_port_forward'
   | 'control_port_forward'

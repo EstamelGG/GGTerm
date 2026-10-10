@@ -127,6 +127,7 @@ export class SftpSession {
     emit()
   }
   private channelLock: Promise<SFTPWrapper> | null = null
+  private channelLifetime = new AbortController()
   /** realpath 结果缓存（同路径重复浏览零往返；仅成功结果入缓存） */
   private realpathCache = new Map<string, string>()
 
@@ -150,7 +151,6 @@ export class SftpSession {
 
   /** 主机链路丢失 —— 通道作废；恢复仅由 hostLinkRestored 驱动 */
   hostLinkLost(): void {
-    if (!this.started) return
     this.teardown()
     this.emitState('disconnected')
   }
@@ -158,7 +158,7 @@ export class SftpSession {
   /** 主机链路（重）建立 —— 重开通道；目录刷新由渲染层监听 host:state 驱动 */
   hostLinkRestored(): void {
     if (!this.started) return
-    void this.ensureChannel()
+    void this.ensureChannel().catch(() => {})
   }
 
   /* ---------------- 通道 ---------------- */
@@ -173,30 +173,86 @@ export class SftpSession {
     const client = this.client
     if (!client) throw new Error('host link not active')
     this.emitState('connecting')
-    this.channelLock = p<SFTPWrapper>((cb) => client.sftp(cb))
+    const lifetime = this.channelLifetime
+    const opening = this.request<SFTPWrapper>((cb) =>
+      client.sftp((error, channel) => {
+        if (lifetime.signal.aborted || client !== this.client) {
+          channel?.destroy()
+          cb(new Error('SFTP connection changed; retry the operation'))
+        } else cb(error, channel)
+      })
+    )
       .then((sftp) => {
+        lifetime.signal.throwIfAborted()
         this.sftp = sftp
-        this.channelLock = null
+        const lost = (): void => {
+          if (this.sftp !== sftp) return
+          this.teardown()
+          this.emitState('disconnected')
+        }
+        sftp.once('close', lost)
+        sftp.once('end', lost)
+        sftp.on('error', lost)
         this.emitState('connected')
         return sftp
       })
       .catch((err: Error) => {
-        this.channelLock = null
-        this.teardown()
-        this.emitState('error', err.message)
+        if (lifetime === this.channelLifetime) {
+          this.teardown()
+          this.emitState('error', err.message)
+        }
         throw err
       })
-    return this.channelLock
+      .finally(() => {
+        if (this.channelLock === opening) this.channelLock = null
+      })
+    this.channelLock = opening
+    return opening
+  }
+
+  /** Bound callback requests to the current channel, including Agent-only sessions. */
+  private request<T>(
+    fn: (cb: (err: Error | null | undefined, res?: T) => void) => void
+  ): Promise<T> {
+    const lifetime = this.channelLifetime
+    return new Promise((resolve, reject) => {
+      let settled = false
+      const finish = (err?: Error | null, value?: T): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        lifetime.signal.removeEventListener('abort', abort)
+        if (err) reject(err)
+        else resolve(value as T)
+      }
+      const abort = (): void => finish(new Error('SFTP connection lost; retry after reconnecting'))
+      const timer = setTimeout(() => {
+        finish(new Error('SFTP request timed out after 30 seconds; retry to reopen the channel'))
+        if (lifetime === this.channelLifetime) this.teardown()
+      }, 30000)
+      lifetime.signal.addEventListener('abort', abort, { once: true })
+      try {
+        fn((err, value) =>
+          finish(err ? (err instanceof Error ? err : new Error(errorMessage(err))) : null, value)
+        )
+      } catch (err) {
+        finish(new Error(errorMessage(err)))
+      }
+    })
   }
 
   private teardown(): void {
-    for (const task of this.tasks.values()) task.cancel()
+    const lifetime = this.channelLifetime
+    this.channelLifetime = new AbortController()
     const current = this.sftp
     this.sftp = null
     this.channelLock = null
+    this.realpathCache.clear()
+    lifetime.abort()
+    for (const task of this.tasks.values()) task.cancel()
     if (current) {
       try {
-        current.end()
+        current.destroy()
       } catch {
         /* ignore */
       }
@@ -213,8 +269,8 @@ export class SftpSession {
   async list(path: string): Promise<SftpListing> {
     const sftp = await this.ensureChannel()
     const [raw, resolved] = await Promise.all([
-      p<SftpFileEntry[]>((cb) => sftp.readdir(path, cb)),
-      p<string>((cb) => sftp.realpath(path, cb)).catch(() => path)
+      this.request<SftpFileEntry[]>((cb) => sftp.readdir(path, cb)),
+      this.request<string>((cb) => sftp.realpath(path, cb)).catch(() => path)
     ])
     const entries = raw.map((f) => entryFrom(f, resolved)).filter((e): e is SftpEntry => e !== null)
     appLog('sftp', `List directory "${path}" → ${entries.length} entries`)
@@ -224,7 +280,7 @@ export class SftpSession {
   /** 仅 readdir（测量专用：省去 realpath 往返，取消后在途请求减半） */
   private async listEntries(path: string): Promise<SftpEntry[]> {
     const sftp = await this.ensureChannel()
-    const raw = await p<SftpFileEntry[]>((cb) => sftp.readdir(path, cb))
+    const raw = await this.request<SftpFileEntry[]>((cb) => sftp.readdir(path, cb))
     const entries = raw.map((f) => entryFrom(f, path)).filter((e): e is SftpEntry => e !== null)
     appLog('sftp', `List directory "${path}" → ${entries.length} entries`)
     return entries
@@ -234,7 +290,7 @@ export class SftpSession {
     const hit = this.realpathCache.get(path)
     if (hit) return hit
     const sftp = await this.ensureChannel()
-    const resolved = await p<string>((cb) => sftp.realpath(path, cb)).catch(() => null)
+    const resolved = await this.request<string>((cb) => sftp.realpath(path, cb)).catch(() => null)
     if (resolved === null) return path // 通道暂时不可用不缓存，避免固化错误结果
     this.realpathCache.set(path, resolved)
     return resolved
@@ -242,12 +298,12 @@ export class SftpSession {
 
   async readlink(path: string): Promise<string> {
     const sftp = await this.ensureChannel()
-    return p<string>((cb) => sftp.readlink(path, cb)).catch(() => '')
+    return this.request<string>((cb) => sftp.readlink(path, cb)).catch(() => '')
   }
 
   async stat(path: string): Promise<SftpStat> {
     const sftp = await this.ensureChannel()
-    const attrs = await p<SftpStats>((cb) => sftp.stat(path, cb))
+    const attrs = await this.request<SftpStats>((cb) => sftp.stat(path, cb))
     return {
       size: attrs.size ?? 0,
       permissions: attrs.mode ?? null,
@@ -287,7 +343,7 @@ export class SftpSession {
   async isDirectory(path: string): Promise<boolean> {
     const sftp = await this.ensureChannel()
     try {
-      const attrs = await p<SftpStats>((cb) => sftp.stat(path, cb))
+      const attrs = await this.request<SftpStats>((cb) => sftp.stat(path, cb))
       return (attrs.mode & 0o170000) === 0o040000
     } catch {
       return false
@@ -298,23 +354,23 @@ export class SftpSession {
 
   async mkdir(path: string): Promise<void> {
     const sftp = await this.ensureChannel()
-    await p<null>((cb) => sftp.mkdir(path, cb))
+    await this.request<null>((cb) => sftp.mkdir(path, cb))
   }
 
   async touch(path: string): Promise<void> {
     const sftp = await this.ensureChannel()
-    const handle = await p<Buffer>((cb) => sftp.open(path, 'w', cb))
-    await p<null>((cb) => sftp.close(handle, cb))
+    const handle = await this.request<Buffer>((cb) => sftp.open(path, 'w', cb))
+    await this.request<null>((cb) => sftp.close(handle, cb))
   }
 
   async rename(src: string, dest: string): Promise<void> {
     const sftp = await this.ensureChannel()
-    await p<null>((cb) => sftp.rename(src, dest, cb))
+    await this.request<null>((cb) => sftp.rename(src, dest, cb))
   }
 
   async chmod(path: string, mode: number): Promise<void> {
     const sftp = await this.ensureChannel()
-    await p<null>((cb) => sftp.chmod(path, mode, cb))
+    await this.request<null>((cb) => sftp.chmod(path, mode, cb))
   }
 
   /* ---------------- 远程编辑（阶段⑤，对照 readForEdit/writeText） ---------------- */
@@ -328,13 +384,13 @@ export class SftpSession {
   ): Promise<SftpEditPayload> {
     const limit = SftpSession.EDIT_MAX_BYTES
     const sftp = await this.ensureChannel()
-    const handle = await p<Buffer>((cb) => sftp.open(path, 'r', cb))
+    const handle = await this.request<Buffer>((cb) => sftp.open(path, 'r', cb))
     try {
       const chunks: Buffer[] = []
       let offset = 0
       for (;;) {
         const buf = Buffer.alloc(64_000)
-        const n = await p<number>((cb) =>
+        const n = await this.request<number>((cb) =>
           sftp.read(handle, buf, 0, buf.length, offset, (err, bytesRead) => cb(err, bytesRead))
         )
         if (n <= 0) break
@@ -344,7 +400,7 @@ export class SftpSession {
       }
       return { kind: 'text', ...decodeFile(Buffer.concat(chunks), encoding), size: offset }
     } finally {
-      await p<null>((cb) => sftp.close(handle, cb)).catch(() => {})
+      await this.request<null>((cb) => sftp.close(handle, cb)).catch(() => {})
     }
   }
 
@@ -361,7 +417,7 @@ export class SftpSession {
 
   async unlink(path: string): Promise<void> {
     const sftp = await this.ensureChannel()
-    await p<null>((cb) => sftp.unlink(path, cb))
+    await this.request<null>((cb) => sftp.unlink(path, cb))
   }
 
   /** 删除：文件走 unlink；目录走共享连接 exec rm -rf（对照 remove()） */
@@ -420,8 +476,7 @@ export class SftpSession {
     }
     if (st.isDirectory()) {
       const canonical = await fsp.realpath(local)
-      if (ancestors.has(canonical))
-        throw new Error(`Directory symlink cycle: ${local}`)
+      if (ancestors.has(canonical)) throw new Error(`Directory symlink cycle: ${local}`)
       const next = new Set(ancestors).add(canonical)
       try {
         await p((cb) => sftp.mkdir(remote, cb))
@@ -937,7 +992,11 @@ export class SftpSession {
           if (dir === root) throw err
           acc.skipped += 1
           if (acc.skippedPaths.length < 5) acc.skippedPaths.push(dir.split('/').pop() || dir)
-          appLog('sftp', `Measure skipped unreadable directory "${dir}": ${errorMessage(err)}`, 'error')
+          appLog(
+            'sftp',
+            `Measure skipped unreadable directory "${dir}": ${errorMessage(err)}`,
+            'error'
+          )
           progress()
           continue
         }

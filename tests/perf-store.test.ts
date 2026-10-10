@@ -30,3 +30,8 @@ it('removes deleted hosts from all caches even without an OS cache entry', () =>
   usePerfStore.getState().prune(['keep'])
   expect(usePerfStore.getState()).toBe(previous)
 })
+
+it('preserves a missing network direction without replacing it with zero', () => {
+  usePerfStore.getState().apply({ ...sample('host'), netRx: null, netTx: 0 })
+  expect(usePerfStore.getState().histories.host.net).toEqual([{ t: 1, rx: null, tx: 0 }])
+})

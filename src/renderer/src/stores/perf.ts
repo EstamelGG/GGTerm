@@ -50,7 +50,7 @@ export const PERF_HIST_MAX = 120
 
 export interface PerfHistory {
   cpu: { t: number; v: number }[]
-  net: { t: number; rx: number; tx: number }[]
+  net: { t: number; rx: number | null; tx: number | null }[]
 }
 
 /** 追加一帧样本到滚动历史（CPU 折线 + 网络上下行折线），超出上限丢最旧；
@@ -66,7 +66,7 @@ function appendHistory(
       : prev.cpu
   const net =
     e.netRx !== null || e.netTx !== null
-      ? [...prev.net, { t: e.t, rx: e.netRx ?? 0, tx: e.netTx ?? 0 }].slice(-PERF_HIST_MAX)
+      ? [...prev.net, { t: e.t, rx: e.netRx ?? null, tx: e.netTx ?? null }].slice(-PERF_HIST_MAX)
       : prev.net
   return { ...cur, [e.hostId]: { cpu, net } }
 }

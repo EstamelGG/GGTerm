@@ -281,7 +281,7 @@ export function HostSessionPage({
         >
           <>
             {/* 文件标签行：chips 横滚限位（无行尾按钮，整行即滚动区） */}
-            <div className={CHROME_ROW}>
+            <div className={cn(CHROME_ROW, 'bg-sidebar')}>
               <TabScrollArea>
                 {host.files.map((f) => (
                   <TabChip
@@ -355,7 +355,7 @@ export function HostSessionPage({
         </RevealRow>
 
         {/* 下：SSH 会话区（常驻）。chips 在滚动区内横滚，'+' 与状态胶囊固定行尾不越界 */}
-        <div className={CHROME_ROW}>
+        <div className={cn(CHROME_ROW, 'bg-sidebar')}>
           {/* SFTP 面板收纳开关：固定在标签行行首，不随 chips 横滚 */}
           <IconButton
             variant="toolbar"
