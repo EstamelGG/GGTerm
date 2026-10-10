@@ -506,6 +506,52 @@ app
       await act('fill', { selector: '#notes', text: '多行\n内容' })
       observed = await act('snapshot')
       assert.equal(observed.elements.find((el) => el.tag === 'textarea').value, '多行\n内容')
+      // Passive loading/overlay transitions must not focus a background application.
+      const originals = []
+      let focusCalls = 0
+      let showCalls = 0
+      const patch = (object, key, value) => {
+        originals.push(() => {
+          object[key] = original
+        })
+        const original = object[key]
+        object[key] = value
+      }
+      patch(win, 'isFocused', () => false)
+      patch(win, 'focus', () => {
+        focusCalls++
+      })
+      patch(win, 'show', () => {
+        showCalls++
+      })
+      patch(win.webContents, 'focus', () => {
+        focusCalls++
+      })
+      patch(interactiveView.webContents, 'focus', () => {
+        focusCalls++
+      })
+      patch(interactiveView.webContents, 'isFocused', () => true)
+      patch(overlay.webContents, 'focus', () => {
+        focusCalls++
+      })
+      patch(overlay.webContents, 'isFocused', () => true)
+      try {
+        interactiveView.setVisible(true)
+        await browser.withBrowserControl(interactive.id, async () => {
+          assert.equal(overlay.getVisible(), true)
+        })
+        await browser.navigateBrowser(interactive.id, url + '/interact?background-reload')
+        assert.equal(focusCalls, 0, 'loading and overlay updates cannot focus the app')
+        const passive = await browser.openBrowser(url + '/passive-popup', true, undefined, false)
+        assert.equal(showCalls, 0, 'page-initiated tabs cannot show the app')
+        assert.equal(focusCalls, 0, 'page-initiated tabs cannot focus the app')
+        browser.closeBrowser(passive.id)
+        browser.showBrowser(interactive.id)
+        assert.equal(showCalls, 1, 'explicit show remains available')
+        assert.equal(focusCalls, 1, 'explicit show can activate the app')
+      } finally {
+        for (const restore of originals.reverse()) restore()
+      }
       // Native views must disappear before renderer-owned loading/error states are shown.
       const navigationStarted = new Promise((resolve) =>
         interactiveView.webContents.once('did-start-loading', resolve)

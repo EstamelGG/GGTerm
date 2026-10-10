@@ -144,10 +144,17 @@ export function browserState(): BrowserState {
     })
   }
 }
+/** Passive view updates may move focus inside our active window, never activate the app. */
+function focusBrowserContent(wc: Electron.WebContents | undefined): void {
+  if (window && !window.isDestroyed() && window.isFocused() && wc && !wc.isDestroyed()) {
+    wc.focus()
+  }
+}
+
 /** Hide background tabs without switching the workspace. */
 function parkBrowserView(view: WebContentsView): void {
   if (view.getVisible() && !view.webContents.isDestroyed() && view.webContents.isFocused())
-    window?.webContents.focus()
+    focusBrowserContent(window?.webContents)
   view.setVisible(false)
 }
 function publish(): void {
@@ -165,10 +172,10 @@ function updateControlOverlay(tab: BrowserTabEntry): void {
   const restoreFocus = !visible && wasVisible && overlay.webContents.isFocused()
   overlay.setVisible(visible)
   if (restoreFocus) {
-    if (tab.view.getVisible()) tab.view.webContents.focus()
-    else window?.webContents.focus()
+    if (tab.view.getVisible()) focusBrowserContent(tab.view.webContents)
+    else focusBrowserContent(window?.webContents)
   }
-  if (visible && !wasVisible) overlay.webContents.focus()
+  if (visible && !wasVisible) focusBrowserContent(overlay.webContents)
 }
 /** Keep the native page visible for trusted Agent input, but intercept physical user input. */
 export async function withBrowserControl<T>(id: string, work: () => Promise<T>): Promise<T> {
@@ -221,7 +228,7 @@ export async function withBrowserControl<T>(id: string, work: () => Promise<T>):
     publish()
   }
 }
-export function showBrowser(id: string): BrowserState {
+export function showBrowser(id: string, activateWindow = true): BrowserState {
   get(id)
   foregroundId = id
   for (const [key, tab] of tabs)
@@ -231,14 +238,17 @@ export function showBrowser(id: string): BrowserState {
     }
   publish()
   window?.webContents.send('browser:show-request', id)
-  window?.show()
-  window?.focus()
+  if (activateWindow) {
+    window?.show()
+    window?.focus()
+  }
   return browserState()
 }
 export async function openBrowser(
   url: string,
   foreground = false,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  activateWindow = true
 ): Promise<BrowserTab> {
   const target = browserUrl(url)
   if (!window || window.isDestroyed()) throw new Error('Application window is unavailable')
@@ -259,11 +269,18 @@ export async function openBrowser(
   const wc = view.webContents
   trackBrowserDocument(wc)
   wc.on('before-mouse-event', (_event, input) => {
-    if (input.type === 'mouseDown' && !tab.controls && !wc.isFocused()) wc.focus()
+    if (input.type === 'mouseDown' && !tab.controls && !wc.isFocused()) focusBrowserContent(wc)
   })
   wc.on('context-menu', (_event, params) => {
-    if (tab.controls || !view.getVisible() || !window || window.isDestroyed()) return
-    wc.focus()
+    if (
+      tab.controls ||
+      !view.getVisible() ||
+      !window ||
+      window.isDestroyed() ||
+      !window.isFocused()
+    )
+      return
+    focusBrowserContent(wc)
     const template: Electron.MenuItemConstructorOptions[] = []
     if (params.isEditable) {
       template.push(
@@ -302,7 +319,8 @@ export async function openBrowser(
   })
   wc.setAudioMuted(!foreground)
   wc.setWindowOpenHandler(({ url }) => {
-    void openBrowser(url, foregroundId === id).catch(() => {})
+    // Page-initiated popups can select a tab, but must not activate the application.
+    void openBrowser(url, foregroundId === id, undefined, false).catch(() => {})
     return { action: 'deny' }
   })
   wc.on('will-navigate', (event, url) => {
@@ -337,7 +355,7 @@ export async function openBrowser(
     }
   })
   publish()
-  if (foreground) showBrowser(id)
+  if (foreground) showBrowser(id, activateWindow)
   try {
     void wc.loadURL(target).catch(() => {})
     await waitForBrowserDocument(wc, signal)
@@ -643,7 +661,7 @@ export function registerBrowserIpc(): void {
   handle('show', showBrowser)
   handle('focus', (id: string) => {
     const tab = get(id)
-    if (!tab.controls && tab.view.getVisible()) tab.view.webContents.focus()
+    if (!tab.controls && tab.view.getVisible()) focusBrowserContent(tab.view.webContents)
   })
   handle('layout', (id: string | null, bounds: BrowserBounds | null) => {
     for (const [key, tab] of tabs) {
