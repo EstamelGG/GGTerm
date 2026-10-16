@@ -28,7 +28,7 @@ function remoteEntry(path: string, isDir: boolean, size: number): SftpEntry {
 export const transferTools: AnyTool[] = [
   defineTool('sftp_download', {
     description:
-      'Download a remote file or directory to the local machine (via SFTP transfer task; progress visible in the UI transfer panel). Auto-detects file vs directory (directories use a single tar stream when tar is available on the remote). Defaults to the system Downloads folder; destDir may specify a local directory (directory only, no filename). Returns the exact local path where it was saved; the download directory is NOT auto-opened.',
+      'Download a remote file or directory to the local machine (via SFTP transfer task; progress visible in the UI transfer panel). Auto-detects file vs directory (directories use a single tar stream when tar is available on the remote). Defaults to the system Downloads folder; destDir may specify a local directory (directory only, no filename). Returns localPath, the exact local path where it was saved. After success, always tell the user this localPath in your reply. Use the returned path rather than inferring it from destDir or the remote path. The download directory is NOT auto-opened.',
     parameters: z.object({
       description: intentSchema,
       hostId: hostIdSchema,

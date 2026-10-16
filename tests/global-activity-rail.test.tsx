@@ -207,6 +207,21 @@ it('aggregates hosts with distinct cancel targets and clears finished transfers 
   expect(useSftpStore.getState().panes.a.transfers).toHaveLength(1)
 })
 
+it('shows tool transfers without opening an SFTP pane and allows cancellation', () => {
+  useSftpStore.setState({ panes: {} })
+  useSftpStore.getState().applyTransferEvent({ hostId: 'a', transfer: transfer('running') })
+  expect(useSftpStore.getState().panes.a.started).toBe(false)
+  useWorkspaceStore.setState({ activePanel: 'transfers' })
+  render(<ActivityRail />)
+  fireEvent.click(screen.getByRole('button', { name: 'common.cancel' }))
+  expect(cancel).toHaveBeenLastCalledWith('a', 'same-id')
+  act(() => {
+    useSftpStore.getState().applyTransferEvent({ hostId: 'a', transfer: transfer('done') })
+  })
+  expect(useSftpStore.getState().panes.a.transfers).toHaveLength(1)
+  expect(useSftpStore.getState().panes.a.transfers[0].status).toBe('done')
+})
+
 it('keeps transfer history after closing the host and accepts its final cancellation event', () => {
   useSftpStore.setState({
     panes: { a: { started: true, transfers: [transfer('running')] } as SftpPaneState }

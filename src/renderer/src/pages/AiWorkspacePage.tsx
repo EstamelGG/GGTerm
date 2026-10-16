@@ -703,8 +703,10 @@ const ToolCallCard = memo(function ToolCallCard({
   const hasMore = responseLines !== null && responseLines.length > visibleLines
   const pending = needsManualApproval(part)
   const error = toolErrorOf(part, t)
-  // 人工审批时 main 解析的精确落点（requestReason）优先；否则用 input/output 推导
-  const displayPaths = (isTransfer && part.approval?.requestReason) || summary
+  // 下载完成后以实际落盘路径为准；完成前使用审批时解析的预计落点。
+  const displayPaths = downloadLocalPath
+    ? summary
+    : (isTransfer && part.approval?.requestReason) || summary
   const summaryLines = isTransfer ? displayPaths.split('\n') : null
   const [open, setOpen] = useState(false)
   // 标题右侧审批通道标签：人工（含待确认）=黄、自动放行=绿、自动拦截=灰；阻塞等待=信息色
@@ -777,6 +779,20 @@ const ToolCallCard = memo(function ToolCallCard({
           )}
         />
       </button>
+      {!open && downloadLocalPath && (
+        <div className="flex items-start gap-1.5 border-t border-line/60 px-2.5 py-1.5">
+          <PathRow
+            text={t('ai.tool.destPath', { path: downloadLocalPath })}
+            className="min-w-0 flex-1 select-text font-mono text-caption text-fg/90"
+          />
+          <IconButton
+            icon={FolderOpen}
+            tone="accent"
+            title={t('ai.tool.openDir')}
+            onClick={() => void window.aterm.sftp.revealLocal(downloadLocalPath, downloadIsDir)}
+          />
+        </div>
+      )}
       {open && (displayPaths || response || error) && (
         <div className="border-t border-line/60 px-2.5 py-1.5">
           {displayPaths &&

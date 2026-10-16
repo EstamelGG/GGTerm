@@ -37,7 +37,8 @@ import { getOrCreateLink, getLink, removeLink, listLinks, probeLinksOsName } fro
 import {
   listAgentConnections,
   closeAgentConnection,
-  closeSelectedConnections
+  closeSelectedConnections,
+  findTransferSession
 } from './ai/agentLinks'
 import {
   perfSnapshotAll,
@@ -631,13 +632,13 @@ export function registerIpc(): void {
   ipcMain.on(
     'sftp:retryCleanup',
     (_e, { hostId, transferId }: { hostId: string; transferId: string }) => {
-      void sftpOf(hostId).retryCleanup(transferId)
+      void findTransferSession(hostId, transferId)?.retryCleanup(transferId)
     }
   )
   ipcMain.on(
     channels.sftpTransferCancel,
     (_e, { hostId, transferId }: { hostId: string; transferId: string }) => {
-      sftpOf(hostId).cancelTransfer(transferId)
+      findTransferSession(hostId, transferId)?.cancelTransfer(transferId)
     }
   )
 

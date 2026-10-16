@@ -101,6 +101,10 @@ export class SftpSession {
     this.cleanupPaths.set(xfer.id, paths)
   }
 
+  hasTransfer(id: string): boolean {
+    return this.transfers.some((transfer) => transfer.id === id)
+  }
+
   async retryCleanup(id: string): Promise<void> {
     const paths = this.cleanupPaths.get(id)
     const xfer = this.transfers.find((item) => item.id === id)

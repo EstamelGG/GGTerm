@@ -468,7 +468,6 @@ export const useSftpStore = create<SftpStoreState>((set, get) => {
 
     applyTransferEvent: (e) => {
       const p = pane(e.hostId)
-      if (!p.started && !p.transfers.some((tr) => tr.id === e.transfer.id)) return
       const t = e.transfer
       const exists = p.transfers.some((x) => x.id === t.id)
       const transfers = exists

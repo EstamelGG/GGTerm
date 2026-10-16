@@ -22,6 +22,19 @@ export function findAgentResourceLink(hostId: string): HostLink | undefined {
   return candidates.find((entry) => entry.link.activeClient)?.link ?? candidates[0]?.link
 }
 
+/** Transfer controls must target the owning connection, including other AI sessions. */
+export function findTransferSession(
+  hostId: string,
+  transferId: string
+): HostLink['sftp'] | undefined {
+  const user = getLink(hostId)?.sftp
+  if (user?.hasTransfer(transferId)) return user
+  for (const { link } of links.values()) {
+    if (link.hostId === hostId && link.sftp.hasTransfer(transferId)) return link.sftp
+  }
+  return undefined
+}
+
 export function getOrCreateAgentLink(conn: HostConnection): HostLink {
   const key = keyOf(conn.id)
   const existing = links.get(key)
@@ -42,7 +55,7 @@ export function getOrCreateAgentLink(conn: HostConnection): HostLink {
     }
   }
   // A separate HostLink creates its own Client, jump clients and SFTP channel.
-  // Agent state never enters the user's host/shell/SFTP event stream.
+  // Connection/tree state remains isolated; transfers share the global task list.
   const noop = (): void => {}
   const link = new HostLink(
     conn.id,
@@ -53,7 +66,11 @@ export function getOrCreateAgentLink(conn: HostConnection): HostLink {
       onShellData: noop,
       onShellAnnounce: noop,
       onSftpState: noop,
-      onSftpTransfer: noop,
+      onSftpTransfer: (payload) => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) window.webContents.send('sftp:transfer', payload)
+        }
+      },
       onSftpMeasure: noop
     },
     { probeOs: false }
