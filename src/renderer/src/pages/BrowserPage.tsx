@@ -34,16 +34,25 @@ export function BrowserPage({
   obscured,
   onToast,
   notification,
-  onDismissNotification
+  onDismissNotification,
+  onHasContentChange
 }: {
   notification: { text: string; danger?: boolean } | null
   onDismissNotification: () => void
+  onHasContentChange: (hasContent: boolean) => void
   active: boolean
   obscured: boolean
   onToast: (message: string, danger?: boolean) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [state, setState] = useState<BrowserState>({ tabs: [], foregroundId: null })
+  const hasContent = state.tabs.some((tab) => {
+    const url = tab.url.trim()
+    return url !== '' && url !== 'about:blank'
+  })
+  useEffect(() => {
+    onHasContentChange(hasContent)
+  }, [hasContent, onHasContentChange])
   const [selected, setSelected] = useState<string | null>(null)
   const [draft, setDraft] = useState<{ key: string; value: string } | null>(null)
   const [approvingCertificate, setApprovingCertificate] = useState(false)

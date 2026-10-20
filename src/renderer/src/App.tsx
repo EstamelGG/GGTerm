@@ -104,6 +104,7 @@ function App(): React.JSX.Element {
 
   /** 全局 toast：danger=true 时红色描边红字（密钥校验失败等错误提示） */
   const [toast, setToast] = useState<{ text: string; danger?: boolean } | null>(null)
+  const [browserHasContent, setBrowserHasContent] = useState(false)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [pendingClose, setPendingClose] = useState<{ ids: string[]; quit: boolean } | null>(null)
   const affectedForwardCount = usePortForwardsStore((s) =>
@@ -322,12 +323,20 @@ function App(): React.JSX.Element {
             selected={tab.kind === 'ai'}
             onClick={() => setTab({ kind: 'ai' })}
           />
-          <TabChip
-            title={t('browser.tab')}
-            icon={Globe}
-            selected={tab.kind === 'browser'}
-            onClick={() => setTab({ kind: 'browser' })}
-          />
+          <div
+            className={cn(
+              'rounded-full transition-shadow duration-200',
+              browserHasContent &&
+                'ring-1 ring-at-accent/70 ring-offset-2 ring-offset-chrome-bar shadow-[0_0_10px_rgb(var(--at-accent-rgb)/0.35)]'
+            )}
+          >
+            <TabChip
+              title={t('browser.tab')}
+              icon={Globe}
+              selected={tab.kind === 'browser'}
+              onClick={() => setTab({ kind: 'browser' })}
+            />
+          </div>
         </div>
         {hosts.length > 0 && <div className="mx-3 h-4 w-px shrink-0 bg-chrome-sep" />}
         <OverflowTabs
@@ -432,6 +441,7 @@ function App(): React.JSX.Element {
           >
             <BrowserPage
               active={tab.kind === 'browser'}
+              onHasContentChange={setBrowserHasContent}
               obscured={pendingClose !== null}
               onToast={flash}
               notification={toast}

@@ -4,6 +4,7 @@ import type { AgentQuestion } from '@shared/agentQuestion'
 import { errorMessage } from '@shared/error'
 import { Button } from '@/components/form/Buttons'
 import { ATTextField } from '@/components/form/Fields'
+import { ButtonTooltip } from '@/components/ui/ButtonTooltip'
 
 export function QuestionCard({ request }: { request: AgentQuestion }): React.JSX.Element {
   const { t } = useTranslation()
@@ -35,26 +36,30 @@ export function QuestionCard({ request }: { request: AgentQuestion }): React.JSX
         {[...request.options, { label: t('ai.questionOther') }].map((option, index) => {
           const value = index === request.options.length ? null : index
           return (
-            <button
+            <ButtonTooltip
               key={index}
-              type="button"
-              role="radio"
-              aria-checked={selected === value}
-              disabled={busy}
-              onClick={() => setSelected(value)}
-              className={`flex items-start gap-2 rounded-md border px-3 py-2 text-left disabled:opacity-50 ${selected === value ? 'border-at-accent bg-at-accent/10' : 'border-line hover:bg-hover'}`}
+              label={[option.label, option.description].filter(Boolean).join(' — ')}
             >
-              <span
-                aria-hidden="true"
-                className={`mt-1 h-3 w-3 shrink-0 rounded-full border ${selected === value ? 'border-at-accent bg-at-accent' : 'border-muted'}`}
-              />
-              <span>
-                <span className="text-body text-fg">{option.label}</span>
-                {option.description && (
-                  <span className="mt-0.5 block text-minor text-muted">{option.description}</span>
-                )}
-              </span>
-            </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={selected === value}
+                disabled={busy}
+                onClick={() => setSelected(value)}
+                className={`flex items-start gap-2 rounded-md border px-3 py-2 text-left disabled:opacity-50 ${selected === value ? 'border-at-accent bg-at-accent/10' : 'border-line hover:bg-hover'}`}
+              >
+                <span
+                  aria-hidden="true"
+                  className={`mt-1 h-3 w-3 shrink-0 rounded-full border ${selected === value ? 'border-at-accent bg-at-accent' : 'border-muted'}`}
+                />
+                <span>
+                  <span className="text-body text-fg">{option.label}</span>
+                  {option.description && (
+                    <span className="mt-0.5 block text-minor text-muted">{option.description}</span>
+                  )}
+                </span>
+              </button>
+            </ButtonTooltip>
           )
         })}
       </div>
