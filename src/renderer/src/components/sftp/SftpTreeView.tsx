@@ -567,7 +567,15 @@ function SftpRow({
           {children}
         </div>
       </ContextMenuTrigger>
-      <RowMenu entry={entry} actions={actions} />
+      <RowMenu
+        entry={entry}
+        deleteEntries={
+          node.isSelected
+            ? node.tree.selectedNodes.flatMap((n) => (n.data.entry ? [n.data.entry] : []))
+            : [entry]
+        }
+        actions={actions}
+      />
     </ContextMenu>
   )
 }
@@ -725,9 +733,11 @@ function SftpNode({ node, style, dragHandle }: NodeRendererProps<TreeDatum>): Re
 /** 右键菜单（扁平化 + 分组：打开/新建 → 上传 → 传输/整理 → 复制/终端/信息 → 删除） */
 function RowMenu({
   entry,
+  deleteEntries,
   actions
 }: {
   entry: SftpEntry
+  deleteEntries: SftpEntry[]
   actions: SftpTreeActions
 }): React.JSX.Element {
   const { t } = useTranslation()
@@ -800,9 +810,10 @@ function RowMenu({
         {t('sftp.showInfo')}
       </ContextMenuItem>
       <ContextMenuSeparator className="bg-line" />
-      <ContextMenuItem variant="destructive" onClick={() => actions.onDelete([entry])}>
+      <ContextMenuItem variant="destructive" onClick={() => actions.onDelete(deleteEntries)}>
         <Trash2 />
         {t('common.delete')}
+        {deleteEntries.length > 1 && ` (${deleteEntries.length})`}
       </ContextMenuItem>
     </ContextMenuContent>
   )

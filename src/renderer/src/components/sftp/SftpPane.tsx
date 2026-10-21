@@ -13,6 +13,7 @@ import {
   Home,
   Loader2,
   RotateCw,
+  Trash2,
   Upload,
   WifiOff
 } from 'lucide-react'
@@ -124,6 +125,11 @@ export function SftpPane({
   const entryByPath = (path: string): SftpEntry | null =>
     (pane?.children[parentPath(path)] ?? []).find((e) => e.path === path) ?? null
 
+  const selectedEntries = selected.flatMap((path) => {
+    const entry = entryByPath(path)
+    return entry ? [entry] : []
+  })
+
   const selectedDirPath = useCallback((): string => {
     if (selected.length === 1) {
       const e = entryByPath(selected[0])
@@ -207,9 +213,9 @@ export function SftpPane({
           detailPaths: resolved,
           hits: guardHits(resolved)
         })
-      })()
+      })().catch((err) => store.getState().setBanner(hostId, errorMessage(err)))
     },
-    [hostId]
+    [hostId, store]
   )
 
   const prepareRename = (entry: SftpEntry, name: string): void => {
@@ -277,7 +283,14 @@ export function SftpPane({
     switch (actionPrompt.action) {
       case 'delete':
         for (const e of actionPrompt.entries) void store.getState().remove(hostId, e)
-        setSelected((s) => s.filter((p) => !actionPrompt.entries.some((e) => e.path === p)))
+        setSelected((s) =>
+          s.filter(
+            (p) =>
+              !actionPrompt.entries.some(
+                (e) => e.path === p || (e.isDir && p.startsWith(`${e.path}/`))
+              )
+          )
+        )
         break
       case 'move':
         if (actionPrompt.moveDestDir) {
@@ -455,6 +468,14 @@ export function SftpPane({
           onClick={() => store.getState().refresh(hostId)}
         />
         <div className="flex-1" />
+        <IconButton
+          variant="toolbar"
+          icon={Trash2}
+          frame={22}
+          title={`${t('common.delete')}${selectedEntries.length > 0 ? ` (${selectedEntries.length})` : ''}`}
+          disabled={pane?.status !== 'connected' || selectedEntries.length === 0}
+          onClick={() => prepareDelete(selectedEntries)}
+        />
         <IconButton
           variant="toolbar"
           icon={ChevronsDownUp}
