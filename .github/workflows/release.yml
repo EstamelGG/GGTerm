@@ -82,7 +82,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EP_GH_IGNORE_TIME: 'true'
-        run: npx electron-builder ${{ matrix.flags }} -c.publish.releaseType=draft --publish always
+          # 避免 PowerShell 将 -c.publish.releaseType=draft 拆成配置文件参数。
+          EP_DRAFT: 'true'
+        run: npx electron-builder ${{ matrix.flags }} --publish always
 
   publish:
     needs: [prepare, build]
