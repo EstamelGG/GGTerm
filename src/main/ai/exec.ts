@@ -63,7 +63,7 @@ export function connectRemoteExecution(
         events.data(stdout.end() + stderr.end())
         events.exit(exitCode, exitSignal)
       })
-      if (command) channel.write(command.endsWith('\n') ? command : `${command}\n`)
+      if (command) channel.write(/[\r\n]$/.test(command) ? command : `${command}\n`)
       resolve({
         write: (data) => {
           if (closed || !channel.writable)

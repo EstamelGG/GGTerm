@@ -65,6 +65,23 @@ it('opens an empty shell and captures switch login prompts without sending a com
   channel.emit('close')
 })
 
+it.each(['pwd', 'pwd\n', 'pwd\r', 'pwd\r\n'])(
+  'submits the initial command %j with exactly one line ending',
+  async (command) => {
+    const { client, channel } = fixture()
+    const transport = await connectRemoteExecution(client, command, {
+      data: vi.fn(),
+      exit: vi.fn(),
+      lost: vi.fn()
+    })
+    expect(channel.write).toHaveBeenCalledExactlyOnceWith(command === 'pwd' ? 'pwd\n' : command)
+    // Transport writes remain raw so explicit single-key input never gains Enter.
+    transport.write('q')
+    expect(channel.write).toHaveBeenLastCalledWith('q')
+    channel.emit('close')
+  }
+)
+
 it('distinguishes a failed shell request from SSH authentication failure', async () => {
   const { client, shell } = fixture()
   shell.mockImplementation((_options, callback) => callback(new Error('No response from server')))

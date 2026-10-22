@@ -182,7 +182,7 @@ function toolSummary(
   switch (name) {
     case 'execute': {
       const action = str('action')
-      if (action === 'start') {
+      if (action === 'start' || action === 'command') {
         const command = str('command')
         return command ? t('ai.tool.execute', { command }) : t('ai.tool.executeShell')
       }

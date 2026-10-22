@@ -3,6 +3,7 @@ import { listConnections } from '../../data/connections'
 import { z } from 'zod'
 import { defineTool } from './shared'
 import { executions } from '../exec'
+import { executionRecoveryGuidance } from '../executionGuidance'
 import { intentSchema, type AnyTool } from './shared'
 
 const cursor = z
@@ -23,17 +24,23 @@ const waitMs = z
 // Runtime tool discovery requires an object at the schema root. Keep action-specific
 // validation in the handler; a root oneOf causes the runtime to silently omit the tool.
 export const executeParameters = z.object({
-  action: z.enum(['start', 'poll', 'input', 'cancel', 'list']),
+  action: z.enum(['start', 'command', 'poll', 'input', 'cancel', 'list']),
   description: intentSchema,
   hostId: z.string().optional().describe('Required by remote start; from list_hosts'),
   command: z
     .string()
     .optional()
     .describe(
-      'First command fed to the remote shell after start; omit to just open a plain shell; for switches/network devices, omit on first start to inspect login prompts before sending commands'
+      'Required by command: complete command submitted on an existing executionId, automatically appending Enter unless already terminated by CR or LF. Optional for start: first command; omit to open a plain shell. For network devices, start without command and inspect login prompts first'
     ),
-  executionId: z.string().optional().describe('Required by poll/input/cancel'),
-  input: z.string().min(1).optional().describe('Required by input; must end with a newline'),
+  executionId: z.string().optional().describe('Required by command/poll/input/cancel'),
+  input: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Required by input: raw keystrokes sent exactly as provided; NO automatic Enter. Use for pager keys, control characters, partial input, or interactive answers including their required terminator. Use command for complete shell/device commands. To press Enter alone send input="\\n"'
+    ),
   cursor,
   waitMs
 })
@@ -47,6 +54,13 @@ const executeRequest = z.discriminatedUnion('action', [
   }),
   z.object({ action: z.literal('poll'), executionId: z.string(), cursor, waitMs }),
   z.object({
+    action: z.literal('command'),
+    executionId: z.string().min(1),
+    command: z.string().refine((value) => value.trim().length > 0, 'Command must not be blank'),
+    cursor,
+    waitMs
+  }),
+  z.object({
     action: z.literal('input'),
     executionId: z.string(),
     input: z.string().min(1),
@@ -57,11 +71,13 @@ const executeRequest = z.discriminatedUnion('action', [
   z.object({ action: z.literal('list') })
 ])
 
-/** 执行域：远端后台 shell（start/poll/input/cancel/list）；本机命令走 tools/local.ts 的 local_exec */
+/** 执行域：远端后台 shell；command 自动提交，input 保留原始按键。 */
 export const executeTools: AnyTool[] = [
   defineTool('execute', {
     description:
-      'Background remote command execution. start opens an interactive remote shell on hostId (from list_hosts), optionally feeding command as the first input. For switches/network devices or hosts with login dialogs, first start with no command, read the banner/prompts, and resolve any confirmation on the same executionId before sending commands. A password-change Y/N confirmation is not a password-entry prompt or evidence of failed SSH authentication; do not change credentials without user authorization. This tool is remote-only: local commands go through local_exec. No user terminal tab is ever opened. The shell survives after a command finishes: keep using the same executionId to send more input or answer interactive prompts via input (must end with a newline) — cwd, env and login state are preserved. Output is collected continuously; a suspected prompt is checked every 5s with up to 60s wait by default. A detected prompt is NOT proof of success. running only means the shell is alive; completed/exitCode describe only the shell exiting, not the foreground command. The user can view output in read-only agent terminal tabs or terminate it, but cannot type there. A password/verification-code prompt parks this call instead of returning: an input card appears in the chat and the user submits the value there themselves — it never reaches you — so the call resumes only after they act. The returned snapshot then carries humanInputOutcome: submitted = the user filled it in (read the new output and continue), cancelled/expired = they gave up (terminationRequested is set; do not rerun). Never submit sensitive input through the model and never ask for the secret in chat. terminationRequested/unknown forbid further operations or reruns. cancel sends Ctrl-C — it usually keeps the shell and never rolls back. Stopping the agent does not close the shell. Closing an agent terminal tab terminates its shell after user confirmation. list returns all executions of this AI session.',
+      'Background remote command execution. start opens an interactive remote shell on hostId (from list_hosts), optionally feeding command as the first input. For switches/network devices or hosts with login dialogs, first start with no command, read the banner/prompts, and resolve any confirmation on the same executionId before sending commands. A password-change Y/N confirmation is not a password-entry prompt or evidence of failed SSH authentication; do not change credentials without user authorization. This tool is remote-only: local commands go through local_exec. No user terminal tab is ever opened. The shell survives after a command finishes: keep using the same executionId: action=command with command submits a complete shell/device command and automatically appends Enter unless it already ends with CR or LF; action=input with input sends raw bytes unchanged, without automatic Enter, for interactive answers, pager keys, control characters or partial input — cwd, env and login state are preserved. Output is collected continuously; a suspected prompt is checked every 5s with up to 60s wait by default. A detected prompt is NOT proof of success. running only means the shell is alive; completed/exitCode describe only the shell exiting, not the foreground command. The user can view output in read-only agent terminal tabs or terminate it, but cannot type there. A password/verification-code prompt parks this call instead of returning: an input card appears in the chat and the user submits the value there themselves — it never reaches you — so the call resumes only after they act. The returned snapshot then carries humanInputOutcome: submitted = the user filled it in (read the new output and continue), cancelled/expired = they gave up (terminationRequested is set; do not rerun). Never submit sensitive input through the model and never ask for the secret in chat. terminationRequested/unknown forbid further operations or reruns. cancel sends Ctrl-C — it usually keeps the shell and never rolls back. Stopping the agent does not close the shell. Closing an agent terminal tab terminates its shell after user confirmation. list returns all executions of this AI session.' +
+      ' ' +
+      executionRecoveryGuidance,
     parameters: executeParameters,
     handler: async (input, invocation) => {
       const args = executeRequest.parse(input)
@@ -84,9 +100,15 @@ export const executeTools: AnyTool[] = [
         })
         return executions.wait(owner, id, 0, args.waitMs, invocation.signal)
       }
-      if (args.action === 'input') {
+      if (args.action === 'input' || args.action === 'command') {
         // 本次输入的输出起点切片：卡片响应只含本次命令的回显与新输出，不混入之前命令的内容
-        const from = executions.input(owner, args.executionId, args.input)
+        const data =
+          args.action === 'command'
+            ? /[\r\n]$/.test(args.command)
+              ? args.command
+              : `${args.command}\n`
+            : args.input
+        const from = executions.input(owner, args.executionId, data)
         return executions.wait(owner, args.executionId, from, args.waitMs, invocation.signal)
       }
       if (args.action === 'cancel') executions.cancel(owner, args.executionId)
