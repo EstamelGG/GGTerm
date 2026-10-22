@@ -771,5 +771,24 @@
     "focusedHost": "当前主机",
     "removeHostReference": "移除主机引用",
     "removeFileReference": "移除文件引用"
+  },
+  "localTerminal": {
+    "tab": "本地终端",
+    "new": "新建本地终端",
+    "exited": "已退出（{{code}}）",
+    "closeTitle": "关闭本地终端",
+    "closeMessage": "关闭后将结束本地终端会话及其正在运行的任务。"
+  },
+  "appUpdate": {
+    "check": "检查更新",
+    "checking": "正在检查…",
+    "download": "前往下载",
+    "available": "发现新版本 v{{version}}",
+    "latest": "当前已是最新版本（最新发布：v{{version}}）",
+    "failed": "检查失败，请检查网络后重试。",
+    "openFailed": "无法打开下载页面，请稍后重试。",
+    "NO_RELEASE": "暂时没有可用的发布版本。",
+    "RATE_LIMITED": "GitHub 请求受限，请稍后重试。",
+    "RELEASE_NOT_READY": "新版本安装包仍在准备中，请稍后重试。"
   }
 }

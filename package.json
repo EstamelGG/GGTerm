@@ -9,6 +9,8 @@
     "test": "vitest run && npm run test:ssh-signatures",
     "test:ssh-signatures": "node --test tests/ssh-signatures.cjs",
     "test:smoke": "node tests/run-electron-smoke.cjs",
+    "test:local-terminal-ui": "node tests/run-electron-smoke.cjs tests/local-terminal-ui-smoke.cjs",
+    "test:local-terminal": "node tests/run-electron-smoke.cjs tests/local-terminal-smoke.cjs",
     "test:browser-tls": "node tests/run-electron-smoke.cjs tests/browser-tls-smoke.cjs",
     "test:browser": "node tests/run-electron-smoke.cjs tests/browser-smoke.cjs",
     "test:browser-playwright": "node tests/run-electron-smoke.cjs tests/browser-playwright-smoke.cjs",

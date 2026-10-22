@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { ArrowDown, ArrowUp, Ban, Loader2, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useConnectionsStore } from '@/stores/connections'
@@ -38,7 +39,7 @@ function TransferRow({
   hostName,
   tr
 }: {
-  t: ReturnType<typeof useTranslation>['t']
+  t: TFunction<'ui'>
   hostId: string
   hostName: string
   tr: SftpTransferMirror

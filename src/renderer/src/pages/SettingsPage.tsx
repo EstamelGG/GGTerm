@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   SlidersHorizontal
 } from 'lucide-react'
+import { AppUpdate } from '@/components/settings/AppUpdate'
 import appIcon from '../../../../build/icon.png'
 import type { LucideIcon } from 'lucide-react'
 import type { AiApprovalLevel, AppPreferencesData } from '@shared/types'
@@ -435,6 +436,7 @@ export function SettingsPage({
               <img src={appIcon} alt="GGTerm" className="size-16 rounded-xl" draggable={false} />
               <span className="mt-2 text-title font-semibold text-fg">GGTerm</span>
               <span className="text-caption text-muted">v{__APP_VERSION__}</span>
+              <AppUpdate />
               <span className="mt-4 text-caption text-muted">
                 {t('settings.aboutBuildTime')} · {new Date(__BUILD_TIME__).toLocaleString()}
               </span>

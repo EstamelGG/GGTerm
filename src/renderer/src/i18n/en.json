@@ -771,5 +771,24 @@
     "focusedHost": "Focused host",
     "removeHostReference": "Remove host reference",
     "removeFileReference": "Remove file reference"
+  },
+  "localTerminal": {
+    "tab": "Local terminal",
+    "new": "New local terminal",
+    "exited": "Exited ({{code}})",
+    "closeTitle": "Close local terminal",
+    "closeMessage": "Closing will end local terminal sessions and their running tasks."
+  },
+  "appUpdate": {
+    "check": "Check for updates",
+    "checking": "Checking…",
+    "download": "Open downloads",
+    "available": "Version {{version}} is available",
+    "latest": "You are up to date (latest release: v{{version}})",
+    "failed": "Unable to check for updates. Check your connection and try again.",
+    "openFailed": "Unable to open the download page. Please try again.",
+    "NO_RELEASE": "No release is available yet.",
+    "RATE_LIMITED": "GitHub rate limit reached. Please try again later.",
+    "RELEASE_NOT_READY": "Release installers are still being prepared. Please try again later."
   }
 }

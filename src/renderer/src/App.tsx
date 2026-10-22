@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next'
 import i18next from 'i18next'
 import {
   Globe,
+  TerminalSquare,
   LayoutGrid,
   Settings,
   Waypoints,
@@ -36,10 +37,14 @@ import { useWorkspaceStore } from '@/stores/workspace'
 import { usePortForwardsStore } from '@/stores/portForwards'
 import { BrowserPage } from '@/pages/BrowserPage'
 import ConnectionPage from '@/pages/ConnectionPage'
+import { useLocalTerminalStore } from '@/stores/localTerminal'
 import { useHumanInputStore } from '@/stores/humanInput'
 
 /** 终端页/主机页 lazy 分包：xterm、monaco 等重依赖移出首包（页面加载后实例照常常驻） */
 
+const LocalTerminalPage = lazy(() =>
+  import('./pages/LocalTerminalPage').then((m) => ({ default: m.LocalTerminalPage }))
+)
 const HostSessionPage = lazy(() =>
   import('./pages/HostSessionPage').then((m) => ({ default: m.HostSessionPage }))
 )
@@ -105,6 +110,7 @@ function App(): React.JSX.Element {
   /** 全局 toast：danger=true 时红色描边红字（密钥校验失败等错误提示） */
   const [toast, setToast] = useState<{ text: string; danger?: boolean } | null>(null)
   const [browserHasContent, setBrowserHasContent] = useState(false)
+  const [localOpened, setLocalOpened] = useState(false)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [pendingClose, setPendingClose] = useState<{ ids: string[]; quit: boolean } | null>(null)
   const affectedForwardCount = usePortForwardsStore((s) =>
@@ -267,7 +273,10 @@ function App(): React.JSX.Element {
       const protectedFiles = targets.some((h) =>
         h.files.some((f) => f.text !== f.saved || f.saving)
       )
-      const confirmSession = targets.length > 0 && (!quit || (prefs?.confirmCloseSession ?? true))
+      const localRunning =
+        quit && useLocalTerminalStore.getState().tabs.some((tab) => tab.exitCode === undefined)
+      const confirmSession =
+        (targets.length > 0 || localRunning) && (!quit || (prefs?.confirmCloseSession ?? true))
       if (protectedFiles || confirmSession) setPendingClose({ ids, quit })
       else if (quit) window.aterm.window.confirmClose()
       else ids.forEach((id) => closeHost(id))
@@ -310,30 +319,47 @@ function App(): React.JSX.Element {
           window.aterm.window.platform === 'darwin' ? 'pl-[78px]' : 'pl-3'
         )}
       >
-        <div className="flex shrink-0 items-center gap-2">
-          <TabChip
+        <div className="flex shrink-0 items-center gap-1.5">
+          <IconButton
+            variant="toolbar"
             title={t('session.tabConnections')}
             icon={LayoutGrid}
             selected={tab.kind === 'connections'}
+            aria-pressed={tab.kind === 'connections'}
             onClick={() => setTab({ kind: 'connections' })}
           />
-          <TabChip
+          <IconButton
+            variant="toolbar"
             title={t('session.tabTopology')}
             icon={Waypoints}
             selected={tab.kind === 'ai'}
+            aria-pressed={tab.kind === 'ai'}
             onClick={() => setTab({ kind: 'ai' })}
+          />
+          <IconButton
+            variant="toolbar"
+            title={t('localTerminal.tab')}
+            icon={TerminalSquare}
+            selected={tab.kind === 'local'}
+            aria-pressed={tab.kind === 'local'}
+            onClick={() => {
+              setLocalOpened(true)
+              setTab({ kind: 'local' })
+            }}
           />
           <div
             className={cn(
-              'rounded-full transition-shadow duration-200',
+              'rounded-md transition-shadow duration-200',
               browserHasContent &&
                 'ring-1 ring-at-accent/70 ring-offset-2 ring-offset-chrome-bar shadow-[0_0_10px_rgb(var(--at-accent-rgb)/0.35)]'
             )}
           >
-            <TabChip
+            <IconButton
+              variant="toolbar"
               title={t('browser.tab')}
               icon={Globe}
               selected={tab.kind === 'browser'}
+              aria-pressed={tab.kind === 'browser'}
               onClick={() => setTab({ kind: 'browser' })}
             />
           </div>
@@ -448,6 +474,7 @@ function App(): React.JSX.Element {
               onDismissNotification={() => setToast(null)}
             />
             <Suspense fallback={null}>
+              {localOpened && <LocalTerminalPage active={tab.kind === 'local'} onToast={flash} />}
               <div className={cn('absolute inset-0', tab.kind !== 'settings' && 'hidden')}>
                 <SettingsPage onToast={flash} />
               </div>
@@ -486,6 +513,10 @@ function App(): React.JSX.Element {
             )}
           message={[
             t(pendingClose.quit ? 'session.closeSessionMessage' : 'session.closeUserConnections'),
+            pendingClose.quit &&
+            useLocalTerminalStore.getState().tabs.some((tab) => tab.exitCode === undefined)
+              ? t('localTerminal.closeMessage')
+              : '',
             affectedForwardCount ? t('forward.disconnectHint', { count: affectedForwardCount }) : ''
           ]
             .filter(Boolean)

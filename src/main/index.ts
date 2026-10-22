@@ -2,6 +2,12 @@ import { app, shell, BrowserWindow, nativeTheme, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import {
+  installLocalTerminals,
+  disposeLocalTerminals,
+  registerLocalTerminalIpc
+} from './localTerminal'
+import { registerAppUpdateIpc } from './appUpdate'
 import { registerIpc } from './ipc'
 import { getPreferences } from './data/prefs'
 import { initMainI18n } from './i18n'
@@ -63,6 +69,7 @@ function createWindow(): void {
   })
 
   installBrowser(mainWindow)
+  installLocalTerminals(mainWindow.webContents)
 
   // 终端字号快捷键（Cmd/Ctrl +/-/0）：窗口级拦截，先于页面与 xterm 拿到按键
   installTerminalFontKeys(mainWindow)
@@ -132,6 +139,8 @@ app.whenReady().then(() => {
   installMenu()
   registerIpc()
   registerBrowserIpc()
+  registerLocalTerminalIpc()
+  registerAppUpdateIpc()
   createWindow()
 
   app.on('activate', function () {
@@ -146,7 +155,8 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', (event) => {
-  // 无外部子进程需要优雅停止（copilot runtime 已移除）；挂起审批随进程结束由拒绝语义结算
+  disposeLocalTerminals()
+  // 本地 PTY 已清理；挂起审批随进程结束由拒绝语义结算
   event.preventDefault()
   app.exit(0)
 })

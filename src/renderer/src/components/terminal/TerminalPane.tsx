@@ -24,6 +24,7 @@ export interface TerminalPaneProps {
   style?: CSSProperties
   /** 允许外部本地文件拖入插入本地路径（仅本地控制台；远程 shell 不响应本地文件） */
   acceptLocalFiles?: boolean
+  localShell?: string
 }
 
 /**
@@ -35,7 +36,8 @@ export function TerminalPane({
   instanceKey,
   className,
   style,
-  acceptLocalFiles = false
+  acceptLocalFiles = false,
+  localShell
 }: TerminalPaneProps): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null)
   const { t } = useTranslation()
@@ -98,7 +100,19 @@ export function TerminalPane({
   }, [instanceKey])
 
   const pastePaths = (paths: string[]): void => {
-    if (paths.length > 0) pasteTerminal(instanceKey, paths.map(shellQuote).join(' '))
+    if (paths.length > 0)
+      pasteTerminal(
+        instanceKey,
+        paths
+          .map((path) =>
+            acceptLocalFiles && window.aterm.window.platform === 'win32'
+              ? /cmd(?:\.exe)?$/i.test(localShell ?? '')
+                ? `"${path}"`
+                : `'${path.replaceAll("'", "''")}'`
+              : shellQuote(path)
+          )
+          .join(' ')
+      )
     focusTerminal(instanceKey) // 拖放后焦点回终端，路径立即可续写命令
   }
 
