@@ -5,6 +5,7 @@ import { useResizePreview } from '@/lib/useResizePreview'
 import { cn } from '@/lib/utils'
 import { IconButton } from '@/components/ui/IconButton'
 import { useSftpStore } from '@/stores/sftp'
+import { useLocalTerminalStore } from '@/stores/localTerminal'
 import { useSessionStore } from '@/stores/session'
 import { useWorkspaceStore, type ActivityPanelId } from '@/stores/workspace'
 import { isBusy, pendingApprovals, useAiStore } from '@/stores/ai'
@@ -35,12 +36,14 @@ const PANELS = [
   { id: 'commands', icon: Zap, titleKey: 'activity.commands' }
 ] as const
 
-/** 全局右栏：AI 常驻；性能跟随当前聚焦主机，快捷命令跟随最近进入的 shell 主机，传输跨主机汇总。 */
+/** 全局右栏：AI 常驻；性能跟随主机，快捷指令跟随最近进入的本地或 SSH 终端，传输跨主机汇总。 */
 export function ActivityRail(): React.JSX.Element {
   const { t } = useTranslation()
   const active = useWorkspaceStore((s) => s.activePanel)
   const open = useWorkspaceStore((s) => s.sidebarOpen)
   const focusedId = useWorkspaceStore((s) => s.focusedHostId)
+  const localTarget = useWorkspaceStore((s) => s.terminalTarget === 'local')
+  const local = useLocalTerminalStore((s) => s.tabs.find((tab) => tab.id === s.activeId))
   const host = useSessionStore((s) => s.hosts.find((h) => h.id === focusedId))
   const hostId = host?.id ?? null
   const [width, setWidth] = useState(loadWidth)
@@ -125,12 +128,18 @@ export function ActivityRail(): React.JSX.Element {
                 <span className="shrink-0 text-body font-medium text-fg">
                   {t(PANELS.find((p) => p.id === active)!.titleKey)}
                 </span>
-                {active !== 'transfers' && active !== 'forwards' && host && (
+                {active === 'commands' && (localTarget || host) && (
                   <span
                     className="min-w-0 truncate text-caption text-muted"
-                    title={`${host.conn.username}@${host.conn.host}:${host.conn.port}`}
+                    title={
+                      localTarget
+                        ? t('localTerminal.tab')
+                        : `${host!.conn.username}@${host!.conn.host}:${host!.conn.port}`
+                    }
                   >
-                    {host.title}
+                    {localTarget
+                      ? `${t('localTerminal.tab')}${local ? ` ${local.number}` : ''}`
+                      : host?.title}
                   </span>
                 )}
                 {active === 'forwards' && (
@@ -148,8 +157,10 @@ export function ActivityRail(): React.JSX.Element {
                   <PortForwardsPanel />
                 ) : active === 'transfers' ? (
                   <TransfersPanel />
-                ) : hostId ? (
-                  <CommandsPanel hostId={hostId} />
+                ) : localTarget || hostId ? (
+                  <CommandsPanel
+                    target={localTarget ? { kind: 'local' } : { kind: 'host', hostId: hostId! }}
+                  />
                 ) : (
                   <p className="py-8 text-center text-minor text-muted">
                     {t('activity.noFocusedHost')}

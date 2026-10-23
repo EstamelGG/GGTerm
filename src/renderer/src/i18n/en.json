@@ -777,7 +777,12 @@
     "new": "New local terminal",
     "exited": "Exited ({{code}})",
     "closeTitle": "Close local terminal",
-    "closeMessage": "Closing will end local terminal sessions and their running tasks."
+    "closeMessage": "Closing will end local terminal sessions and their running tasks.",
+    "defaultShell": "Default local shell",
+    "systemDefault": "System default",
+    "shellHint": "Applies to newly created local terminals; existing sessions keep their shell.",
+    "rescan": "Rescan available shells",
+    "unavailable": "Shell unavailable. Choose another shell."
   },
   "appUpdate": {
     "check": "Check for updates",

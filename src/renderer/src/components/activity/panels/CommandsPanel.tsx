@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Pencil, Play, Trash2 } from 'lucide-react'
+import { errorMessage } from '@shared/error'
+import { useLocalTerminalStore } from '@/stores/localTerminal'
 import { useSessionStore } from '@/stores/session'
 import { useCommandsStore } from '@/stores/commands'
 import { IconButton } from '@/components/ui/IconButton'
@@ -8,30 +10,51 @@ import { Button } from '@/components/form/Buttons'
 import { ATTextField, ATTextArea } from '@/components/form/Fields'
 
 /**
- * 快捷指令面板（活动栏，仅 SSH 会话页）：命令库 CRUD + 一键发送到当前聚焦 shell。
- * 写入走 shells.input（与键盘同通道，天然串行化）。
+ * 快捷指令库由本地与 SSH 终端共用，写入与各自键盘输入走同一通道。
  */
 
-export function CommandsPanel({ hostId }: { hostId: string }): React.JSX.Element {
+export function CommandsPanel({
+  target
+}: {
+  target: { kind: 'host'; hostId: string } | { kind: 'local' }
+}): React.JSX.Element {
   const { t } = useTranslation()
   const commands = useCommandsStore((s) => s.commands)
   const addCommand = useCommandsStore((s) => s.add)
   const updateCommand = useCommandsStore((s) => s.update)
   const removeCommand = useCommandsStore((s) => s.remove)
 
+  const hostId = target.kind === 'host' ? target.hostId : null
   const host = useSessionStore((s) => s.hosts.find((h) => h.id === hostId))
+  const local = useLocalTerminalStore((s) => s.tabs.find((tab) => tab.id === s.activeId))
+  const [failure, setFailure] = useState<{ key: string; message: string } | null>(null)
 
   const [editing, setEditing] = useState<{ id: string } | 'new' | null>(null)
   const [name, setName] = useState('')
   const [cmdText, setCmdText] = useState('')
 
   const focusedShell = host?.shells.find((s) => s.id === host.focusShellId) ?? host?.shells[0]
-  const runnable = host?.phase === 'connected' && focusedShell?.status === 'connected'
+  const runnable =
+    target.kind === 'local'
+      ? !!local && local.exitCode === undefined
+      : host?.phase === 'connected' && focusedShell?.status === 'connected'
+  const targetKey =
+    target.kind === 'local' ? `local:${local?.id}` : `host:${hostId}:${focusedShell?.id}`
 
-  const run = (command: string): void => {
-    if (!focusedShell || !runnable) return
-    const payload = command.endsWith('\n') ? command : `${command}\n`
-    window.aterm.shells.input(hostId, focusedShell.id, payload)
+  const run = async (command: string): Promise<void> => {
+    if (!runnable) return
+    setFailure(null)
+    try {
+      if (target.kind === 'local' && local) {
+        const text = command.replace(/\r?\n/g, '\r')
+        await window.aterm.localTerminal.write(local.id, text.endsWith('\r') ? text : `${text}\r`)
+      } else if (hostId && focusedShell) {
+        const payload = command.endsWith('\n') ? command : `${command}\n`
+        window.aterm.shells.input(hostId, focusedShell.id, payload)
+      }
+    } catch (error) {
+      setFailure({ key: targetKey, message: errorMessage(error) })
+    }
   }
 
   const startNew = (): void => {
@@ -66,6 +89,12 @@ export function CommandsPanel({ hostId }: { hostId: string }): React.JSX.Element
           {runnable ? t('activity.commandsRun') : t('activity.commandsNoTarget')}
         </span>
       </div>
+
+      {failure?.key === targetKey && (
+        <p role="alert" className="text-minor text-danger">
+          {failure.message}
+        </p>
+      )}
 
       {/* 内联编辑器（新增/编辑共用） */}
       {editing !== null && (
@@ -127,7 +156,7 @@ export function CommandsPanel({ hostId }: { hostId: string }): React.JSX.Element
                 frame={22}
                 aria-label={runnable ? t('activity.commandsRun') : t('activity.commandsNoTarget')}
                 disabled={!runnable}
-                onClick={() => run(c.command)}
+                onClick={() => void run(c.command)}
               />
               <IconButton
                 icon={Pencil}

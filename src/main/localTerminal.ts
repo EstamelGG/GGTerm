@@ -1,8 +1,8 @@
 import { ipcMain, type WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { homedir, userInfo } from 'node:os'
-import { basename, join } from 'node:path'
-import { existsSync } from 'node:fs'
+import { basename } from 'node:path'
+import { getPreferences } from './data/prefs'
+import { listLocalShells, localShellInvocation } from './localShells'
 import * as pty from 'node-pty'
 import type { LocalTerminalEvent, LocalTerminalSession } from '../shared/localTerminal'
 
@@ -51,27 +51,18 @@ export function disposeLocalTerminals(owner?: WebContents): void {
   }
 }
 
-function shellInvocation(): { shell: string; args: string[] } {
-  if (process.platform !== 'win32') {
-    const shell = process.env.SHELL || userInfo().shell || '/bin/sh'
-    return { shell, args: ['-l'] }
-  }
-  const root = process.env.SystemRoot || 'C:\\Windows'
-  const shell = join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
-  if (existsSync(shell)) return { shell, args: ['-NoLogo'] }
-  return { shell: process.env.ComSpec || 'cmd.exe', args: [] }
-}
-
 export function registerLocalTerminalIpc(): void {
-  ipcMain.handle('local-terminal:create', (event): LocalTerminalSession => {
+  ipcMain.handle('local-terminal:shells', () => listLocalShells())
+  ipcMain.handle('local-terminal:create', async (event): Promise<LocalTerminalSession> => {
     const owner = event.sender
     if (!owners.has(owner) || event.senderFrame !== owner.mainFrame)
       throw new Error('Local terminal is only available in the application')
+    const { shell, args, cwd } = await localShellInvocation(getPreferences().localShell)
+    if (owner.isDestroyed() || event.senderFrame !== owner.mainFrame)
+      throw new Error('Application window was closed or navigated')
     if ([...sessions.values()].filter((s) => s.owner === owner).length >= 20)
       throw new Error('Too many local terminals (maximum 20)')
-    const { shell, args } = shellInvocation()
     const id = randomUUID()
-    const cwd = homedir()
     const child = pty.spawn(shell, args, {
       name: 'xterm-256color',
       cols: 80,

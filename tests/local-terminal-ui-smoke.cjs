@@ -76,12 +76,72 @@ app.on('browser-window-created', (_event, win) => {
       `window.aterm.localTerminal.write(localEvents[0].id, ${JSON.stringify(process.platform === 'win32' ? "Write-Output ('VISIBLE_' + (40+2) + '_中文')\r" : 'printf \'VISIBLE_%s_中文\\n\' "$((40+2))"\r')})`
     )
     await waitFor(`localEvents.some(e => e.type === 'data' && e.data.includes('VISIBLE_42_中文'))`)
+    await clickLabel('Quick Commands')
+    await clickText('New')
+    const quickCommand =
+      process.platform === 'win32'
+        ? "Write-Output ('QUICK_' + (80+2))"
+        : 'printf \'QUICK_%s\\n\' "$((80+2))"'
+    await js(`
+      const nameInput = document.querySelector('input[placeholder="Name, e.g. List containers"]');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(nameInput, 'Local smoke command');
+      nameInput.dispatchEvent(new Event('input', {bubbles:true}));
+      const commandInput = nameInput.parentElement.querySelector('textarea');
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(commandInput, ${JSON.stringify(quickCommand)});
+      commandInput.dispatchEvent(new Event('input', {bubbles:true}));
+    `)
+    await waitFor(
+      `[...document.querySelectorAll('button')].some(e => e.textContent === 'Save' && !e.disabled)`
+    )
+    await clickText('Save')
+    await waitFor(
+      `!!document.querySelector('button[aria-label="Send to active terminal"]:not([disabled])')`
+    )
+    await clickLabel('Send to active terminal')
+    await waitFor(`localEvents.some(e => e.type === 'data' && e.data.includes('QUICK_82'))`)
+    await clickLabel('Quick Commands')
     await clickLabel('Hosts')
     await clickLabel('Local terminal')
     assert.equal(
       await js(`new Set(localEvents.map(e => e.id)).size`),
       1,
       'switching pages must retain the session'
+    )
+    // Choose a discovered shell through Settings, then verify persistence and spawning.
+    await clickLabel('Settings')
+    await waitFor(
+      `!!document.querySelector('button[aria-label="Default local shell"]:not([disabled])')`
+    )
+    const discovered = await js('window.aterm.localTerminal.shells()')
+    const chosen = discovered.shells.find((shell) =>
+      process.platform === 'win32' ? /cmd\.exe$/i.test(shell.path) : shell.path === '/bin/sh'
+    )
+    assert.ok(chosen, 'the standard system shell must be discovered')
+    await js(
+      `document.querySelector('button[aria-label="Default local shell"]').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}))`
+    )
+    await waitFor(`!!document.querySelector('[role="option"]')`)
+    await js(
+      `[...document.querySelectorAll('[role="option"]')].find(e => e.textContent.includes(${JSON.stringify(chosen.path)})).dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}))`
+    )
+    await waitFor(
+      `window.aterm.prefs.get().then(prefs => prefs.localShell === ${JSON.stringify(chosen.path)})`
+    )
+    await waitFor(
+      `document.querySelector('button[aria-label="Default local shell"]').textContent.includes(${JSON.stringify(chosen.path)})`
+    )
+    const configured = await js('window.aterm.localTerminal.create()')
+    assert.equal(configured.shell.toLowerCase(), path.basename(chosen.path).toLowerCase())
+    await js(`window.aterm.localTerminal.close(${JSON.stringify(configured.id)})`)
+    await delay(150)
+    fs.writeFileSync(
+      path.join(root, 'local-shell-settings.png'),
+      (await win.webContents.capturePage({ stayHidden: true, stayAwake: true })).toPNG()
+    )
+    await clickLabel('Local terminal')
+    assert.equal(
+      await js(`getComputedStyle(document.querySelector('.bg-terminal')).borderRadius`),
+      '10px'
     )
     await clickLabel('New local terminal')
     await waitFor(`new Set(localEvents.map(e => e.id)).size === 2`)

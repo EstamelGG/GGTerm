@@ -128,6 +128,8 @@ export interface AppPreferencesData {
    * 终端屏幕视觉字号 = 该值（UI 缩放经 1/scale 反算抵消），与 UI 缩放正交。
    */
   terminalFontSize: number
+  /** 本地终端默认解释器的绝对路径；空串使用系统默认，仅影响新建会话。 */
+  localShell: string
   /** AI 配置（非密钥） */
   ai: AiConfig
 }

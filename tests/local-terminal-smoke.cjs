@@ -2,6 +2,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
 const { app, BrowserWindow } = require('electron')
+app.setPath('userData', fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'aterm-local-pty-')))
 app.on('window-all-closed', () => {})
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const deadline = setTimeout(() => {

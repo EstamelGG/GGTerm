@@ -19,6 +19,14 @@ const mocks = vi.hoisted(() => ({
 vi.mock('electron', () => ({
   ipcMain: { handle: (name: string, fn: Handler) => mocks.handlers.set(name, fn) }
 }))
+vi.mock('../src/main/data/prefs', () => ({ getPreferences: () => ({ localShell: '' }) }))
+vi.mock('../src/main/localShells', () => ({
+  listLocalShells: async () => ({
+    shells: [{ path: '/bin/sh', label: 'sh' }],
+    defaultPath: '/bin/sh'
+  }),
+  localShellInvocation: async () => ({ shell: '/bin/sh', args: ['-l'], cwd: '/tmp' })
+}))
 vi.mock('node-pty', () => ({
   spawn: vi.fn(() => {
     const child = {
@@ -64,10 +72,10 @@ beforeEach(() => {
   registerLocalTerminalIpc()
 })
 
-it('preserves output and a fast shell exit until the renderer is ready', () => {
+it('preserves output and a fast shell exit until the renderer is ready', async () => {
   const sender = owner()
   installLocalTerminals(sender)
-  const session = call('create', sender)
+  const session = await call('create', sender)
   const child = mocks.children[0]
   child.data('中文 prompt')
   child.exit({ exitCode: 7 })
@@ -89,12 +97,12 @@ it('preserves output and a fast shell exit until the renderer is ready', () => {
   expect(child.write).not.toHaveBeenCalled()
 })
 
-it('rejects untrusted creation and cross-window access, validates dimensions, and cleans up on reload', () => {
+it('rejects untrusted creation and cross-window access, validates dimensions, and cleans up on reload', async () => {
   const sender = owner()
   const other = owner()
-  expect(() => call('create', other)).toThrow('only available')
+  await expect(call('create', other)).rejects.toThrow('only available')
   installLocalTerminals(sender)
-  const { id } = call('create', sender)
+  const { id } = await call('create', sender)
   const child = mocks.children[0]
   expect(() => call('write', other, id, 'whoami\r')).toThrow('not found')
   expect(() => call('resize', sender, id, 0, 24)).toThrow('Invalid')
@@ -110,10 +118,10 @@ it('rejects untrusted creation and cross-window access, validates dimensions, an
   expect(() => call('ready', sender, id)).toThrow('not found')
 })
 
-it('pauses excessive startup output, resumes after readiness, and stops on window destruction', () => {
+it('pauses excessive startup output, resumes after readiness, and stops on window destruction', async () => {
   const sender = owner()
   installLocalTerminals(sender)
-  const { id } = call('create', sender)
+  const { id } = await call('create', sender)
   const child = mocks.children[0]
   child.data('x'.repeat(1024 * 1024))
   expect(child.pause).toHaveBeenCalledOnce()

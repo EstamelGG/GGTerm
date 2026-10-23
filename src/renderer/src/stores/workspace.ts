@@ -14,6 +14,8 @@ interface WorkspaceState {
   selectPanel: (panel: ActivityPanelId) => void
   /** 最近进入的主机会话；目录选择和显式引用均不得改变它。 */
   focusedHostId: string | null
+  /** 快捷指令跟随最近进入的终端类型；性能面板仍独立跟随主机。 */
+  terminalTarget: 'host' | 'local'
   fileAttachments: Record<string, AiFileReference[]>
   attachFile: (sessionId: string, file: AiFileReference) => void
   removeFile: (sessionId: string, hostId: string, path: string) => void
@@ -56,13 +58,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   sidebarOpen: false,
   activePanel: 'ai',
   focusedHostId: null,
+  terminalTarget: 'host',
   attachments: {},
   fileAttachments: {},
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
   selectPanel: (activePanel) => set({ activePanel, sidebarOpen: true }),
   setAiOpen: (open) =>
     set(open ? { sidebarOpen: true, activePanel: 'ai' } : { sidebarOpen: false }),
-  focusHost: (focusedHostId) => set({ focusedHostId }),
+  focusHost: (focusedHostId) =>
+    set((s) => ({ focusedHostId, terminalTarget: focusedHostId ? 'host' : s.terminalTarget })),
   attachHost: (sessionId, hostId) =>
     set((s) => ({
       sidebarOpen: true,

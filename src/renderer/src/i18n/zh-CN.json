@@ -777,7 +777,12 @@
     "new": "新建本地终端",
     "exited": "已退出（{{code}}）",
     "closeTitle": "关闭本地终端",
-    "closeMessage": "关闭后将结束本地终端会话及其正在运行的任务。"
+    "closeMessage": "关闭后将结束本地终端会话及其正在运行的任务。",
+    "defaultShell": "本地默认 Shell",
+    "systemDefault": "系统默认",
+    "shellHint": "仅对新建本地终端生效，已有会话继续使用原 Shell。",
+    "rescan": "重新扫描可用 Shell",
+    "unavailable": "Shell 不可用，请选择其他 Shell。"
   },
   "appUpdate": {
     "check": "检查更新",

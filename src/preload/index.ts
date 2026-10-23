@@ -1,4 +1,4 @@
-import type { LocalTerminalEvent, LocalTerminalSession } from '../shared/localTerminal'
+import type { LocalShells, LocalTerminalEvent, LocalTerminalSession } from '../shared/localTerminal'
 import type { AppUpdateResult } from '../shared/appUpdate'
 import type { AgentQuestion } from '../shared/agentQuestion'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
@@ -85,6 +85,7 @@ import type { PortForward, PortForwardAction, PortForwardInput } from '../shared
 /** 渲染进程可用的 API（对照 Swift 层：SwiftData/Keychain/UserDefaults 通道） */
 const api = {
   localTerminal: {
+    shells: (): Promise<LocalShells> => ipcRenderer.invoke('local-terminal:shells'),
     create: (): Promise<LocalTerminalSession> => ipcRenderer.invoke('local-terminal:create'),
     ready: (id: string): Promise<void> => ipcRenderer.invoke('local-terminal:ready', id),
     write: (id: string, data: string): Promise<void> =>

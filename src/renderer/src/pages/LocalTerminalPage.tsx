@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { Plus, TerminalSquare } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { localTerminalKey } from '@shared/localTerminal'
 import { errorMessage } from '@shared/error'
 import { useLocalTerminalStore } from '@/stores/localTerminal'
 import { usePrefsStore } from '@/stores/prefs'
+import { WorkspacePane } from '@/components/terminal/WorkspacePane'
+import { CHROME_ROW } from '@/components/chrome/layout'
+import { shellStateDot } from '@/lib/linkPhase'
 import { TerminalPane } from '@/components/terminal/TerminalPane'
 import { TabChip, TabScrollArea } from '@/components/chrome/TabChip'
 import { IconButton } from '@/components/ui/IconButton'
@@ -61,14 +64,17 @@ export function LocalTerminalPage({
     }
   }
   return (
-    <div className={cn('absolute inset-0 flex flex-col bg-bg', !active && 'hidden')}>
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-line bg-chrome-bar px-3">
+    <div className={cn('absolute inset-0 flex flex-col bg-sidebar', !active && 'hidden')}>
+      <div className={cn(CHROME_ROW, 'bg-sidebar')}>
         <TabScrollArea>
           {tabs.map((tab) => (
             <TabChip
               key={tab.id}
               title={`${t('localTerminal.tab')} ${tab.number}`}
-              icon={TerminalSquare}
+              accentBorder={false}
+              statusColor={shellStateDot(
+                tab.error ? 'error' : tab.exitCode === undefined ? 'connected' : 'ended'
+              )}
               selected={tab.id === activeId}
               showClose
               onClick={() => select(tab.id)}
@@ -79,37 +85,47 @@ export function LocalTerminalPage({
             />
           ))}
         </TabScrollArea>
-        <IconButton icon={Plus} title={t('localTerminal.new')} disabled={creating} onClick={add} />
+        <IconButton
+          variant="toolbar"
+          size={10}
+          frame={22}
+          cornerRadius={11}
+          filled
+          icon={Plus}
+          title={t('localTerminal.new')}
+          disabled={creating}
+          onClick={add}
+        />
       </div>
-      {current ? (
-        <>
-          <div className="flex shrink-0 items-center gap-3 border-b border-line px-3 py-1 text-caption text-muted">
-            <span>{current.shell}</span>
-            <span className="min-w-0 truncate font-mono" title={current.cwd}>
-              {current.cwd}
-            </span>
-            {current.exitCode !== undefined && (
-              <span>{t('localTerminal.exited', { code: current.exitCode })}</span>
-            )}
+      <div className="relative min-h-0 flex-1 bg-sidebar">
+        {current ? (
+          <WorkspacePane
+            overlay={
+              current.error || current.exitCode !== undefined ? (
+                <div className="absolute inset-x-0 top-0 flex justify-center pt-5">
+                  <span
+                    role={current.error ? 'alert' : 'status'}
+                    className="glass max-w-[80%] truncate rounded-full px-2.5 py-[5px] text-caption font-medium text-fg"
+                  >
+                    {current.error || t('localTerminal.exited', { code: current.exitCode })}
+                  </span>
+                </div>
+              ) : undefined
+            }
+          >
+            <TerminalPane
+              key={current.id}
+              instanceKey={localTerminalKey(current.id)}
+              acceptLocalFiles
+              localShell={current.shell}
+            />
+          </WorkspacePane>
+        ) : (
+          <div className="flex h-full items-center justify-center">
+            <Button title={t('localTerminal.new')} disabled={creating} onClick={add} />
           </div>
-          {current.error && (
-            <p role="alert" className="px-3 py-1 text-minor text-danger">
-              {current.error}
-            </p>
-          )}
-          <TerminalPane
-            key={current.id}
-            instanceKey={localTerminalKey(current.id)}
-            className="min-h-0 flex-1"
-            acceptLocalFiles
-            localShell={current.shell}
-          />
-        </>
-      ) : (
-        <div className="flex flex-1 items-center justify-center">
-          <Button title={t('localTerminal.new')} disabled={creating} onClick={add} />
-        </div>
-      )}
+        )}
+      </div>
       {pendingClose && (
         <DialogShell
           open

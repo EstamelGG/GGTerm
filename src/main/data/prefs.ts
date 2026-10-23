@@ -13,6 +13,7 @@ const store = new Store<AppPreferencesData>({
     bgTransparency: 100,
     uiScale: 100,
     terminalFontSize: 12,
+    localShell: '',
     ai: AI_DEFAULTS
   }
 })
@@ -79,6 +80,7 @@ export function getPreferences(): AppPreferencesData {
     bgTransparency: store.get('bgTransparency'),
     uiScale: store.get('uiScale'),
     terminalFontSize: store.get('terminalFontSize'),
+    localShell: store.get('localShell'),
     ai: migrateAi(store.get('ai'))
   }
 }

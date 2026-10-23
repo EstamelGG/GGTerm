@@ -66,6 +66,7 @@ beforeEach(() => {
     sidebarOpen: true,
     activePanel: 'ai',
     focusedHostId: null,
+    terminalTarget: 'host',
     attachments: {}
   })
   useSessionStore.setState({ hosts: [host('a'), host('b')], tab: { kind: 'connections' } })

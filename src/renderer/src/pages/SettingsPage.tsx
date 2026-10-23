@@ -9,6 +9,8 @@ import {
   ShieldCheck,
   SlidersHorizontal
 } from 'lucide-react'
+import { SettingsRow as Row } from '@/components/settings/SettingsRow'
+import { LocalShellSettings } from '@/components/settings/LocalShellSettings'
 import { AppUpdate } from '@/components/settings/AppUpdate'
 import appIcon from '../../../../build/icon.png'
 import type { LucideIcon } from 'lucide-react'
@@ -99,27 +101,6 @@ function Section({
       {desc && <p className="mt-0.5 text-caption leading-relaxed text-muted">{desc}</p>}
       <div className="mt-3 flex flex-col gap-3.5">{children}</div>
     </section>
-  )
-}
-
-/** 一行设置项（label 左 / 控件右；对照 macOS System Settings row） */
-function Row({
-  title,
-  desc,
-  children
-}: {
-  title: string
-  desc?: string
-  children: React.ReactNode
-}): React.JSX.Element {
-  return (
-    <div className="flex items-center justify-between gap-6 rounded-lg border border-line px-3 py-2.5">
-      <div className="min-w-0">
-        <div className="text-body text-fg">{title}</div>
-        {desc && <div className="mt-0.5 text-caption leading-relaxed text-muted">{desc}</div>}
-      </div>
-      <div className="shrink-0">{children}</div>
-    </div>
   )
 }
 
@@ -313,6 +294,7 @@ export function SettingsPage({
             />
             {/* 界面缩放：整体缩放 UI（5% 步进）；终端字号在渲染层反算抵消 */}
             <UiScaleRow value={prefs?.uiScale ?? 100} onCommit={(v) => onChange({ uiScale: v })} />
+            <LocalShellSettings />
             <Row title={t('settings.language')}>
               <SegmentedControl
                 value={prefs?.locale ?? 'auto'}

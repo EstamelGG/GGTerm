@@ -38,6 +38,7 @@ export const usePrefsStore = create<PrefsState>((set, get) => ({
           bgTransparency: 100,
           uiScale: 100,
           terminalFontSize: 12,
+          localShell: '',
           ai: AI_DEFAULTS
         }),
         ...patch

@@ -185,6 +185,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   setTab: (tab) => {
     if (tab.kind === 'host') useWorkspaceStore.getState().focusHost(tab.id)
+    else if (tab.kind === 'local') useWorkspaceStore.setState({ terminalTarget: 'local' })
     set({ tab })
   },
 
