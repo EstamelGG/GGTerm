@@ -4,6 +4,10 @@ import { useSessionStore } from '../src/renderer/src/stores/session'
 import type { HostConnection } from '../src/shared/types'
 
 const originalAddShell = useSessionStore.getState().addShell
+vi.mock('../src/renderer/src/terminal/registry', () => ({ disposeTerminal: vi.fn() }))
+vi.mock('../src/renderer/src/stores/sftp', () => ({
+  useSftpStore: { getState: () => ({ dropHost: vi.fn() }) }
+}))
 
 afterEach(() => {
   useSessionStore.setState({ hosts: [], addShell: originalAddShell, tab: { kind: 'connections' } })
@@ -27,6 +31,91 @@ it('keeps one workspace when two connection replies arrive for the same host', a
   expect(useSessionStore.getState().hosts.map((h) => h.id)).toEqual(['race-host'])
   expect(addShell).toHaveBeenCalledTimes(2)
   expect(useSessionStore.getState().tab).toEqual({ kind: 'host', id: 'race-host' })
+})
+
+it('does not resurrect a detached workspace when its connection reply arrives', async () => {
+  let reply!: (value: { awaiting: boolean }) => void
+  Object.defineProperty(window, 'aterm', {
+    configurable: true,
+    value: {
+      hosts: {
+        connect: () =>
+          new Promise((resolve) => {
+            reply = resolve
+          })
+      }
+    }
+  })
+  const addShell = vi.fn()
+  useSessionStore.setState({ addShell })
+  const pending = useSessionStore
+    .getState()
+    .connect({ id: 'closed', name: 'Closed' } as HostConnection)
+  useSessionStore.getState().detachHost('closed')
+  reply({ awaiting: false })
+  await pending
+  expect(useSessionStore.getState().hosts).toEqual([])
+  expect(addShell).not.toHaveBeenCalled()
+})
+
+it('finishes a requested connection without taking focus back after navigation', async () => {
+  let reply!: (value: { awaiting: boolean }) => void
+  Object.defineProperty(window, 'aterm', {
+    configurable: true,
+    value: {
+      hosts: {
+        connect: () =>
+          new Promise((resolve) => {
+            reply = resolve
+          })
+      }
+    }
+  })
+  useSessionStore.setState({ addShell: vi.fn() })
+  const pending = useSessionStore.getState().connect({ id: 'slow', name: 'Slow' } as HostConnection)
+  useSessionStore.getState().setTab({ kind: 'settings' })
+  reply({ awaiting: false })
+  await pending
+  expect(useSessionStore.getState().hosts[0].id).toBe('slow')
+  expect(useSessionStore.getState().tab).toEqual({ kind: 'settings' })
+})
+
+it('keeps the most recently requested host as the navigation target', async () => {
+  const replies: ((value: { awaiting: boolean }) => void)[] = []
+  Object.defineProperty(window, 'aterm', {
+    configurable: true,
+    value: {
+      hosts: {
+        connect: () => new Promise((resolve) => replies.push(resolve))
+      }
+    }
+  })
+  useSessionStore.setState({ addShell: vi.fn() })
+  const first = useSessionStore.getState().connect({ id: 'first', name: 'First' } as HostConnection)
+  const last = useSessionStore.getState().connect({ id: 'last', name: 'Last' } as HostConnection)
+  replies[0]({ awaiting: false })
+  await first
+  expect(useSessionStore.getState().tab).toEqual({ kind: 'connections' })
+  replies[1]({ awaiting: false })
+  await last
+  expect(useSessionStore.getState().tab).toEqual({ kind: 'host', id: 'last' })
+})
+
+it('restores one viewer using current connection state without opening a user transport', async () => {
+  const { useLinksStore } = await import('../src/renderer/src/stores/links')
+  useLinksStore.setState({ byHost: { viewer: { hostId: 'viewer', phase: 'connected', since: 1 } } })
+  const connect = vi.fn()
+  Object.defineProperty(window, 'aterm', { configurable: true, value: { hosts: { connect } } })
+  const conn = { id: 'viewer', name: 'Viewer' } as HostConnection
+  useSessionStore.getState().restoreViewer(conn, 'task')
+  useSessionStore.getState().restoreViewer(conn, 'task')
+  expect(useSessionStore.getState().hosts).toHaveLength(1)
+  expect(useSessionStore.getState().hosts[0]).toMatchObject({
+    phase: 'connected',
+    viewerOnly: true,
+    focusShellId: 'task'
+  })
+  expect(connect).not.toHaveBeenCalled()
 })
 
 it('connects without creating a shell or changing the current page, then enters on request', async () => {

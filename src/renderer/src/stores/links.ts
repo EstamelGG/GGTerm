@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { useWorkspaceIssues } from './workspaceIssues'
 import type { HostStateEvent } from '@shared/types'
 import {
   connectionSlot,
@@ -24,6 +25,7 @@ export const useLinksStore = create<LinksState>((set) => ({
   watch: () => {
     if (!watching) {
       let active = true
+      let request = 0
       let floor = 0
       let pending: ConnectionStateEvent[] | undefined = []
       const slots = new Map<string, ConnectionState>()
@@ -57,25 +59,34 @@ export const useLinksStore = create<LinksState>((set) => ({
         apply(event)
         publish()
       })
-      void window.aterm.hosts
-        .runtimeSnapshot()
-        .then((snapshot) => {
-          if (!active) return
-          slots.clear()
-          versions.clear()
-          for (const state of snapshot.connections) {
-            slots.set(connectionSlot(state), state)
-            versions.set(connectionSlot(state), state.revision)
-          }
-          floor = snapshot.revision
-          for (const event of pending ?? []) apply(event)
-          pending = undefined
-          publish()
-        })
-        .catch(() => {
-          // Live events still recover the mirror if the initial snapshot fails.
-          pending = undefined
-        })
+      const restore = (): Promise<void> => {
+        if (!active) return Promise.resolve()
+        const version = ++request
+        pending = []
+        return window.aterm.hosts
+          .runtimeSnapshot()
+          .then((snapshot) => {
+            if (!active || version !== request) return
+            slots.clear()
+            versions.clear()
+            for (const state of snapshot.connections) {
+              slots.set(connectionSlot(state), state)
+              versions.set(connectionSlot(state), state.revision)
+            }
+            floor = snapshot.revision
+            for (const event of pending ?? []) apply(event)
+            pending = undefined
+            publish()
+            useWorkspaceIssues.getState().clear('connections')
+          })
+          .catch((error) => {
+            if (!active || version !== request) return
+            // Live events still recover the mirror if the initial snapshot fails.
+            pending = undefined
+            useWorkspaceIssues.getState().report('connections', error, 'recovery', restore)
+          })
+      }
+      void restore()
       watching = {
         users: 0,
         stop: () => {

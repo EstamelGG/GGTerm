@@ -795,5 +795,13 @@
     "NO_RELEASE": "暂时没有可用的发布版本。",
     "RATE_LIMITED": "GitHub 请求受限，请稍后重试。",
     "RELEASE_NOT_READY": "新版本安装包仍在准备中，请稍后重试。"
+  },
+  "workspaceErrors": {
+    "recovery": "工作区状态恢复失败",
+    "shell": "终端创建失败",
+    "credentials": "登录信息保存失败",
+    "preferences": "偏好设置加载失败",
+    "retry": "重试",
+    "dismiss": "关闭提示"
   }
 }

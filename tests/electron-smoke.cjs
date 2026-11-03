@@ -59,6 +59,11 @@ async function waitFor(win, expression, timeout = 12000) {
 }
 
 app.on('browser-window-created', (_event, win) => {
+  const editorLifetimeErrors = []
+  win.webContents.on('console-message', (event) => {
+    if (/Trying to add a disposable to a DisposableStore/.test(event.message))
+      editorLifetimeErrors.push(event.message)
+  })
   const executeJavaScript = win.webContents.executeJavaScript.bind(win.webContents)
   win.webContents.executeJavaScript = async (source, ...args) => {
     try {
@@ -604,6 +609,8 @@ app.on('browser-window-created', (_event, win) => {
     )
     await waitFor(win, '!document.querySelector(\'input[aria-label="agent-live-one"]\')')
     assert.deepEqual(closedIds, ['agent-live-one'])
+    await delay(900) // Include delayed completion/resize cleanup in the regression window.
+    assert.deepEqual(editorLifetimeErrors, [], 'Monaco must not register listeners after disposal')
     assert(
       await win.webContents.executeJavaScript(
         '!!document.querySelector(\'input[aria-label="user-live"]\') && !!document.querySelector(\'input[aria-label="agent-live-two"]\')'

@@ -124,7 +124,10 @@ export function RemoteEditorView({
       }
     }
     const stopResize = observeSettledResize(container, layout)
-    editor.onDidDispose(stopResize)
+    editor.onDidDispose(() => {
+      stopResize()
+      if (editorRef.current === editor) editorRef.current = null
+    })
     layout()
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => saveRef.current())
     editor.addCommand(monaco.KeyCode.Escape, () => {
@@ -214,6 +217,7 @@ export function RemoteEditorView({
       <div className="relative min-h-0 flex-1">
         {!doc.loading && (
           <Editor
+            key={doc.id}
             value={doc.text}
             language={language}
             theme="ggterm-dark"
@@ -263,7 +267,7 @@ export function RemoteEditorView({
           <span className="text-muted">{t('editor.saving')}</span>
         ) : dirty ? (
           <span className="text-warn">{t('editor.unsaved')}</span>
-        ) : !doc.loading ? (
+        ) : !doc.loading && !doc.error ? (
           <span className="text-muted">{t(doc.readOnly ? 'editor.readOnly' : 'editor.saved')}</span>
         ) : null}
         <span title={doc.path} className="min-w-0 flex-1 truncate font-mono text-muted">

@@ -39,6 +39,8 @@ import { BrowserPage } from '@/pages/BrowserPage'
 import ConnectionPage from '@/pages/ConnectionPage'
 import { useLocalTerminalStore } from '@/stores/localTerminal'
 import { useHumanInputStore } from '@/stores/humanInput'
+import { useWorkspaceIssues } from '@/stores/workspaceIssues'
+import { WorkspaceIssues } from '@/components/chrome/WorkspaceIssues'
 
 /** 终端页/主机页 lazy 分包：xterm、monaco 等重依赖移出首包（页面加载后实例照常常驻） */
 
@@ -143,17 +145,25 @@ function App(): React.JSX.Element {
 
   // 偏好 + 全局主机/shell 事件管道
   useEffect(() => {
-    void usePrefsStore
-      .getState()
-      .load()
-      .then(() => {
+    let active = true
+    const loadPreferences = async (): Promise<void> => {
+      try {
+        await usePrefsStore.getState().load()
+        if (!active) return
         const p = usePrefsStore.getState().data
-        if (!p) return
-        applyAccent(p.accentHex)
-        applyBgTransparency(p.bgTransparency)
-        applyUiScale(p.uiScale)
-        applyTerminalFontSize(p.terminalFontSize)
-      })
+        if (p) {
+          applyAccent(p.accentHex)
+          applyBgTransparency(p.bgTransparency)
+          applyUiScale(p.uiScale)
+          applyTerminalFontSize(p.terminalFontSize)
+        }
+        useWorkspaceIssues.getState().clear('preferences')
+      } catch (error) {
+        if (active)
+          useWorkspaceIssues.getState().report('preferences', error, 'preferences', loadPreferences)
+      }
+    }
+    void loadPreferences()
     const offHost = useLinksStore.subscribe((next, previous) => {
       for (const [hostId, state] of Object.entries(next.userByHost)) {
         if (
@@ -187,7 +197,11 @@ function App(): React.JSX.Element {
     const offOs = window.aterm.perf.onOs((e) => usePerfStore.getState().applyOs(e))
     // 任意来源（表单/agent tool/导入）的连接增删改 → 全量刷新目录数据
     const offConnChanged = window.aterm.connections.onChange(
-      () => void useConnectionsStore.getState().load()
+      () =>
+        void useConnectionsStore
+          .getState()
+          .load()
+          .catch((error) => useWorkspaceIssues.getState().report('catalog', error, 'recovery'))
     )
     const offLog = window.aterm.logs.onLog((e) => useLogStore.getState().append(e))
     const offLogOpen = window.aterm.logs.onOpen(() => {
@@ -203,17 +217,11 @@ function App(): React.JSX.Element {
     })
     // 人工输入待办（密码/验证码）：主进程推送 → 对应工具卡挂出输入区；启动时恢复未收尾的待办
     const offQuestions = useQuestionsStore.getState().watch()
-    const humanInput = useHumanInputStore.getState()
-    const offInputRequest = window.aterm.humanInput.onRequest((request) => {
-      humanInput.request(request)
-      flash(i18next.t('ai.inputToast'))
-    })
-    const offInputResolved = window.aterm.humanInput.onResolved((info) => humanInput.resolve(info))
-    void window.aterm.humanInput
-      .list()
-      .then(humanInput.replaceAll)
-      .catch(() => {})
+    const offHumanInput = useHumanInputStore
+      .getState()
+      .watch(() => flash(i18next.t('ai.inputToast')))
     return () => {
+      active = false
       offQuestions()
       offHost()
       offLinks()
@@ -229,8 +237,7 @@ function App(): React.JSX.Element {
       offLog()
       offLogOpen()
       offAiEvent()
-      offInputRequest()
-      offInputResolved()
+      offHumanInput()
     }
   }, [])
 
@@ -248,7 +255,7 @@ function App(): React.JSX.Element {
   }
 
   const handleConnect = (c: HostConnection): void => {
-    void connect(c).catch((err) => flash(errorMessage(err)))
+    void connect(c).catch((err) => flash(errorMessage(err), true))
   }
 
   const requestClose = useCallback(
@@ -515,6 +522,10 @@ function App(): React.JSX.Element {
           }}
         />
       )}
+
+      <div className="absolute inset-x-3 top-12 z-40">
+        <WorkspaceIssues />
+      </div>
 
       {/* Toast：底部黑色胶囊，1.4s 自动淡出 */}
       <div

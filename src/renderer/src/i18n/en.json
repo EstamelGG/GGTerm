@@ -795,5 +795,13 @@
     "NO_RELEASE": "No release is available yet.",
     "RATE_LIMITED": "GitHub rate limit reached. Please try again later.",
     "RELEASE_NOT_READY": "Release installers are still being prepared. Please try again later."
+  },
+  "workspaceErrors": {
+    "recovery": "Workspace state could not be restored",
+    "shell": "Terminal could not be created",
+    "credentials": "Login details could not be saved",
+    "preferences": "Preferences could not be loaded",
+    "retry": "Retry",
+    "dismiss": "Dismiss"
   }
 }

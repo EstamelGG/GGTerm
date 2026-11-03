@@ -117,6 +117,21 @@ it('shows errors even when the editor still has unsaved changes', () => {
   expect(screen.getByRole('combobox', { name: 'editor.encoding' })).toBeTruthy()
 })
 
+it('does not claim a failed read was saved', () => {
+  render(
+    <RemoteEditorView
+      doc={{ ...doc, text: '', saved: '', error: 'Read failed' }}
+      onText={vi.fn()}
+      onSave={vi.fn()}
+      onReload={vi.fn()}
+      onEncoding={vi.fn()}
+      onDownload={vi.fn()}
+    />
+  )
+  expect(screen.getByRole('alert').textContent).toBe('Read failed')
+  expect(screen.queryByText('editor.saved')).toBeNull()
+})
+
 it('blocks saving a lossy/binary or failed initial read', async () => {
   useSessionStore.setState({
     hosts: [{ id: 'host', files: [{ ...doc, readOnly: true }] } as HostWorkspaceMirror]
@@ -133,4 +148,22 @@ it('preserves the old buffer when reopening with another encoding fails', async 
   expect(current.text).toBe('changed')
   expect(current.encoding).toBe('gb18030')
   expect(current.error).toBe('Disconnected')
+})
+
+it('does not approve closing a replacement workspace after an old save completes', async () => {
+  let finish!: () => void
+  writeText.mockImplementation(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve
+      })
+  )
+  const save = useSessionStore.getState().saveFile('host', 'doc')
+  useSessionStore.getState().closeFile('host', 'doc')
+  useSessionStore.setState({
+    hosts: [{ id: 'host', files: [{ ...doc, id: 'replacement' }] } as HostWorkspaceMirror]
+  })
+  finish()
+  expect(await save).toBe(false)
+  expect(useSessionStore.getState().hosts[0].files[0].saved).toBe('original')
 })
