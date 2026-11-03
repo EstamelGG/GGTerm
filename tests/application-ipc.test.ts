@@ -6,7 +6,7 @@ const state = vi.hoisted(() => ({
   send: new Map<string, Handler>(),
   windows: [] as Array<{
     isDestroyed: () => boolean
-    webContents: { send: ReturnType<typeof vi.fn> }
+    webContents: { isDestroyed: () => boolean; send: ReturnType<typeof vi.fn> }
   }>,
   notifier: vi.fn(),
   getPreferences: vi.fn(),
@@ -84,6 +84,71 @@ beforeEach(() => {
   registerIpc()
 })
 
+it('rejects invalid writes before calling persistence', () => {
+  expect(() => state.invoke.get('prefs:set')!({}, { uiScale: 'large' })).toThrow(
+    'Invalid IPC input'
+  )
+  expect(state.setPreferences).not.toHaveBeenCalled()
+  expect(() => state.invoke.get('ai:setApiKey')!({}, null)).toThrow('Invalid IPC input')
+  expect(state.setKey).not.toHaveBeenCalled()
+})
+
+it('isolates destroyed and failing renderers during broadcasts', () => {
+  const closed = {
+    isDestroyed: () => false,
+    webContents: { isDestroyed: () => true, send: vi.fn() }
+  }
+  const broken = {
+    isDestroyed: () => false,
+    webContents: {
+      isDestroyed: () => false,
+      send: vi.fn(() => {
+        throw new Error('Renderer gone')
+      })
+    }
+  }
+  const live = {
+    isDestroyed: () => false,
+    webContents: { isDestroyed: () => false, send: vi.fn() }
+  }
+  state.windows = [closed, broken, live]
+  state.notifier.mock.calls[0][0]({ uiScale: 100 })
+  expect(closed.webContents.send).not.toHaveBeenCalled()
+  expect(live.webContents.send).toHaveBeenCalledOnce()
+})
+
+it('rejects acknowledged closes and consumes failures from legacy close events', async () => {
+  state.closeSession.mockRejectedValue(new Error('Close failed'))
+  await expect(state.invoke.get('ai:closeSession')!({}, { sessionId: 's' })).rejects.toThrow(
+    'Close failed'
+  )
+  state.send.get('ai:closeSession')!({}, { sessionId: 's' })
+  await vi.waitFor(() =>
+    expect(state.log).toHaveBeenCalledWith('ipc', 'ai:closeSession: Close failed', 'error')
+  )
+})
+
+it('serializes acknowledged language switches and recovers after a failed switch', async () => {
+  let fail!: (error: Error) => void
+  state.setLocale
+    .mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          fail = reject
+        })
+    )
+    .mockResolvedValue('en')
+  const first = state.invoke.get('locale:apply')!({}, 'zh-CN') as Promise<unknown>
+  const rejected = expect(first).rejects.toThrow('Language failed')
+  const second = state.invoke.get('locale:apply')!({}, 'en') as Promise<unknown>
+  await Promise.resolve()
+  expect(state.setLocale).toHaveBeenCalledTimes(1)
+  fail(new Error('Language failed'))
+  await rejected
+  await expect(second).resolves.toEqual({ pref: 'en', locale: 'en' })
+  expect(state.menu).toHaveBeenCalledOnce()
+})
+
 it('returns saved preferences and applies scale and sampling changes only when requested', () => {
   const saved = { uiScale: 123, perfMonitorDisabled: true }
   state.getPreferences.mockReturnValue(saved)
@@ -102,8 +167,14 @@ it('returns saved preferences and applies scale and sampling changes only when r
 })
 
 it('broadcasts main-process preference updates to all surviving windows', () => {
-  const live = { isDestroyed: () => false, webContents: { send: vi.fn() } }
-  const closed = { isDestroyed: () => true, webContents: { send: vi.fn() } }
+  const live = {
+    isDestroyed: () => false,
+    webContents: { isDestroyed: () => false, send: vi.fn() }
+  }
+  const closed = {
+    isDestroyed: () => true,
+    webContents: { isDestroyed: () => false, send: vi.fn() }
+  }
   state.windows = [live, closed]
   const saved = { uiScale: 100 }
   state.notifier.mock.calls[0][0](saved)
@@ -123,7 +194,7 @@ it('preserves the immediate locale reply and broadcasts after language and menu 
       })
   )
   const send = vi.fn(() => expect(state.menu).toHaveBeenCalledOnce())
-  state.windows = [{ isDestroyed: () => false, webContents: { send } }]
+  state.windows = [{ isDestroyed: () => false, webContents: { isDestroyed: () => false, send } }]
   expect(state.invoke.get('locale:set')!({}, 'zh-CN')).toEqual({ pref: 'zh-CN', locale: 'en' })
   expect(state.setLocale).toHaveBeenCalledWith('zh-CN')
   expect(state.menu).not.toHaveBeenCalled()
@@ -133,18 +204,20 @@ it('preserves the immediate locale reply and broadcasts after language and menu 
   expect(send).toHaveBeenCalledWith('locale:changed', { locale: 'zh-CN' })
 })
 
-it('keeps log history as a request and log writes and clears as events', () => {
+it('keeps log history as a request and log writes and clears as events', async () => {
   const entries = [{ category: 'sftp', message: 'Ready' }]
   state.logs.mockReturnValue(entries)
   expect(state.invoke.get('app:logs')!()).toBe(entries)
   state.send.get('app:log-push')!({}, entries[0])
+  await Promise.resolve()
   expect(state.log).toHaveBeenCalledWith('sftp', 'Ready')
   state.send.get('app:log-clear')!()
+  await Promise.resolve()
   expect(state.clearLogs).toHaveBeenCalledOnce()
   expect(state.invoke.has('app:log-push')).toBe(false)
 })
 
-it('retains AI session replies and the one-way close event', () => {
+it('retains AI session replies and the one-way close event', async () => {
   const sessions = [{ id: 'session' }],
     messages = [{ id: 'message' }]
   state.listSessions.mockReturnValue(sessions)
@@ -155,14 +228,15 @@ it('retains AI session replies and the one-way close event', () => {
   expect(state.invoke.get('ai:getMessages')!({}, { sessionId: 'session' })).toBe(messages)
   expect(state.getMessages).toHaveBeenCalledWith('session')
   expect(state.send.get('ai:closeSession')!({}, { sessionId: 'session' })).toBeUndefined()
+  await Promise.resolve()
   expect(state.closeSession).toHaveBeenCalledWith('session')
-  expect(state.invoke.has('ai:closeSession')).toBe(false)
+  expect(state.invoke.has('ai:closeSession')).toBe(true)
 })
 
 it('preserves AI run errors and cancellation session and turn identity', async () => {
   const failure = new Error('Provider unavailable')
   state.run.mockRejectedValue(failure)
-  const messages = [{ id: 'message' }]
+  const messages = [{ id: 'message', role: 'user', parts: [{ type: 'text', text: 'Hello' }] }]
   await expect(
     state.invoke.get('ai:run')!({}, { sessionId: 'session', messages, turnId: 'turn' })
   ).rejects.toBe(failure)

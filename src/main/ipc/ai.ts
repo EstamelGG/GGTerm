@@ -3,50 +3,46 @@ import type { AiUIMessage } from '../../shared/types'
 import * as ai from '../ai/engine'
 import { getApiKey, setApiKey } from '../data/aiSecrets'
 import { channels } from './channels'
+import { runOneWay } from './delivery'
+import {
+  parseInput,
+  sessionSchema,
+  runSchema,
+  cancelSchema,
+  modelSchema,
+  idSchema,
+  keySchema
+} from './validation'
 
 export function registerAiIpc(): void {
-  /* ---------------- AI Agent（⑤） ---------------- */
-
   ipcMain.handle(channels.aiListSessions, () => ai.listSessions())
-
   ipcMain.handle(channels.aiCreateSession, () => ai.createSession())
-
-  ipcMain.handle(channels.aiGetMessages, (_e, { sessionId }: { sessionId: string }) =>
-    ai.getMessages(sessionId)
+  ipcMain.handle(channels.aiGetMessages, (_e, input: unknown) =>
+    ai.getMessages(parseInput(sessionSchema, input).sessionId)
   )
-
-  ipcMain.on(channels.aiCloseSession, (_e, { sessionId }: { sessionId: string }) => {
-    void ai.closeSession(sessionId)
+  const close = (input: unknown): Promise<void> =>
+    ai.closeSession(parseInput(sessionSchema, input).sessionId)
+  // Keep legacy send callers while allowing the current UI to await acknowledgement.
+  ipcMain.on(channels.aiCloseSession, (_e, input: unknown) =>
+    runOneWay(channels.aiCloseSession, () => close(input))
+  )
+  ipcMain.handle(channels.aiCloseSession, (_e, input: unknown) => close(input))
+  ipcMain.handle(channels.aiRun, (_e, input: unknown) => {
+    const { sessionId, messages, turnId } = parseInput(runSchema, input)
+    return ai.run(sessionId, messages as AiUIMessage[], turnId)
   })
-
-  ipcMain.handle(
-    channels.aiRun,
-    (
-      _e,
-      {
-        sessionId,
-        messages,
-        turnId
-      }: { sessionId: string; messages: AiUIMessage[]; turnId: string }
-    ) => ai.run(sessionId, messages, turnId)
+  ipcMain.handle(channels.aiCancel, (_e, input: unknown) => {
+    const { sessionId, turnId } = parseInput(cancelSchema, input)
+    return ai.cancel(sessionId, turnId)
+  })
+  ipcMain.handle(channels.aiListModels, (_e, input: unknown) =>
+    ai.listModels(parseInput(modelSchema, input).providerId)
   )
-
-  ipcMain.handle(
-    channels.aiCancel,
-    (_e, { sessionId, turnId }: { sessionId: string; turnId?: string }) =>
-      ai.cancel(sessionId, turnId)
+  ipcMain.handle(channels.aiHasApiKey, (_e, input: unknown) =>
+    Boolean(getApiKey(parseInput(idSchema, input)))
   )
-
-  ipcMain.handle(channels.aiListModels, (_e, { providerId }: { providerId: string }) =>
-    ai.listModels(providerId)
-  )
-
-  ipcMain.handle(channels.aiHasApiKey, (_e, profileId: string) => Boolean(getApiKey(profileId)))
-
-  ipcMain.handle(
-    channels.aiSetApiKey,
-    (_e, { profileId, apiKey }: { profileId: string; apiKey: string }) => {
-      setApiKey(profileId, apiKey)
-    }
-  )
+  ipcMain.handle(channels.aiSetApiKey, (_e, input: unknown) => {
+    const { profileId, apiKey } = parseInput(keySchema, input)
+    setApiKey(profileId, apiKey)
+  })
 }

@@ -3,6 +3,9 @@ import type { AppPreferencesData } from '@shared/types'
 import { AI_DEFAULTS } from '@shared/ai'
 import { applyAccent, applyBgTransparency, applyUiScale } from '@/lib/accent'
 import { applyTerminalFontSize } from '@/terminal/registry'
+import { useWorkspaceIssues } from './workspaceIssues'
+
+const writeVersions = new Map<string, number>()
 
 /**
  * 应用偏好（全局单例）：App 启动拉取一次；模型切换器与设置弹窗共用同一份数据。
@@ -18,12 +21,8 @@ export const usePrefsStore = create<PrefsState>((set, get) => ({
   data: null,
 
   load: async () => {
-    try {
-      const p = await window.aterm.prefs.get()
-      set({ data: p })
-    } catch {
-      /* 保持 null：调用方以 AI_DEFAULTS 兜底 */
-    }
+    const p = await window.aterm.prefs.get()
+    set({ data: p })
   },
 
   update: (patch) => {
@@ -48,8 +47,26 @@ export const usePrefsStore = create<PrefsState>((set, get) => ({
     if (patch.bgTransparency !== undefined) applyBgTransparency(patch.bgTransparency)
     if (patch.uiScale !== undefined) applyUiScale(patch.uiScale)
     if (patch.terminalFontSize !== undefined) applyTerminalFontSize(patch.terminalFontSize)
-    void window.aterm.prefs.set(patch).catch(() => {})
-    if (patch.locale) void window.aterm.locale.set(patch.locale).catch(() => {})
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined) continue
+      const version = (writeVersions.get(key) ?? 0) + 1
+      writeVersions.set(key, version)
+      const scope = `preferences:save:${key}`
+      useWorkspaceIssues.getState().clear(scope)
+      const save = async (): Promise<void> => {
+        if (writeVersions.get(key) !== version) return
+        try {
+          if (key === 'locale')
+            await window.aterm.locale.apply(value as AppPreferencesData['locale'])
+          else await window.aterm.prefs.set({ [key]: value })
+          if (writeVersions.get(key) === version) useWorkspaceIssues.getState().clear(scope)
+        } catch (error) {
+          if (writeVersions.get(key) === version)
+            useWorkspaceIssues.getState().report(scope, error, 'preferences', save)
+        }
+      }
+      void save()
+    }
   }
 }))
 

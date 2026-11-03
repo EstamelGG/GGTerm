@@ -275,6 +275,9 @@ const api = {
       ipcRenderer.invoke('prefs:set', patch)
   },
   locale: {
+    /** Confirm language application, including menu and renderer notification. */
+    apply: (pref: LocalePref): Promise<{ pref: LocalePref; locale: Exclude<LocalePref, 'auto'> }> =>
+      ipcRenderer.invoke('locale:apply', pref),
     /** 初始语言：pref = 用户偏好（auto 跟随系统），locale = 解析后生效值 */
     get: (): Promise<{ pref: LocalePref; locale: Exclude<LocalePref, 'auto'> }> =>
       ipcRenderer.invoke('locale:get'),
@@ -425,7 +428,8 @@ const api = {
     createSession: (): Promise<AiSessionSummary> => ipcRenderer.invoke('ai:createSession'),
     getMessages: (sessionId: string): Promise<AiUIMessage[]> =>
       ipcRenderer.invoke('ai:getMessages', { sessionId }),
-    closeSession: (sessionId: string): void => ipcRenderer.send('ai:closeSession', { sessionId }),
+    closeSession: (sessionId: string): Promise<void> =>
+      ipcRenderer.invoke('ai:closeSession', { sessionId }),
     run: (sessionId: string, messages: AiUIMessage[], turnId: string): Promise<void> =>
       ipcRenderer.invoke('ai:run', { sessionId, messages, turnId }),
     cancel: (sessionId: string, turnId?: string): Promise<AiUIMessage[]> =>
