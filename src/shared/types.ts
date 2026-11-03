@@ -170,6 +170,7 @@ export interface HostLinkSnapshot {
 }
 
 export interface ShellStateEvent {
+  resource?: ResourceIdentity
   hostId: string
   shellId: string
   status: ShellStatus
@@ -177,6 +178,7 @@ export interface ShellStateEvent {
 }
 
 export interface ShellDataEvent {
+  resource?: ResourceIdentity
   hostId: string
   shellId: string
   data: string
@@ -216,6 +218,7 @@ export interface SftpListing {
 export type SftpStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
 
 export interface SftpStateEvent {
+  resource?: ResourceIdentity
   hostId: string
   status: SftpStatus
   error?: string
@@ -283,6 +286,7 @@ export interface SftpMeasureEvent {
 
 /** 主机性能样本（连接列表页性能列；3s 轮询，仅已连接主机） */
 export interface PerfSample {
+  resource?: ResourceIdentity
   hostId: string
   /** CPU 逻辑核数 */
   cores: number
@@ -393,6 +397,7 @@ export interface PerfGpu {
 
 /** GPU 样本（会话面板的独立低频流：只采 GPU，与 PerfSample 的 3s/10s 全量采样分开走） */
 export interface PerfGpuSample {
+  resource?: ResourceIdentity
   hostId: string
   /** 该主机全部 GPU（按 nvidia-smi index 升序）；无 nvidia-smi / 无卡为空数组 */
   gpus: PerfGpu[]
@@ -547,3 +552,4 @@ export interface AiSessionSummary {
   createdAt: number
   updatedAt: number
 }
+import type { ResourceIdentity } from './resource'

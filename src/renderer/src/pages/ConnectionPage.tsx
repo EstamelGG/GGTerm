@@ -309,7 +309,10 @@ export default function ConnectionPage({
 
   return (
     <div className="relative flex h-full">
-      <div className="flex shrink-0 flex-col" style={{ width: sidebarWidth }}>
+      <div
+        className="flex shrink-0 flex-col overflow-hidden"
+        style={{ width: sidebarWidth, maxWidth: 'max(160px, calc(100% - 361px))' }}
+      >
         <GroupSidebar
           pick={pick}
           onPick={(pick) => {

@@ -22,7 +22,7 @@ interface ConnectionsState {
   removeGroup: (id: string) => Promise<{ removed: string[]; ungrouped: number } | null>
 }
 
-export const useConnectionsStore = create<ConnectionsState>((set, get) => ({
+export const useConnectionsStore = create<ConnectionsState>((set) => ({
   connections: [],
   groups: [],
   loaded: false,
@@ -36,13 +36,7 @@ export const useConnectionsStore = create<ConnectionsState>((set, get) => ({
   },
 
   create: async (input, secrets) => {
-    const conn = await window.aterm.connections.create(input)
-    try {
-      await window.aterm.secrets.save(conn.id, secrets)
-    } catch (err) {
-      await window.aterm.connections.remove(conn.id)
-      throw err
-    }
+    const conn = await window.aterm.connections.create(input, secrets)
     set((s) => ({
       connections: s.connections.some((c) => c.id === conn.id)
         ? s.connections.map((c) => (c.id === conn.id ? conn : c))
@@ -52,15 +46,8 @@ export const useConnectionsStore = create<ConnectionsState>((set, get) => ({
   },
 
   update: async (id, patch, secrets) => {
-    const previous = get().connections.find((connection) => connection.id === id)
-    const conn = await window.aterm.connections.update(id, patch)
+    const conn = await window.aterm.connections.update(id, patch, secrets)
     if (!conn) return null
-    try {
-      if (secrets) await window.aterm.secrets.save(id, secrets)
-    } catch (err) {
-      if (previous) await window.aterm.connections.update(id, previous)
-      throw err
-    }
     set((s) => ({ connections: s.connections.map((c) => (c.id === id ? conn : c)) }))
     return conn
   },

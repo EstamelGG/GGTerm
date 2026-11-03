@@ -154,35 +154,21 @@ function App(): React.JSX.Element {
         applyUiScale(p.uiScale)
         applyTerminalFontSize(p.terminalFontSize)
       })
-    const viewerRevisions = new Map<string, number>()
-    const offAgentViewer = window.aterm.hosts.onAgentState((state) => {
-      if (
-        !useSessionStore
-          .getState()
-          .hosts.some((host) => host.id === state.hostId && host.viewerOnly)
-      )
-        return
-      const revision = (viewerRevisions.get(state.hostId) ?? 0) + 1
-      viewerRevisions.set(state.hostId, revision)
-      // Another Agent may still own a live transport for this host.
-      void window.aterm.hosts
-        .listAgentLinks()
-        .then((links) => {
-          if (viewerRevisions.get(state.hostId) !== revision) return
-          if (
-            !useSessionStore
-              .getState()
-              .hosts.some((host) => host.id === state.hostId && host.viewerOnly)
-          )
-            return
-          const live = links.find(
-            (link) => link.hostId === state.hostId && link.phase === 'connected'
-          )
-          useSessionStore.getState().applyHostState(live ?? state)
-        })
-        .catch(() => {})
+    const offHost = useLinksStore.subscribe((next, previous) => {
+      for (const [hostId, state] of Object.entries(next.userByHost)) {
+        if (
+          state !== previous.userByHost[hostId] &&
+          !useSessionStore.getState().hosts.some((host) => host.id === hostId && host.viewerOnly)
+        )
+          useSessionStore.getState().applyHostState(state)
+      }
+      for (const host of useSessionStore.getState().hosts) {
+        if (!host.viewerOnly) continue
+        const state = next.byHost[host.id]
+        if (state && state !== previous.byHost[host.id])
+          useSessionStore.getState().applyHostState(state)
+      }
     })
-    const offHost = window.aterm.hosts.onState((e) => useSessionStore.getState().applyHostState(e))
     // 链路相位全局镜像：连接列表状态列与拓扑图共用（主进程为唯一权威）
     const offLinks = useLinksStore.getState().watch()
     const offShell = window.aterm.shells.onState((e) =>
@@ -229,7 +215,6 @@ function App(): React.JSX.Element {
       .catch(() => {})
     return () => {
       offQuestions()
-      offAgentViewer()
       offHost()
       offLinks()
       offShell()

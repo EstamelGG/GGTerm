@@ -277,9 +277,7 @@ function NodeBubble({ data }: { data: TopoNodeData }): React.JSX.Element {
         <span className="text-caption text-muted">{t(`ai.topo.state.${data.state}`)}</span>
       </div>
       {attempt != null && (
-        <div className="mt-0.5 text-caption text-warn">
-          {t('ai.topo.attempt', { n: attempt })}
-        </div>
+        <div className="mt-0.5 text-caption text-warn">{t('ai.topo.attempt', { n: attempt })}</div>
       )}
       {reason && <div className="mt-0.5 text-caption break-words text-danger/90">{reason}</div>}
       {since != null && (
@@ -373,7 +371,9 @@ function TopoEdge({
       {state === 'working' && !leaving && (
         <path d={path} className="topo-packet" style={{ stroke }} />
       )}
-      {state === 'pending' && !leaving && <path d={path} className="topo-packet topo-packet-pending" />}
+      {state === 'pending' && !leaving && (
+        <path d={path} className="topo-packet topo-packet-pending" />
+      )}
     </>
   )
 }

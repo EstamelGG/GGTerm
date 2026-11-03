@@ -229,7 +229,9 @@ export function ConnectionTable({
 
   // 最新列表镜像：稳定回调内按 id 取主机地址用（不作为 effect 依赖）
   const connectionsRef = useRef(connections)
-  connectionsRef.current = connections
+  useLayoutEffect(() => {
+    connectionsRef.current = connections
+  }, [connections])
   /** 每台主机独立的延迟探测周期（10s）：独立开始、独立刷新、结果逐台上屏 */
   const latencyTimers = useRef(new Map<string, ReturnType<typeof setInterval>>())
   const startLatencyCycle = useCallback(
@@ -361,10 +363,11 @@ export function ConnectionTable({
     window.aterm.perf.watch(perfEnabled ? settledIds : [])
   }, [settledIds, perfEnabled])
   useEffect(() => {
+    const timers = latencyTimers.current
     return () => {
       window.aterm.perf.watch([])
-      for (const timer of latencyTimers.current.values()) clearInterval(timer)
-      latencyTimers.current.clear()
+      for (const timer of timers.values()) clearInterval(timer)
+      timers.clear()
     }
   }, [])
 
@@ -373,7 +376,8 @@ export function ConnectionTable({
   const [scrollTop, setScrollTop] = useState(0)
   const [viewportH, setViewportH] = useState(600)
   /** 展开行明细实测高度（含收起动画期间，RO 实时跟随） */
-  const [expandedH, setExpandedH] = useState(0)
+  const [expandedSize, setExpandedSize] = useState<{ id: string; height: number } | null>(null)
+  const expandedH = expandedSize?.id === (expandedId ?? closingId) ? expandedSize.height : 0
   const expandedRef = useRef<HTMLDivElement | null>(null)
 
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>): void => {
@@ -396,13 +400,10 @@ export function ConnectionTable({
   // 展开行高度跟随：open 与 closing 都测量（收起动画期间下方行平滑回落）
   const measureKey = expandedId ?? closingId
   useEffect(() => {
-    if (!measureKey) {
-      setExpandedH(0)
-      return
-    }
+    if (!measureKey) return
     const el = expandedRef.current
     if (!el) return
-    const update = (): void => setExpandedH(el.offsetHeight)
+    const update = (): void => setExpandedSize({ id: measureKey, height: el.offsetHeight })
     update()
     const ro = new ResizeObserver(update)
     ro.observe(el)
@@ -487,7 +488,7 @@ export function ConnectionTable({
 
   const openEdit = useCallback((c: HostConnection) => onEdit(c), [onEdit])
   const openDelete = useCallback((c: HostConnection) => onDelete(c), [onDelete])
-  const openNote = useCallback((c: HostConnection) => setNoteTarget(c), [])
+  const openNote = useCallback((c: HostConnection) => setNoteTarget(c), [setNoteTarget])
   const handleToggleSelect = useCallback((id: string) => onToggleSelect(id), [onToggleSelect])
   const handleConnect = useCallback((c: HostConnection) => onConnect(c), [onConnect])
   const handleDuplicate = useCallback((c: HostConnection) => onDuplicate(c), [onDuplicate])

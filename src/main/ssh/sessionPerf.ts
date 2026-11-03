@@ -5,6 +5,7 @@ import type { PerfSample } from '../../shared/types'
 import { sessionGpuWatch } from './gpuPerf'
 import { getResourceLink } from './resourceLink'
 import { PerfMonitor, SESSION_INTERVAL_MS } from './perf'
+import { connectionRegistry } from './connectionRegistry'
 
 /**
  * 会话性能采样（独立于连接列表 perfHub 的视口驱动采样）：
@@ -14,6 +15,7 @@ import { PerfMonitor, SESSION_INTERVAL_MS } from './perf'
  */
 
 const monitors = new Map<string, PerfMonitor>()
+connectionRegistry.subscribe(({ state }) => monitors.get(state.hostId)?.invalidate())
 
 function broadcast(sample: PerfSample): void {
   for (const w of BrowserWindow.getAllWindows()) w.webContents.send('perf:sample', sample)
@@ -41,6 +43,7 @@ export function sessionPerfWatch(hostId: string | null): void {
     {
       intervalMs: SESSION_INTERVAL_MS,
       collectNet: true,
+      isClientCurrent: (client) => getResourceLink(hostId)?.activeClient === client,
       shouldSample: () => !isNetworkDevice(listConnections().find((c) => c.id === hostId))
     }
   )

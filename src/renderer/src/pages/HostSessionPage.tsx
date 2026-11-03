@@ -36,6 +36,7 @@ import { CloseDocumentsDialog } from '@/components/editor/CloseDocumentsDialog'
 const WIDTH_KEY = 'ggterm.sftpWidth'
 const MIN_WIDTH = 240
 const MAX_WIDTH = 520
+const WORKSPACE_MIN_WIDTH = 360
 
 function loadWidth(): number {
   const raw = localStorage.getItem(WIDTH_KEY)
@@ -111,13 +112,19 @@ export function HostSessionPage({
   const [width, setWidth] = useState(() => loadWidth())
   /** 左栏收纳：面板保持挂载（树/选中/滚动不丢），只把宽度归零 */
   const [sftpOpen, setSftpOpen] = useState(loadSftpOpen)
-  const toggleSftp = (): void => {
-    const next = !sftpOpen
-    localStorage.setItem(OPEN_KEY, next ? '1' : '0')
-    setSftpOpen(next)
-  }
   const rootRef = useRef<HTMLDivElement>(null)
-  const [bounds, setBounds] = useState({ width: 980, height: 540 })
+  const [bounds, setBounds] = useState({ width: 980, height: 540, overlayOpen: false })
+  const sftpOverlay = bounds.width < MIN_WIDTH + WORKSPACE_MIN_WIDTH + 1
+  const sftpVisible = canSftp && (sftpOverlay ? bounds.overlayOpen : sftpOpen)
+  const toggleSftp = (): void => {
+    if (sftpOverlay) {
+      setBounds((prev) => ({ ...prev, overlayOpen: !prev.overlayOpen }))
+    } else {
+      const next = !sftpOpen
+      localStorage.setItem(OPEN_KEY, next ? '1' : '0')
+      setSftpOpen(next)
+    }
+  }
   const widthPreviewRef = useRef<HTMLDivElement>(null)
   // 上部编辑区高度（竖向 splitter；null = 均分）
   const [editorH, setEditorH] = useState<number | null>(() => loadEditorH())
@@ -127,10 +134,13 @@ export function HostSessionPage({
     const root = rootRef.current
     if (!root) return
     return observeSettledResize(root, () =>
-      setBounds({ width: root.clientWidth, height: root.clientHeight })
+      setBounds({ width: root.clientWidth, height: root.clientHeight, overlayOpen: false })
     )
   }, [])
-  const maxSftpWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, bounds.width - 361))
+  const maxSftpWidth = Math.max(
+    MIN_WIDTH,
+    Math.min(MAX_WIDTH, bounds.width - WORKSPACE_MIN_WIDTH - 1)
+  )
   const effectiveWidth = Math.min(width, maxSftpWidth)
   // Reserve both tab rows and the divider in addition to the terminal viewport.
   const maxEditorH = Math.max(EDITOR_H_MIN, bounds.height - SHELL_H_MIN - 81)
@@ -207,17 +217,25 @@ export function HostSessionPage({
 
   return (
     <div ref={rootRef} className="relative flex h-full bg-sidebar">
+      {sftpOverlay && sftpVisible && (
+        <button
+          className="absolute inset-0 z-20 bg-black/20"
+          aria-label={t('sftp.collapsePane')}
+          onClick={toggleSftp}
+        />
+      )}
       {/* 左：SFTP 面板（对照 SftpPane(host:)）。收纳开关在下方控制台标签行行首（常驻不随标签滚动）。
           收纳时外层宽度归 0 + overflow-hidden，内层仍按原宽排版 ——
           测量尺寸不变，展开时树不重测、滚动位置与选中态都保留 */}
       <div
         className={cn(
           'h-full shrink-0 overflow-hidden bg-sidebar',
-          canSftp && sftpOpen && 'border-r border-line'
+          sftpVisible && 'border-r border-line',
+          sftpOverlay && 'absolute inset-y-0 left-0 z-30'
         )}
-        style={{ width: canSftp && sftpOpen ? effectiveWidth : 0 }}
-        aria-hidden={!canSftp || !sftpOpen}
-        inert={!canSftp || !sftpOpen}
+        style={{ width: sftpVisible ? effectiveWidth : 0 }}
+        aria-hidden={!sftpVisible}
+        inert={!sftpVisible}
       >
         <div className="h-full" style={{ width: effectiveWidth }}>
           {canSftp && (
@@ -231,7 +249,7 @@ export function HostSessionPage({
         </div>
       </div>
 
-      {canSftp && sftpOpen && (
+      {sftpVisible && !sftpOverlay && (
         <>
           {/* splitter：1px，拖拽中 accent 35% + 预览线 */}
           <div
@@ -360,10 +378,10 @@ export function HostSessionPage({
           <IconButton
             variant="toolbar"
             disabled={!canSftp}
-            icon={sftpOpen ? PanelLeftClose : PanelLeftOpen}
+            icon={sftpVisible ? PanelLeftClose : PanelLeftOpen}
             frame={22}
-            title={sftpOpen ? t('sftp.collapsePane') : t('sftp.expandPane')}
-            aria-expanded={sftpOpen}
+            title={sftpVisible ? t('sftp.collapsePane') : t('sftp.expandPane')}
+            aria-expanded={sftpVisible}
             onClick={toggleSftp}
           />
           <SessionTabs

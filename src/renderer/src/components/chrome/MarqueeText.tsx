@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils'
  */
 
 /** 溢出检测 + 滚动位移量（box/text 双 ref 由调用方自行布局） */
-export function useMarqueeShift(text: string): {
+function useMarqueeShift(text: string): {
   boxRef: React.RefObject<HTMLSpanElement | null>
   textRef: React.RefObject<HTMLSpanElement | null>
   overflow: boolean

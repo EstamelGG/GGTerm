@@ -12,8 +12,12 @@ it('saves the current page, reflects Agent changes and edits the saved URL', asy
   vi.stubGlobal(
     'ResizeObserver',
     class {
-      observe(): void {}
-      disconnect(): void {}
+      observe(): void {
+        /* No layout in jsdom. */
+      }
+      disconnect(): void {
+        /* No observer resources. */
+      }
     }
   )
   HTMLElement.prototype.scrollIntoView = vi.fn()

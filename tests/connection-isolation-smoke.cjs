@@ -13,7 +13,7 @@ app
     const bundle = path.resolve('node_modules/.cache/connection-isolation.cjs')
     require('esbuild').buildSync({
       stdin: {
-        contents: `export * from './src/main/ai/agentLinks'; export * from './src/main/ai/exec'; export * from './src/main/ssh/link'; export * from './src/main/ssh/resourceLink';`,
+        contents: `export * from './src/main/ai/agentLinks'; export * from './src/main/ai/exec'; export * from './src/main/ssh/link'; export * from './src/main/ssh/resourceLink'; export * from './src/main/ssh/connectionRegistry';`,
         resolveDir: process.cwd(),
         loader: 'ts'
       },
@@ -88,6 +88,9 @@ app
       assert.equal(accepted, 3, 'three separate SSH handshakes')
       assert.equal(new Set([user, a, b].map((link) => link.activeClient)).size, 3)
       assert.equal(new Set([user, a, b].map((link) => link.connectionId)).size, 3)
+      const registered = api.connectionRegistry.snapshot().connections
+      assert.equal(registered.filter((state) => state.phase === 'connected').length, 3)
+      assert.deepEqual(new Set(registered.map((state) => state.owner)), new Set(['user', 'agent']))
       api.setExecutionClientResolver(async (hostId) => api.getAgentLink(hostId).activeClient)
       const start = (owner) =>
         api.agentConnectionContext.run(owner, () =>
@@ -107,15 +110,17 @@ app
       assert(a.isActive && b.isActive, 'closing user transport preserves both agents')
       const borrowed = api.getResourceLink(conn.id)
       assert.equal(borrowed, a)
-      const uiSftp = api.resourceSftp(conn.id, {
+      const borrowedStates = []
+      const uiEvents = {
         onHostState: noop,
         onShellState: noop,
         onShellData: noop,
         onShellAnnounce: noop,
-        onSftpState: noop,
+        onSftpState: (event) => borrowedStates.push(event.status),
         onSftpTransfer: noop,
         onSftpMeasure: noop
-      })
+      }
+      const uiSftp = api.resourceSftp(conn.id, uiEvents)
       assert.notEqual(uiSftp, a.sftp, 'UI owns a separate SFTP channel')
       await a.sftp.start()
       await uiSftp.start()
@@ -127,20 +132,35 @@ app
       assert(api.executions.snapshot('ai-a', idA).output.includes('after-user-close'))
       api.closeAgentConnection('wrong-host', a.connectionId)
       assert(a.isActive, 'selection cannot cross host scope')
+      const secondViewer = api.resourceSftp(conn.id, uiEvents)
+      await secondViewer.start()
+      assert.equal(borrowedStates.at(-1), 'connected')
       assert.deepEqual(api.closeSelectedConnections(conn.id, [a.connectionId]), {
         userClosed: false
       })
+      assert.equal(
+        borrowedStates.at(-1),
+        'disconnected',
+        'borrowed SFTP closes immediately with its transport'
+      )
       await delay(100)
       assert.equal(a.isActive, false)
       assert(b.isActive, 'unselected Agent remains connected')
       assert.equal(api.getResourceLink(conn.id), b, 'resources fall back to the surviving Agent')
+      const remaining = api.connectionRegistry
+        .snapshot()
+        .connections.filter((state) => !state.closed)
+      assert.deepEqual(
+        remaining.map((state) => state.connectionId),
+        [b.connectionId]
+      )
       assert(api.executions.snapshot('ai-a', idA).terminationRequested)
       assert.equal(api.executions.snapshot('ai-b', idB).terminationRequested, false)
       api.executions.input('ai-b', idB, 'unselected-survives\n')
       await delay(100)
       assert(api.executions.snapshot('ai-b', idB).output.includes('unselected-survives'))
       console.log(
-        'PASS: three real SSH connections, user close isolation, selective Agent termination, surviving shell input'
+        'PASS: three registered SSH connections, isolated lifetimes, immediate borrowed SFTP cleanup, selective termination, surviving shell input'
       )
     } finally {
       api.removeLink(conn.id)

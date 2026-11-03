@@ -6,8 +6,10 @@ const os = require('node:os')
 const { Server, Client, utils } = require('ssh2')
 const { app } = require('electron')
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+let stage = 'starting Electron'
+let inspectExecution = () => null
 const deadline = setTimeout(() => {
-  console.error('Execution smoke timed out')
+  console.error('Execution smoke timed out:', stage, inspectExecution())
   app.exit(1)
 }, 45000)
 
@@ -55,10 +57,12 @@ app
                 name: 'xterm-256color'
               })
               let closed = false
+              let ptyExited = false
               pty.onData((text) => {
                 if (!closed) stream.write(text)
               })
               pty.onExit(({ exitCode }) => {
+                ptyExited = true
                 if (!closed) {
                   stream.exit(exitCode)
                   stream.end()
@@ -68,7 +72,7 @@ app
               stream.on('close', () => {
                 closed = true
                 remoteCloses++
-                pty.kill()
+                if (!ptyExited) pty.kill()
               })
               session.on('window-change', (accept, _reject, size) => {
                 accept?.()
@@ -92,6 +96,7 @@ app
     }
     try {
       await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+      stage = 'SSH handshake'
       await new Promise((resolve, reject) => {
         client.once('ready', resolve).once('error', reject)
         client.connect({ host: '127.0.0.1', port: server.address().port, username: 'test' })
@@ -105,10 +110,13 @@ app
         hostId: 'fixture',
         command
       })
+      inspectExecution = () => executions.snapshot(owner, id)
+      stage = 'waiting for interactive prompt'
       const first = await executions.wait(owner, id)
       assert.equal(first.status, 'running', JSON.stringify(first))
       assert.equal(first.needsInput, true)
       executions.input(owner, id, 'yes\r')
+      stage = 'waiting for answer'
       const answered = await waitOutput(id, /answer=yes/, first.cursor)
       assert.equal(
         answered.status,
@@ -124,6 +132,7 @@ app
         ? `Set-Location '${cwd}'; $env:ATERM_SHELL_TEST='shared'; Write-Output '__USER_READY__'\r`
         : `cd '${cwd}'; export ATERM_SHELL_TEST=shared; printf '__USER_READY__\\n'\r`
       executions.input(owner, id, change)
+      stage = 'changing directory and environment'
       const changed = await waitOutput(id, /\r?\n__USER_READY__\r?\n/, answered.cursor)
       executions.input(
         owner,
@@ -136,6 +145,7 @@ app
       assert(state.output.includes(cwd), state.output)
       assert.equal(executions.snapshot(owner, id).status, 'running')
       executions.input(owner, id, 'exit 7\r')
+      stage = 'waiting for shell exit'
       const ended = await executions.wait(owner, id, state.cursor, 4000)
       assert.equal(ended.status, 'completed', JSON.stringify(ended))
       assert.equal(ended.exitCode, 7)
@@ -144,6 +154,7 @@ app
         hostId: 'fixture',
         command: ''
       })
+      stage = 'opening second shell'
       while (executions.snapshot(owner, closing).status === 'starting') await delay(10)
       const before = remoteCloses
       executions.close(owner, closing)

@@ -59,6 +59,23 @@ async function waitFor(win, expression, timeout = 12000) {
 }
 
 app.on('browser-window-created', (_event, win) => {
+  const executeJavaScript = win.webContents.executeJavaScript.bind(win.webContents)
+  win.webContents.executeJavaScript = async (source, ...args) => {
+    try {
+      return await executeJavaScript(source, ...args)
+    } catch (error) {
+      console.error('Failed renderer step:', source)
+      throw error
+    }
+  }
+  const { ipcMain } = require('electron')
+  ipcMain.removeHandler('ai:listSessions')
+  ipcMain.handle('ai:listSessions', () => [
+    { id: 'ui-test', title: 'Viewer one', createdAt: 1, updatedAt: 1 },
+    { id: 'other-test', title: 'Viewer two', createdAt: 1, updatedAt: 1 }
+  ])
+  ipcMain.removeHandler('ai:getMessages')
+  ipcMain.handle('ai:getMessages', () => [])
   win.show = () => {}
   win.webContents.setBackgroundThrottling(false)
   const run = async () => {
@@ -86,6 +103,10 @@ app.on('browser-window-created', (_event, win) => {
     await win.webContents.executeJavaScript(
       `document.querySelector('button[aria-label="Settings"]').click()`
     )
+    await waitFor(win, `document.querySelector('#settings-general')`)
+    await win.webContents.executeJavaScript(
+      `[...document.querySelectorAll('button')].find(e => e.textContent.trim() === 'General').click()`
+    )
     await waitFor(win, `document.body.innerText.includes('Accent color')`)
     assert(
       !(await win.webContents.executeJavaScript(
@@ -107,7 +128,7 @@ app.on('browser-window-created', (_event, win) => {
     )
     await waitFor(
       win,
-      `document.querySelector('.monaco-editor .native-edit-context') && document.querySelector('[role="combobox"]')?.textContent.includes('GB18030')`
+      `document.querySelector('.monaco-editor .native-edit-context') && [...document.querySelectorAll('[role="combobox"]')].some(e => e.getClientRects().length > 0 && e.textContent.includes('GB18030'))`
     )
     await win.webContents.executeJavaScript(
       `document.querySelector('.monaco-editor .native-edit-context').focus()`
@@ -230,15 +251,26 @@ app.on('browser-window-created', (_event, win) => {
       await delay(80)
     }
     const terminal = await win.webContents.executeJavaScript(
-      `(()=>{const r=document.querySelector('.xterm').getBoundingClientRect(); return {width:r.width,height:r.height}})()`
+      `(()=>{const e=[...document.querySelectorAll('.xterm')].find(e => e.getBoundingClientRect().width > 0); const r=e.getBoundingClientRect(); return {width:r.width,height:r.height}})()`
     )
     const image = await win.webContents.capturePage()
     const output = path.resolve('node_modules/.cache/electron-smoke.png')
     fs.mkdirSync(path.dirname(output), { recursive: true })
     fs.writeFileSync(output, image.toPNG())
     assert(terminal.width >= 280 && terminal.height >= 90, JSON.stringify(terminal))
+    // Narrow workspaces collapse SFTP without changing the saved desktop preference.
+    await win.webContents.executeJavaScript(
+      `document.querySelector('button[aria-label="Expand SFTP panel"]').click()`
+    )
+    await waitFor(
+      win,
+      `document.querySelector('[data-sftp-path="/config.txt"]').getBoundingClientRect().width > 0 && !document.querySelector('[data-sftp-path="/config.txt"]').closest('[inert]')`
+    )
+    await win.webContents.executeJavaScript(
+      `document.querySelector('button[aria-label="Collapse SFTP panel"]').click()`
+    )
+    await waitFor(win, `document.querySelector('button[aria-label="Expand SFTP panel"]')`)
     // Exercise the real composer viewer through isolated, session-scoped IPC fixtures.
-    const { ipcMain } = require('electron')
     let executionTasks = [
       {
         executionId: 'agent-ui-remote',
@@ -259,7 +291,7 @@ app.on('browser-window-created', (_event, win) => {
         executionId: 'agent-ui-other',
         sessionId: 'other-test',
         target: 'remote',
-        hostId: 'other-host',
+        hostId: 'manual-test',
         command: 'other command',
         status: 'completed',
         output: '',
@@ -272,10 +304,9 @@ app.on('browser-window-created', (_event, win) => {
       }
     ]
     const terminated = []
-    let listCalls = 0
+    const reads = []
     const handlers = {
       list: (_event, owner) => {
-        listCalls++
         assert(owner)
         return executionTasks.filter((task) => task.sessionId === owner)
       },
@@ -284,6 +315,7 @@ app.on('browser-window-created', (_event, win) => {
           (task) => task.executionId === id && task.sessionId === owner
         )
         assert(task, 'reads must belong to the selected AI conversation')
+        reads.push([owner, id])
         return { ...task, output: 'Background shell ready\r\nEnter choice: ' }
       },
       terminate: (_event, owner, id) => {
@@ -300,114 +332,120 @@ app.on('browser-window-created', (_event, win) => {
       ipcMain.removeHandler('execution:' + name)
       ipcMain.handle('execution:' + name, handler)
     }
-    ipcMain.removeHandler('ai:listSessions')
-    ipcMain.handle('ai:listSessions', () => [
-      { id: 'ui-test', title: 'Viewer one', createdAt: 1, updatedAt: 1 },
-      { id: 'other-test', title: 'Viewer two', createdAt: 1, updatedAt: 1 }
-    ])
-    ipcMain.removeHandler('ai:getMessages')
-    ipcMain.handle('ai:getMessages', () => [])
     await delay(600)
-    assert.equal(
-      listCalls,
-      0,
-      'background execution must not trigger a global viewer or create tabs'
+    assert.deepEqual(reads, [], 'background execution must not steal terminal focus')
+    await win.webContents.executeJavaScript(
+      `document.querySelector('button[aria-label="AI Assistant"]').click()`
+    )
+    await waitFor(
+      win,
+      `[...document.querySelectorAll('[role="button"]')].some(e => e.textContent.includes('Viewer one'))`
     )
     await win.webContents.executeJavaScript(
-      "[...document.querySelectorAll('header button')].find(e => e.textContent.trim() === 'AI').click()"
+      `[...document.querySelectorAll('[role="button"]')].find(e => e.textContent.includes('Viewer one')).click()`
     )
     await waitFor(win, 'document.querySelector(\'button[aria-label="Execution sessions"]\')')
     await win.webContents.executeJavaScript(
       'document.querySelector(\'button[aria-label="Execution sessions"]\').click()'
     )
-    await waitFor(
-      win,
-      "document.querySelector('[role=\"dialog\"]')?.textContent.includes('read answer') && document.querySelector('[role=\"dialog\"] .xterm')"
-    )
-    assert.equal(
-      await win.webContents.executeJavaScript(
-        "document.querySelector('[role=\"dialog\"]').textContent.includes('other command')"
-      ),
-      false
-    )
+    await waitFor(win, `document.querySelector('[aria-label="Read-only shell output"] .xterm')`)
+    assert(reads.some(([owner, id]) => owner === 'ui-test' && id === 'agent-ui-remote'))
+    assert(!reads.some(([owner]) => owner === 'other-test'))
     assert.equal(
       await win.webContents.executeJavaScript(
         "'input' in window.aterm.executions || 'resize' in window.aterm.executions"
       ),
       false
     )
-    await delay(250)
     const agentScreenshot = path.resolve('node_modules/.cache/execution-viewer.png')
     fs.writeFileSync(agentScreenshot, (await win.webContents.capturePage()).toPNG())
-    await win.webContents.executeJavaScript(
-      'document.querySelector(\'[role="dialog"] [data-slot="dialog-shell-close"]\').click()'
+    const closeAgentTab = `[...document.querySelectorAll('button')].find(e => e.textContent.trim() === 'agent ui-tes · agent-').parentElement.querySelector('button[aria-label="Close"]').click()`
+    await win.webContents.executeJavaScript(closeAgentTab)
+    await waitFor(
+      win,
+      `document.querySelector('[role="dialog"]')?.textContent.includes('Close agent tab')`
     )
-    assert.deepEqual(terminated, [], 'closing the viewer must not terminate anything')
     await win.webContents.executeJavaScript(
-      'document.querySelector(\'button[aria-label="Execution sessions"]\').click()'
+      `[...document.querySelectorAll('[role="dialog"] button')].find(e => e.textContent === 'Cancel').click()`
+    )
+    await waitFor(win, `!document.querySelector('[role="dialog"]')`)
+    assert.deepEqual(terminated, [], 'canceling tab closure must not terminate anything')
+    await win.webContents.executeJavaScript(closeAgentTab)
+    await waitFor(
+      win,
+      `document.querySelector('[role="dialog"]')?.textContent.includes('Close agent tab')`
+    )
+    await win.webContents.executeJavaScript(
+      `[...document.querySelectorAll('[role="dialog"] button')].find(e => e.textContent === 'Close' && !e.hasAttribute('data-slot')).click()`
     )
     await waitFor(
       win,
-      "document.querySelector('[role=\"dialog\"]')?.textContent.includes('read answer')"
-    )
-    await win.webContents.executeJavaScript(
-      "[...document.querySelectorAll('[role=\"dialog\"] button')].find(e => e.textContent === 'Terminate session').click()"
-    )
-    await waitFor(win, 'document.querySelectorAll(\'[role="dialog"]\').length === 2')
-    await win.webContents.executeJavaScript(
-      "[...document.querySelectorAll('[role=\"dialog\"]')].at(-1) && [...[...document.querySelectorAll('[role=\"dialog\"]')].at(-1).querySelectorAll('button')].find(e => e.textContent === 'Terminate session').click()"
-    )
-    await waitFor(
-      win,
-      "document.querySelector('[role=\"dialog\"]')?.textContent.includes('Termination requested')"
+      `!document.querySelector('[role="dialog"]') && ![...document.querySelectorAll('button')].some(e => e.textContent.trim() === 'agent ui-tes · agent-')`
     )
     assert.deepEqual(terminated, ['agent-ui-remote'])
-    assert(
-      await win.webContents.executeJavaScript(
-        "document.querySelector('[role=\"dialog\"]').textContent.includes('read answer')"
-      ),
-      'terminated records remain visible'
-    )
+    // Finished executions remain available when the user explicitly reopens the viewer.
     await win.webContents.executeJavaScript(
-      'document.querySelector(\'[role="dialog"] [data-slot="dialog-shell-close"]\').click()'
+      `document.querySelector('button[aria-label="Execution sessions"]').click()`
     )
+    await waitFor(win, `document.querySelector('[aria-label="Read-only shell output"] .xterm')`)
     await win.webContents.executeJavaScript(
-      "[...document.querySelectorAll('button')].find(e => e.textContent.trim() === 'Viewer two').click()"
-    )
-    await win.webContents.executeJavaScript(
-      'document.querySelector(\'button[aria-label="Execution sessions"]\').click()'
+      `document.querySelector('button[aria-label="Back to sessions"]').click()`
     )
     await waitFor(
       win,
-      "document.querySelector('[role=\"dialog\"]')?.textContent.includes('other command')"
-    )
-    assert.equal(
-      await win.webContents.executeJavaScript(
-        "document.querySelector('[role=\"dialog\"]').textContent.includes('read answer')"
-      ),
-      false
+      `[...document.querySelectorAll('[role="button"]')].some(e => e.textContent.includes('Viewer two'))`
     )
     await win.webContents.executeJavaScript(
-      'document.querySelector(\'[role="dialog"] [data-slot="dialog-shell-close"]\').click()'
+      `[...document.querySelectorAll('[role="button"]')].find(e => e.textContent.includes('Viewer two')).click()`
     )
+    await waitFor(win, `document.querySelector('button[aria-label="Execution sessions"]')`)
+    await win.webContents.executeJavaScript(
+      `document.querySelector('button[aria-label="Execution sessions"]').click()`
+    )
+    await waitFor(
+      win,
+      `document.querySelector('[aria-label="Read-only shell output"] .xterm') && [...document.querySelectorAll('button')].some(e => e.textContent.trim() === 'agent other- · agent-')`
+    )
+    assert(reads.some(([owner, id]) => owner === 'other-test' && id === 'agent-ui-other'))
+    assert.deepEqual(terminated, ['agent-ui-remote'])
+    let fixtureRevision = (
+      await win.webContents.executeJavaScript('window.aterm.hosts.runtimeSnapshot()')
+    ).revision
+    const sendConnectionState = (hostId, phase) =>
+      win.webContents.send('connections:state', {
+        state: {
+          hostId,
+          phase,
+          since: Date.now(),
+          jumpIds: [],
+          owner: 'user',
+          connectionId: `fixture:${hostId}`,
+          generation: 1,
+          revision: ++fixtureRevision,
+          closed: false
+        }
+      })
     for (const [hostId, phase] of [
       ['topo-green', 'connected'],
       ['topo-amber', 'connecting'],
       ['topo-red', 'offline']
     ]) {
-      win.webContents.send('host:state', { hostId, phase, since: Date.now(), jumpIds: [] })
+      sendConnectionState(hostId, phase)
     }
     win.webContents.send('ai:event', {
       sessionId: 'other-test',
-      type: 'tool-call',
-      messageId: 'topo-message',
-      toolCall: {
-        id: 'topo-tool',
-        name: 'execute',
-        input: { hostId: 'topo-green' },
-        status: 'running'
+      type: 'chunk',
+      turnId: 'topo-turn',
+      chunk: {
+        type: 'tool-input-available',
+        toolCallId: 'topo-tool',
+        toolName: 'execute',
+        input: { hostId: 'topo-green' }
       }
     })
+    await win.webContents.executeJavaScript(
+      `document.querySelector('button[aria-label="Connection graph"]').click()`
+    )
     await waitFor(
       win,
       "document.querySelector('.topo-packet') && document.querySelector('.topo-edge-dialing') && document.querySelector('.topo-edge-failed')"
@@ -426,12 +464,7 @@ app.on('browser-window-created', (_event, win) => {
     })()`),
       'automatic layout fits the newly added nodes'
     )
-    win.webContents.send('host:state', {
-      hostId: 'topo-amber',
-      phase: 'connected',
-      since: Date.now(),
-      jumpIds: []
-    })
+    sendConnectionState('topo-amber', 'connected')
     await delay(1000)
     assert.equal(
       await win.webContents.executeJavaScript(
@@ -522,7 +555,7 @@ app.on('browser-window-created', (_event, win) => {
       netTx: 3000
     })
     await win.webContents.executeJavaScript(
-      "[...document.querySelectorAll('header button')].find(e => e.textContent.trim() === 'Hosts').click()"
+      `document.querySelector('header button[aria-label="Hosts"]').click()`
     )
     await waitFor(
       win,
@@ -542,10 +575,17 @@ app.on('browser-window-created', (_event, win) => {
       'document.querySelector(\'input[aria-label="agent-live-one"]\').click()'
     )
     const liveConnectionsScreenshot = path.resolve('node_modules/.cache/live-connections.png')
+    await win.webContents.executeJavaScript(
+      `document.querySelector('button[aria-label="AI Assistant"]').click()`
+    )
+    await waitFor(
+      win,
+      `document.querySelector('[data-host-id="remote-test"] [data-column="performance"]')`
+    )
     await delay(300)
     assert(
       await win.webContents.executeJavaScript(`(() => {
-      const row = document.querySelector('[data-host-id="remote-test"]');
+      const row = [...document.querySelectorAll('[data-host-id="remote-test"]')].find(e => e.querySelector('[data-column="actions"]'));
       const metrics = row.querySelector('[data-column="performance"]');
       const actions = row.querySelector('[data-column="actions"]');
       const left = Math.min(...[...actions.querySelectorAll('button')].map(e => e.getBoundingClientRect().left));
@@ -595,8 +635,8 @@ app.on('browser-window-created', (_event, win) => {
           'GB18030 auto-detection and save round trip',
           'native close preserves dirty files',
           'splitter commits dimensions only on release',
-          '980px layout with both side panels',
-          'background execution without tabs, per-conversation read-only viewer, and explicit termination'
+          '980px layout, responsive SFTP overlay, and usable terminal',
+          'background execution preserves focus, per-conversation read-only tabs, and explicit termination'
         ],
         screenshot: output,
         agentScreenshot,

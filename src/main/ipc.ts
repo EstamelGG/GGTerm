@@ -19,7 +19,8 @@ import type {
   SshConfigHost,
   SshConnectionSession
 } from '../shared/types'
-import * as connections from './data/connections'
+import * as connections from './connections'
+import { connectionRegistry } from './ssh/connectionRegistry'
 import * as secrets from './data/secrets'
 import * as prefs from './data/prefs'
 import { appLog, clearLogs, getLogs } from './log'
@@ -45,8 +46,6 @@ import {
   perfWatch,
   perfRefreshAll,
   perfSetPaused,
-  perfInvalidate,
-  perfForget,
   perfRescan
 } from './ssh/perfHub'
 import { sessionPerfWatch } from './ssh/sessionPerf'
@@ -167,28 +166,26 @@ export function registerIpc(): void {
 
   ipcMain.handle(
     channels.connCreate,
-    (_e, input: Parameters<typeof connections.createConnection>[0]) =>
-      connections.createConnection(input)
+    (
+      _e,
+      input: Parameters<typeof connections.createConnection>[0],
+      credentials?: Partial<ConnectionSecrets>
+    ) => connections.createConnection(input, credentials)
   )
 
   ipcMain.handle(
     channels.connUpdate,
-    (_e, { id, patch }: { id: string; patch: Partial<HostConnection> }) => {
-      const conn = connections.updateConnection(id, patch)
-      perfInvalidate(id) // 编辑保存：清停等 + 按新配置重建条目（禁用/删除条目）
-      return conn
-    }
+    (
+      _e,
+      {
+        id,
+        patch,
+        credentials
+      }: { id: string; patch: Partial<HostConnection>; credentials?: Partial<ConnectionSecrets> }
+    ) => connections.updateConnection(id, patch, credentials)
   )
 
-  ipcMain.handle(channels.connDelete, async (_e, id: string): Promise<boolean> => {
-    const ok = connections.deleteConnection(id)
-    if (ok) {
-      await portForwards.detachHost(id)
-      secrets.deleteSecrets(id)
-      perfForget(id)
-    }
-    return ok
-  })
+  ipcMain.handle(channels.connDelete, (_e, id: string) => connections.deleteConnection(id))
 
   // 结构化备注：独立通道（全量替换，不触发 perfInvalidate——改备注不打断性能探测/连接）
   ipcMain.handle(channels.connSetNote, (_e, { id, note }: { id: string; note: ServerNote }) =>
@@ -212,8 +209,7 @@ export function registerIpc(): void {
   ipcMain.handle(
     channels.secretsSave,
     (_e, { id, secrets: s }: { id: string; secrets: Partial<ConnectionSecrets> }) => {
-      secrets.saveSecrets(id, s)
-      perfInvalidate(id) // 凭据更新 → 重置性能探测条目
+      connections.saveConnectionSecrets(id, s)
     }
   )
 
@@ -221,7 +217,9 @@ export function registerIpc(): void {
     secrets.loadSecrets(id)
   )
 
-  ipcMain.handle(channels.secretsDelete, (_e, id: string) => secrets.deleteSecrets(id))
+  ipcMain.handle(channels.secretsDelete, (_e, id: string) =>
+    connections.saveConnectionSecrets(id, { password: '', privateKey: '', passphrase: '' })
+  )
 
   ipcMain.handle(channels.prefsGet, (): AppPreferencesData => prefs.getPreferences())
 
@@ -342,6 +340,12 @@ export function registerIpc(): void {
   })
 
   ipcMain.handle(channels.linksList, () => listLinks())
+  ipcMain.handle('connections:runtime', () => connectionRegistry.snapshot())
+  connectionRegistry.subscribe((event) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send('connections:state', event)
+    }
+  })
 
   ipcMain.on(channels.osProbe, (_e, { hostIds }: { hostIds: string[] }) => {
     probeLinksOsName(hostIds)

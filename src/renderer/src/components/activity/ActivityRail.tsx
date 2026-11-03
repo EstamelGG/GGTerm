@@ -107,7 +107,7 @@ export function ActivityRail(): React.JSX.Element {
           'relative h-full shrink-0 overflow-hidden border-l border-line bg-surface',
           !open && 'hidden'
         )}
-        style={{ width, maxWidth: '50vw' }}
+        style={{ width, maxWidth: '40vw' }}
       >
         <div
           className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize touch-none"

@@ -1,3 +1,4 @@
+import { ResourceLifetime } from './resourceLifetime'
 import { promises as fsp, createReadStream, createWriteStream } from 'fs'
 import { pipeline } from 'node:stream/promises'
 import { Transform } from 'node:stream'
@@ -60,23 +61,55 @@ function p<T>(fn: (cb: (err: Error | null | undefined, res?: T) => void) => void
 }
 
 /** 在共享连接上执行命令并收集输出（对照 executeCommand；目录删除用） */
-export function execCommand(client: Client, command: string, maxBytes = 65536): Promise<string> {
+export function execCommand(
+  client: Client,
+  command: string,
+  maxBytes = 65536,
+  signal?: AbortSignal
+): Promise<string> {
   return new Promise((resolve, reject) => {
-    client.exec(command, (err, stream) => {
-      if (err || !stream) {
-        reject(err ?? new Error('exec failed'))
-        return
-      }
-      let out = ''
-      stream.on('data', (d: Buffer) => {
-        if (out.length < maxBytes) out += d.toString('utf8')
+    let channel: import('ssh2').ClientChannel | undefined
+    let settled = false
+    let out = ''
+    const finish = (error?: Error): void => {
+      if (settled) return
+      settled = true
+      signal?.removeEventListener('abort', abort)
+      if (error) reject(error)
+      else resolve(out)
+    }
+    const abort = (): void => {
+      finish(new Error('SSH resource invalidated'))
+      channel?.close()
+    }
+    signal?.addEventListener('abort', abort, { once: true })
+    if (signal?.aborted) {
+      abort()
+      return
+    }
+    try {
+      client.exec(command, (err, stream) => {
+        if (settled) {
+          stream?.on('error', () => {})
+          stream?.close()
+          return
+        }
+        if (err || !stream) {
+          finish(err ?? new Error('exec failed'))
+          return
+        }
+        channel = stream
+        const data = (d: Buffer): void => {
+          if (!settled && out.length < maxBytes) out += d.toString('utf8')
+        }
+        stream.on('data', data)
+        stream.stderr.on('data', data)
+        stream.on('close', () => finish())
+        stream.on('error', finish)
       })
-      stream.stderr.on('data', (d: Buffer) => {
-        if (out.length < maxBytes) out += d.toString('utf8')
-      })
-      stream.on('close', () => resolve(out))
-      stream.on('error', reject)
-    })
+    } catch (error) {
+      finish(error instanceof Error ? error : new Error(String(error)))
+    }
   })
 }
 
@@ -131,19 +164,30 @@ export class SftpSession {
     emit()
   }
   private channelLock: Promise<SFTPWrapper> | null = null
-  private channelLifetime = new AbortController()
+  private readonly channelLifetime: ResourceLifetime
   /** realpath 结果缓存（同路径重复浏览零往返；仅成功结果入缓存） */
   private realpathCache = new Map<string, string>()
 
   constructor(
     private readonly link: HostLink,
     private readonly events: SftpEvents
-  ) {}
+  ) {
+    this.channelLifetime = new ResourceLifetime(link.hostId, 'sftp')
+  }
 
   /** 渲染层面板激活时调用：链路未活则等待（≤15s），再开通道 —— 首连事件竞态兜底 */
   async start(): Promise<void> {
     this.started = true
-    if (!this.client) await this.link.waitForActive()
+    const lifetime = this.channelLifetime.capture(this.client)
+    if (!this.client) {
+      try {
+        await this.link.waitForActive()
+      } catch (error) {
+        if (lifetime.signal.aborted) return
+        throw error
+      }
+    }
+    if (lifetime.signal.aborted || !this.started) return
     await this.ensureChannel()
   }
 
@@ -177,7 +221,7 @@ export class SftpSession {
     const client = this.client
     if (!client) throw new Error('host link not active')
     this.emitState('connecting')
-    const lifetime = this.channelLifetime
+    const lifetime = this.channelLifetime.capture(this.client)
     const opening = this.request<SFTPWrapper>((cb) =>
       client.sftp((error, channel) => {
         if (lifetime.signal.aborted || client !== this.client) {
@@ -187,7 +231,10 @@ export class SftpSession {
       })
     )
       .then((sftp) => {
-        lifetime.signal.throwIfAborted()
+        if (!lifetime.current()) {
+          sftp.destroy()
+          throw new Error('SFTP connection changed; retry the operation')
+        }
         this.sftp = sftp
         const lost = (): void => {
           if (this.sftp !== sftp) return
@@ -201,7 +248,7 @@ export class SftpSession {
         return sftp
       })
       .catch((err: Error) => {
-        if (lifetime === this.channelLifetime) {
+        if (lifetime.current()) {
           this.teardown()
           this.emitState('error', err.message)
         }
@@ -218,7 +265,7 @@ export class SftpSession {
   private request<T>(
     fn: (cb: (err: Error | null | undefined, res?: T) => void) => void
   ): Promise<T> {
-    const lifetime = this.channelLifetime
+    const lifetime = this.channelLifetime.capture(this.client)
     return new Promise((resolve, reject) => {
       let settled = false
       const finish = (err?: Error | null, value?: T): void => {
@@ -232,7 +279,7 @@ export class SftpSession {
       const abort = (): void => finish(new Error('SFTP connection lost; retry after reconnecting'))
       const timer = setTimeout(() => {
         finish(new Error('SFTP request timed out after 30 seconds; retry to reopen the channel'))
-        if (lifetime === this.channelLifetime) this.teardown()
+        if (lifetime.current()) this.teardown()
       }, 30000)
       lifetime.signal.addEventListener('abort', abort, { once: true })
       try {
@@ -246,13 +293,11 @@ export class SftpSession {
   }
 
   private teardown(): void {
-    const lifetime = this.channelLifetime
-    this.channelLifetime = new AbortController()
     const current = this.sftp
     this.sftp = null
     this.channelLock = null
     this.realpathCache.clear()
-    lifetime.abort()
+    this.channelLifetime.reset()
     for (const task of this.tasks.values()) task.cancel()
     if (current) {
       try {
@@ -264,7 +309,12 @@ export class SftpSession {
   }
 
   private emitState(status: SftpStateEvent['status'], error?: string): void {
-    this.events.onSftpState({ hostId: this.link.hostId, status, error })
+    this.events.onSftpState({
+      hostId: this.link.hostId,
+      status,
+      error,
+      resource: this.channelLifetime.capture(this.client).identity
+    })
   }
 
   /* ---------------- 查询操作 ---------------- */
@@ -453,6 +503,7 @@ export class SftpSession {
         )
       })
       if (!completed) {
+        if (xfer.status === 'canceled') throw new Error('Transfer canceled')
         throw new Error(xfer.error ?? `Upload failed: ${basename(local)}`)
       }
     }

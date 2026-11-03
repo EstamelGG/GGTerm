@@ -1,3 +1,4 @@
+import { ResourceLifetime, type ResourceLease } from './resourceLifetime'
 import type { Client } from 'ssh2'
 import type { PerfDisk, PerfDiskMount, PerfGpu, PerfGpuProc, PerfSample } from '../../shared/types'
 import { appLog } from '../log'
@@ -28,7 +29,9 @@ export class PerfMonitor {
   private timer: NodeJS.Timeout | null = null
   /** 首采错峰定时器：批量建条目时随机延迟，避免整列同相位出数 */
   private startTimer: NodeJS.Timeout | null = null
-  private sampling = false
+  private sampling: ResourceLease | null = null
+  private readonly lifetime: ResourceLifetime
+  private transportKey: string | null = null
   /** 上轮网络字节总量与时刻（速率差值分母） */
   private lastNet: { rx: number; tx: number; at: number } | null = null
   /** 上轮每逻辑核原始 jiffies（占用差值基准） */
@@ -56,8 +59,11 @@ export class PerfMonitor {
       intervalMs?: number
       collectNet?: boolean
       shouldSample?: () => boolean
+      isClientCurrent?: (client: Client) => boolean
     } = {}
-  ) {}
+  ) {
+    this.lifetime = new ResourceLifetime(hostId, 'perf')
+  }
 
   private get intervalMs(): number {
     return this.opts.intervalMs ?? SESSION_INTERVAL_MS
@@ -103,6 +109,13 @@ export class PerfMonitor {
     if (this.startTimer) clearTimeout(this.startTimer)
     this.startTimer = null
     this.timer = null
+    this.invalidate()
+  }
+
+  invalidate(): void {
+    this.lifetime.reset()
+    this.sampling = null
+    this.transportKey = null
     this.lastNet = null
     this.lastPerCore = null
     this.lastDisk = null
@@ -155,15 +168,33 @@ export class PerfMonitor {
       this.stop()
       return
     }
-    if (this.broken) return
-    const client = await this.getClient()
-    if (!client || this.sampling || this.opts.shouldSample?.() === false) return
-    this.sampling = true // 上轮未归（>3s 网络延迟）时跳过，防堆积
+    if (this.broken || this.sampling) return
+    const pending = this.lifetime.capture()
+    this.sampling = pending
+    let lease = pending
     try {
-      const out = await execCommand(client, PERF_SCRIPT)
+      const client = await this.getClient()
+      if (!pending.current() || !client || this.opts.shouldSample?.() === false) return
+      lease = this.lifetime.capture(client)
+      if (!lease.current()) return
+      const key = `${lease.identity.connectionId}:${lease.identity.connectionGeneration}`
+      if (key !== this.transportKey) {
+        this.lastNet = null
+        this.lastPerCore = null
+        this.lastDisk = null
+        this.transportKey = key
+      }
+      const out = await execCommand(client, PERF_SCRIPT, 65536, lease.signal)
+      if (
+        !lease.current() ||
+        this.opts.shouldSample?.() === false ||
+        this.opts.isClientCurrent?.(client) === false
+      )
+        return
       const sample = this.parse(out)
       if (sample) {
         this.registerSuccess()
+        sample.resource = lease.identity
         this.last = sample
         this.onSample(sample)
         if (!this.loggedStart) {
@@ -185,13 +216,14 @@ export class PerfMonitor {
         }
       }
     } catch (err) {
+      if (!lease.current()) return
       this.registerFailure()
       if (!this.loggedFail) {
         this.loggedFail = true
         appLog('ssh', `Perf sampling failed "${this.label}": ${(err as Error).message}`, 'error')
       }
     } finally {
-      this.sampling = false
+      if (this.sampling === pending) this.sampling = null
     }
   }
 

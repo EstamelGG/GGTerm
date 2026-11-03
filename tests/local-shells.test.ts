@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 const files = vi.hoisted(() => new Map<string, { executable?: boolean; directory?: boolean }>())
 vi.mock('node:fs/promises', () => ({
@@ -15,6 +15,8 @@ vi.mock('node:fs/promises', () => ({
 }))
 vi.mock('node:os', () => ({ homedir: () => '/home/test', userInfo: () => ({ shell: '/bin/zsh' }) }))
 import { listLocalShells, localShellInvocation } from '../src/main/localShells'
+
+afterEach(() => vi.restoreAllMocks())
 
 beforeEach(() => {
   files.clear()
@@ -52,6 +54,7 @@ it('discovers Windows cmd and both PowerShell versions from system locations and
 })
 
 it('uses the saved interpreter for new sessions and fails clearly if it was removed', async () => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
   files.set('/bin/sh', { executable: true })
   files.set('/bin/zsh', { executable: true })
   await expect(localShellInvocation('/bin/sh')).resolves.toEqual({

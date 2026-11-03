@@ -84,6 +84,14 @@ interface SftpStoreState {
 
 export const useSftpStore = create<SftpStoreState>((set, get) => {
   const pane = (hostId: string): SftpPaneState => get().panes[hostId] ?? EMPTY_PANE
+  const generations = new Map<string, number>()
+  const invalidate = (hostId: string): void => {
+    generations.set(hostId, (generations.get(hostId) ?? 0) + 1)
+  }
+  const lifetime = (hostId: string): (() => boolean) => {
+    const generation = generations.get(hostId)
+    return () => generations.get(hostId) === generation && pane(hostId).started
+  }
 
   const patch = (hostId: string, p: Partial<SftpPaneState>): void => {
     set((s) => {
@@ -94,9 +102,12 @@ export const useSftpStore = create<SftpStoreState>((set, get) => {
 
   /** 单目录重载（对照 load；resolved 键双写 + expanded 键替换）；失败记入 errors（树内红行），日志由主进程记录 */
   const load = async (hostId: string, target: string): Promise<string | null> => {
+    const current = lifetime(hostId)
+    if (!current()) return null
     patch(hostId, { loadingPaths: [...pane(hostId).loadingPaths, target] })
     try {
       const { resolved, entries } = await window.aterm.sftp.list(hostId, target)
+      if (!current()) return null
       const p = pane(hostId)
       const children = { ...p.children, [resolved]: entries }
       if (target !== resolved) {
@@ -119,11 +130,13 @@ export const useSftpStore = create<SftpStoreState>((set, get) => {
       void resolveLinkTargets(hostId, resolved, entries)
       return resolved
     } catch (err) {
+      if (!current()) return null
       const p = pane(hostId)
       patch(hostId, { errors: { ...p.errors, [target]: errorMessage(err) } })
       return null
     } finally {
-      patch(hostId, { loadingPaths: pane(hostId).loadingPaths.filter((x) => x !== target) })
+      if (current())
+        patch(hostId, { loadingPaths: pane(hostId).loadingPaths.filter((x) => x !== target) })
     }
   }
 
@@ -133,16 +146,18 @@ export const useSftpStore = create<SftpStoreState>((set, get) => {
     dir: string,
     entries: SftpEntry[]
   ): Promise<void> => {
+    const current = lifetime(hostId)
     const pending = entries.filter((e) => e.isLink && !e.linkTarget)
     if (pending.length === 0 || pending.length > 64 || entries.length > 500) return
     let changed = false
     const next = entries.map((e) => ({ ...e }))
     const CONC = 10
     for (let i = 0; i < next.length; i += CONC) {
+      if (!current()) return
       await Promise.all(
         next.slice(i, i + CONC).map(async (e) => {
           if (!e.isLink || e.linkTarget) return
-          const target = await window.aterm.sftp.readlink(hostId, e.path)
+          const target = await window.aterm.sftp.readlink(hostId, e.path).catch(() => null)
           if (target) {
             e.linkTarget = target
             changed = true
@@ -150,7 +165,7 @@ export const useSftpStore = create<SftpStoreState>((set, get) => {
         })
       )
     }
-    if (changed) {
+    if (changed && current()) {
       const p = pane(hostId)
       if (p.children[dir] === entries) {
         patch(hostId, { children: { ...p.children, [dir]: next } })
@@ -160,6 +175,7 @@ export const useSftpStore = create<SftpStoreState>((set, get) => {
 
   /** 逐级展开到目标（对照 expand(to:)），返回应聚焦路径 */
   const expandTo = async (hostId: string, target: string): Promise<string | null> => {
+    const currentLifetime = lifetime(hostId)
     const normalized = normalizePath(target)
     const root = pane(hostId).root
     if (normalized === root) {
@@ -176,11 +192,14 @@ export const useSftpStore = create<SftpStoreState>((set, get) => {
     let focus: string | null = null
     for (let i = 0; i < parts.length; i++) {
       await load(hostId, current)
+      if (!currentLifetime()) return null
       const next = joinPath(current, parts[i])
       const isLast = i === parts.length - 1
       const entry = (pane(hostId).children[current] ?? []).find((e) => e.name === parts[i])
       if (!entry) {
-        if (isLast && (await load(hostId, next)) !== null) {
+        const loaded = isLast ? await load(hostId, next) : null
+        if (!currentLifetime()) return null
+        if (loaded !== null) {
           focus = next
           patch(hostId, { path: pane(hostId).children[next] ? next : current })
         }
@@ -194,6 +213,7 @@ export const useSftpStore = create<SftpStoreState>((set, get) => {
         current = entry.path
         if (isLast) {
           await load(hostId, entry.path)
+          if (!currentLifetime()) return null
           patch(hostId, { path: entry.path })
         }
       } else {
@@ -206,21 +226,26 @@ export const useSftpStore = create<SftpStoreState>((set, get) => {
 
   /** 跳转并定位（对照 reveal） */
   const reveal = async (hostId: string, target: string): Promise<void> => {
+    const current = lifetime(hostId)
     patch(hostId, { loading: true })
     try {
       const resolved = await window.aterm.sftp.realpath(hostId, target)
+      if (!current()) return
       const p = pane(hostId)
       patch(hostId, { path: resolved })
       if (!isUnderPath(resolved, p.root) && p.root !== '/') {
-        if ((await load(hostId, '/')) !== null) patch(hostId, { root: '/', banner: null })
+        const loaded = await load(hostId, '/')
+        if (!current()) return
+        if (loaded !== null) patch(hostId, { root: '/', banner: null })
       }
       await load(hostId, pane(hostId).root)
+      if (!current()) return
       const focus = await expandTo(hostId, resolved)
-      patch(hostId, { focusedPath: focus ?? resolved })
+      if (current()) patch(hostId, { focusedPath: focus ?? resolved })
     } catch (err) {
-      patch(hostId, { banner: errorMessage(err) })
+      if (current()) patch(hostId, { banner: errorMessage(err) })
     } finally {
-      patch(hostId, { loading: false })
+      if (current()) patch(hostId, { loading: false })
     }
   }
 
@@ -235,13 +260,18 @@ export const useSftpStore = create<SftpStoreState>((set, get) => {
 
   /** 首连/重连：开通道 + 定根 + 展开到初始路径（initDir，空则 home） */
   const connectAndList = async (hostId: string): Promise<void> => {
+    const current = lifetime(hostId)
     const api = window.aterm.sftp
     patch(hostId, { status: 'connecting', banner: null, loading: true })
     try {
       await api.start(hostId)
+      if (!current()) return
       const home = await api.realpath(hostId, '.')
+      if (!current()) return
       patch(hostId, { home, path: home, status: 'connected', error: null })
-      if ((await load(hostId, '/')) !== null) {
+      const root = await load(hostId, '/')
+      if (!current()) return
+      if (root !== null) {
         patch(hostId, { root: '/', banner: null })
         await expandTo(hostId, revealTarget(home, hostId))
       } else {
@@ -249,9 +279,10 @@ export const useSftpStore = create<SftpStoreState>((set, get) => {
         await load(hostId, home)
       }
     } catch (err) {
-      patch(hostId, { status: 'error', error: errorMessage(err), banner: errorMessage(err) })
+      if (current())
+        patch(hostId, { status: 'error', error: errorMessage(err), banner: errorMessage(err) })
     } finally {
-      patch(hostId, { loading: false })
+      if (current()) patch(hostId, { loading: false })
     }
   }
 
@@ -260,11 +291,13 @@ export const useSftpStore = create<SftpStoreState>((set, get) => {
 
     ensureStarted: (hostId) => {
       if (pane(hostId).started) return
+      invalidate(hostId)
       patch(hostId, { ...EMPTY_PANE, started: true, transfers: pane(hostId).transfers })
       void connectAndList(hostId)
     },
 
     dropHost: (hostId) => {
+      invalidate(hostId)
       window.aterm.sftp.stop(hostId)
       set((s) => {
         const panes = { ...s.panes }
@@ -277,6 +310,7 @@ export const useSftpStore = create<SftpStoreState>((set, get) => {
 
     reconnect: (hostId) => {
       if (!pane(hostId).started) return
+      invalidate(hostId)
       void connectAndList(hostId)
     },
 
@@ -453,14 +487,22 @@ export const useSftpStore = create<SftpStoreState>((set, get) => {
     applyStateEvent: (e) => {
       const p = pane(e.hostId)
       if (!p.started) return
+      if (e.status === 'disconnected' || e.status === 'error') invalidate(e.hostId)
       patch(e.hostId, { status: e.status, error: e.error ?? null })
       // 通道（重）建立 → 恢复目录视图（对照 hostLinkRestored → connectAndList 的刷新段）
       if (e.status === 'connected' && p.status !== 'connected') {
+        const current = lifetime(e.hostId)
         void (async () => {
-          const home = await window.aterm.sftp.realpath(e.hostId, '.')
-          patch(e.hostId, { home })
-          for (const dir of new Set([p.root, ...p.expanded, p.path])) {
-            await load(e.hostId, dir)
+          try {
+            const home = await window.aterm.sftp.realpath(e.hostId, '.')
+            if (!current()) return
+            patch(e.hostId, { home })
+            for (const dir of new Set([p.root, ...p.expanded, p.path])) {
+              if (!current()) return
+              await load(e.hostId, dir)
+            }
+          } catch (error) {
+            if (current()) patch(e.hostId, { banner: errorMessage(error) })
           }
         })()
       }

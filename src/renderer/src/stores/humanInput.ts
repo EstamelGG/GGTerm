@@ -17,8 +17,7 @@ interface HumanInputState {
 export const useHumanInputStore = create<HumanInputState>((set) => ({
   pending: {},
 
-  request: (request) =>
-    set((s) => ({ pending: { ...s.pending, [request.executionId]: request } })),
+  request: (request) => set((s) => ({ pending: { ...s.pending, [request.executionId]: request } })),
 
   resolve: ({ executionId }) =>
     set((s) => {
@@ -28,6 +27,5 @@ export const useHumanInputStore = create<HumanInputState>((set) => ({
       return { pending }
     }),
 
-  replaceAll: (list) =>
-    set({ pending: Object.fromEntries(list.map((r) => [r.executionId, r])) })
+  replaceAll: (list) => set({ pending: Object.fromEntries(list.map((r) => [r.executionId, r])) })
 }))

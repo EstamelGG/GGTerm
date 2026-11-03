@@ -225,10 +225,15 @@ const api = {
   connections: {
     list: (): Promise<HostConnection[]> => ipcRenderer.invoke('conn:list'),
     create: (
-      input: Partial<HostConnection> & Pick<HostConnection, 'name' | 'host' | 'username'>
-    ): Promise<HostConnection> => ipcRenderer.invoke('conn:create', input),
-    update: (id: string, patch: Partial<HostConnection>): Promise<HostConnection | null> =>
-      ipcRenderer.invoke('conn:update', { id, patch }),
+      input: Partial<HostConnection> & Pick<HostConnection, 'name' | 'host' | 'username'>,
+      credentials?: Partial<ConnectionSecrets>
+    ): Promise<HostConnection> => ipcRenderer.invoke('conn:create', input, credentials),
+    update: (
+      id: string,
+      patch: Partial<HostConnection>,
+      credentials?: Partial<ConnectionSecrets>
+    ): Promise<HostConnection | null> =>
+      ipcRenderer.invoke('conn:update', { id, patch, credentials }),
     remove: (id: string): Promise<boolean> => ipcRenderer.invoke('conn:delete', id),
     setNote: (id: string, note: ServerNote): Promise<HostConnection | null> =>
       ipcRenderer.invoke('conn:setNote', { id, note }),
@@ -339,6 +344,13 @@ const api = {
       ipcRenderer.invoke('host:connect', conn, inspectOnly),
     /** 全部链路状态快照（拓扑图初始化：phase + 进入时刻 + 重试次数 + 失败原因） */
     listLinks: (): Promise<HostLinkSnapshot[]> => ipcRenderer.invoke('links:list'),
+    runtimeSnapshot: (): Promise<ConnectionStateSnapshot> =>
+      ipcRenderer.invoke('connections:runtime'),
+    onConnectionState: (cb: (event: ConnectionStateEvent) => void): (() => void) => {
+      const listener = (_e: unknown, event: ConnectionStateEvent): void => cb(event)
+      ipcRenderer.on('connections:state', listener)
+      return () => ipcRenderer.removeListener('connections:state', listener)
+    },
     submitAuth: (
       hostId: string,
       cred: { username: string; password?: string; privateKey?: string; passphrase?: string }
@@ -528,3 +540,4 @@ if (process.contextIsolated) {
   // @ts-ignore (define in dts)
   window.aterm = api
 }
+import type { ConnectionStateEvent, ConnectionStateSnapshot } from '../shared/connectionState'

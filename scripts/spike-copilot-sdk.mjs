@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/explicit-function-return-type */
 /**
  * Copilot SDK 嵌入验证脚本（spike，验证后可删）
  *

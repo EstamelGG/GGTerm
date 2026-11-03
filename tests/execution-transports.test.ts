@@ -38,7 +38,7 @@ it('allocates a PTY, preserves split UTF-8, and drains output before returning t
     lost
   })
   expect(shell.mock.calls[0][0]).toMatchObject({ term: 'xterm-256color' })
-  expect(channel.write).toHaveBeenCalledWith('script\n')
+  expect(channel.write).toHaveBeenCalledWith('script\r')
   const text = Buffer.from('中文')
   channel.emit('data', text.subarray(0, 2))
   channel.emit('data', text.subarray(2))
@@ -74,7 +74,7 @@ it.each(['pwd', 'pwd\n', 'pwd\r', 'pwd\r\n'])(
       exit: vi.fn(),
       lost: vi.fn()
     })
-    expect(channel.write).toHaveBeenCalledExactlyOnceWith(command === 'pwd' ? 'pwd\n' : command)
+    expect(channel.write).toHaveBeenCalledExactlyOnceWith(command === 'pwd' ? 'pwd\r' : command)
     // Transport writes remain raw so explicit single-key input never gains Enter.
     transport.write('q')
     expect(channel.write).toHaveBeenLastCalledWith('q')

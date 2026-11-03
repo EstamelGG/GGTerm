@@ -63,7 +63,12 @@ export const DEFAULT_PATTERN_RULES: PatternHighlightRule[] = [
   // 127.0.0.1:8080 的 8080、10.0.0.0/8 的 8（logalize mask-or-port 的保守子集）
   { id: 'port', priority: 50, color: T.port, regex: /(?<=:)\d{4,5}\b|(?<=\/)(?:8|16|24|28|32)\b/g },
   // ls -l 权限串（类型位 + 9 位 rwx 属性，行首）；优先级压过端口/数字类规则
-  { id: 'permission', priority: 92, color: T.err, regex: /(?<=^|\s)[-dlbcpsD][rwxsStT-]{9}(?=\s|$)/g },
+  {
+    id: 'permission',
+    priority: 92,
+    color: T.err,
+    regex: /(?<=^|\s)[-dlbcpsD][rwxsStT-]{9}(?=\s|$)/g
+  },
   // logfmt 键（含等号）：level=info / msg="started" 的键部分
   {
     id: 'logfmt-key',
@@ -93,7 +98,8 @@ export const DEFAULT_PATTERN_RULES: PatternHighlightRule[] = [
     id: 'log-error',
     priority: 40,
     color: T.err,
-    regex: /\b(?:error|err|fatal|panic|crit(?:ical)?|fail(?:ed|ure)?|denied|invalid|unable|unreachable|timeout)\b/gi
+    regex:
+      /\b(?:error|err|fatal|panic|crit(?:ical)?|fail(?:ed|ure)?|denied|invalid|unable|unreachable|timeout)\b/gi
   },
   {
     id: 'log-warn',
@@ -164,7 +170,10 @@ type CompiledRule = { re: RegExp; color: string; priority: number }
 
 function compileRules(rules: PatternHighlightRule[]): CompiledRule[] {
   return rules.map((r) => ({
-    re: new RegExp(r.regex.source, r.regex.flags.includes('g') ? r.regex.flags : `${r.regex.flags}g`),
+    re: new RegExp(
+      r.regex.source,
+      r.regex.flags.includes('g') ? r.regex.flags : `${r.regex.flags}g`
+    ),
     color: r.color,
     priority: r.priority
   }))
@@ -303,7 +312,8 @@ export class PatternHighlightAddon implements ITerminalAddon {
       if (existing && existing.text === text) continue // untouched line
 
       // 空行/达到装饰上限：直接跳过扫描（limit 超限后本行不再装饰）
-      const spans = decoCount >= this.limit || text.length === 0 ? [] : collectSpans(text, this.rules)
+      const spans =
+        decoCount >= this.limit || text.length === 0 ? [] : collectSpans(text, this.rules)
 
       // reuse the marker when the line merely changed content
       let marker: IMarker | null = null

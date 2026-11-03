@@ -48,6 +48,43 @@ function setup(ch = channel()): {
 afterEach(() => vi.useRealTimers())
 
 describe('Agent SFTP reconnect lifecycle without opening the file panel', () => {
+  it('does not reopen a stopped viewer when its connection becomes ready later', async () => {
+    const { session, link, client } = setup()
+    let ready!: () => void
+    Object.assign(link, {
+      activeClient: null,
+      waitForActive: () =>
+        new Promise<void>((resolve) => {
+          ready = resolve
+        })
+    })
+    const pending = session.start()
+    session.stop()
+    Object.assign(link, { activeClient: client })
+    ready()
+    await pending
+    expect(client.sftp).not.toHaveBeenCalled()
+    await session.start()
+    expect(client.sftp).toHaveBeenCalledOnce()
+    session.stop()
+  })
+
+  it('treats connection closure during a canceled start as cancellation', async () => {
+    const { session, link } = setup()
+    let fail!: (error: Error) => void
+    Object.assign(link, {
+      activeClient: null,
+      waitForActive: () =>
+        new Promise<void>((_resolve, reject) => {
+          fail = reject
+        })
+    })
+    const pending = session.start()
+    session.stop()
+    fail(new Error('Connection has been closed'))
+    await expect(pending).resolves.toBeUndefined()
+  })
+
   it('rejects an in-flight listing on link loss and opens a fresh channel on retry', async () => {
     const { session, link, ch } = setup(channel(true))
     const pending = session.list('/download')

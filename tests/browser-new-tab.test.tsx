@@ -56,6 +56,7 @@ it('creates and selects a blank tab from the open result even without a state ev
       onToast={vi.fn()}
       notification={null}
       onDismissNotification={vi.fn()}
+      onHasContentChange={vi.fn()}
     />
   )
   await screen.findByRole('button', { name: 'common.close' })
@@ -123,6 +124,7 @@ it('shows a ready document while images are still loading', async () => {
         onToast={vi.fn()}
         notification={null}
         onDismissNotification={vi.fn()}
+        onHasContentChange={vi.fn()}
       />
     )
     await screen.findByRole('button', { name: 'Usable page' })

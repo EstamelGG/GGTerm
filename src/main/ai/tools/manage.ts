@@ -5,12 +5,9 @@ import {
   deleteConnection,
   listConnections,
   updateConnection
-} from '../../data/connections'
-import { deleteSecrets, loadSecrets, saveSecrets } from '../../data/secrets'
+} from '../../connections'
+import { loadSecrets } from '../../data/secrets'
 import { sshTest } from '../../sshTest'
-import { removeLink } from '../../ssh/link'
-import { portForwards } from '../../portForward'
-import { listAgentConnections, closeAgentConnection } from '../agentLinks'
 import { probeDetail } from '../../probe'
 import { hostIdSchema, intentSchema, type AnyTool } from './shared'
 
@@ -44,27 +41,24 @@ export const manageTools: AnyTool[] = [
       passphrase: z.string().optional()
     }),
     handler: async (input) => {
-      const conn = createConnection({
-        name: input.name,
-        host: input.host,
-        username: input.username,
-        port: input.port,
-        authType: input.authType,
-        groupId: input.groupId ?? null,
-        jumpHostIds: input.jumpHostIds,
-        strictKex: input.strictKex
-      })
-      if (
-        input.password !== undefined ||
-        input.privateKey !== undefined ||
-        input.passphrase !== undefined
-      ) {
-        saveSecrets(conn.id, {
-          password: input.password,
-          privateKey: input.privateKey,
-          passphrase: input.passphrase
-        })
+      const credentials = {
+        password: input.password,
+        privateKey: input.privateKey,
+        passphrase: input.passphrase
       }
+      const conn = createConnection(
+        {
+          name: input.name,
+          host: input.host,
+          username: input.username,
+          port: input.port,
+          authType: input.authType,
+          groupId: input.groupId ?? null,
+          jumpHostIds: input.jumpHostIds,
+          strictKex: input.strictKex
+        },
+        credentials
+      )
       return {
         id: conn.id,
         name: conn.name,
@@ -108,13 +102,16 @@ export const manageTools: AnyTool[] = [
         throw new Error(`Connection not found: ${hostId}`)
       }
       const { password, privateKey, passphrase, ...patch } = input
+      // Tool-card intent is not a persisted connection field.
+      delete patch.description
       const hasSecrets =
         password !== undefined || privateKey !== undefined || passphrase !== undefined
       if (Object.keys(patch).length === 0 && !hasSecrets) throw new Error('No fields to update')
-      const next = Object.keys(patch).length
-        ? updateConnection(hostId, patch)!
-        : listConnections().find((c) => c.id === hostId)!
-      if (hasSecrets) saveSecrets(hostId, { password, privateKey, passphrase })
+      const next = updateConnection(
+        hostId,
+        patch,
+        hasSecrets ? { password, privateKey, passphrase } : undefined
+      )!
       return {
         id: next.id,
         name: next.name,
@@ -132,13 +129,7 @@ export const manageTools: AnyTool[] = [
     handler: async ({ hostId }) => {
       if (!listConnections().some((c) => c.id === hostId))
         throw new Error(`Connection not found: ${hostId}`)
-      await portForwards.detachHost(hostId)
-      removeLink(hostId)
-      for (const item of listAgentConnections()) {
-        if (item.hostId === hostId) closeAgentConnection(hostId, item.connectionId)
-      }
-      deleteSecrets(hostId)
-      deleteConnection(hostId)
+      await deleteConnection(hostId)
       return { hostId, deleted: true }
     }
   }),

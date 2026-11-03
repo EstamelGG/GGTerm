@@ -93,9 +93,9 @@ import {
   DOT_TOP_TOOL,
   TEXT_DOT,
   THINKING_DOT,
-  TimelineNode,
-  toolDotCls
+  TimelineNode
 } from './aiTimeline'
+import { toolDotCls } from './toolDotCls'
 import {
   Select,
   SelectContent,

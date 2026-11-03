@@ -168,6 +168,9 @@ const pendingHostStates = new Map<string, HostStateEvent>()
  */
 const pendingShellStates = new Map<string, ShellStateEvent>()
 
+// Incremented on detach so replies for a previous workspace cannot attach to a reopened one.
+const workspaceVersions = new Map<string, number>()
+
 /** 文档异步操作只更新仍然打开的目标文件，不重新创建已关闭的文档。 */
 function patchFile(hostId: string, fileId: string, patch: Partial<RemoteFileDoc>): void {
   useSessionStore.setState((s) => ({
@@ -262,6 +265,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   detachHost: (id) => {
+    workspaceVersions.set(id, (workspaceVersions.get(id) ?? 0) + 1)
     if (useWorkspaceStore.getState().focusedHostId === id)
       useWorkspaceStore.getState().focusHost(null)
     pendingHostStates.delete(id) // 清残留缓冲，防旧会话事件 replay 到下次重开
@@ -284,12 +288,23 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   addShell: (hostId, bootstrap) => {
     const host = get().hosts.find((h) => h.id === hostId)
     if (!host) return
+    const version = workspaceVersions.get(hostId)
+    const isCurrent = (): boolean =>
+      workspaceVersions.get(hostId) === version && get().hosts.some((h) => h.id === hostId)
     // 初始执行优先级：显式 bootstrap（SFTP"在此打开终端"的 cd）> 连接级 initCommand > initDir 的 cd
     const boot = bootstrap ?? shellInitCommand(host.conn)
     void window.aterm.shells.create(hostId, boot).then(async ({ shellId }) => {
+      const discardIfClosed = (): boolean => {
+        if (isCurrent()) return false
+        pendingShellStates.delete(`${hostId}:${shellId}`)
+        window.aterm.shells.close(hostId, shellId)
+        return true
+      }
+      if (discardIfClosed()) return
       // 延迟启动协议（对齐本地控制台）：先建 xterm 实例与镜像，再请求主进程开通道
       // —— 之后到达的 state/data 事件必然晚于注册，无竞态
       const { createTerminal } = await loadRegistry()
+      if (discardIfClosed()) return
       createTerminal(`${hostId}:${shellId}`, {
         onData: (d) => window.aterm.shells.input(hostId, shellId, d),
         onResize: (cols, rows) => window.aterm.shells.resize(hostId, shellId, cols, rows)
@@ -569,14 +584,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const { username } = target.conn
       const p = target.pendingSecrets
       void (async () => {
-        await useConnectionsStore.getState().update(e.hostId, { authType: p.authType, username })
-        // 只写本次手动登录用到的凭据字段，不覆盖另一侧已存内容
-        await window.aterm.secrets.save(
-          e.hostId,
-          p.authType === 'password'
-            ? { password: p.password ?? '' }
-            : { privateKey: p.privateKey ?? '', passphrase: p.passphrase ?? '' }
-        )
+        // Persist metadata and only the credentials used in this login together.
+        await useConnectionsStore
+          .getState()
+          .update(
+            e.hostId,
+            { authType: p.authType, username },
+            p.authType === 'password'
+              ? { password: p.password ?? '' }
+              : { privateKey: p.privateKey ?? '', passphrase: p.passphrase ?? '' }
+          )
       })()
     }
     set((s) => ({

@@ -10,14 +10,15 @@ export function getResourceLink(hostId: string): HostLink | undefined {
 }
 const viewers = new Map<
   string,
-  { link: HostLink; client: HostLink['activeClient']; sftp: SftpSession }
+  { link: HostLink; client: HostLink['activeClient']; sftp: SftpSession; release: () => void }
 >()
 export function resourceSftp(hostId: string, events: HostLinkEvents): SftpSession {
   const link = getResourceLink(hostId)
   const old = viewers.get(hostId)
   if (old && (old.link !== link || old.client !== link?.activeClient)) {
-    old.sftp.stop()
     viewers.delete(hostId)
+    old.release()
+    old.sftp.stop()
   }
   if (!link) throw new Error('host not connected')
   if (link === getLink(hostId)) return link.sftp
@@ -25,13 +26,19 @@ export function resourceSftp(hostId: string, events: HostLinkEvents): SftpSessio
   if (existing) return existing.sftp
   // Share only SSH transport. Stopping a UI pane must never stop Agent SFTP requests.
   const sftp = new SftpSession(link, events)
-  viewers.set(hostId, { link, client: link.activeClient, sftp })
+  const release = link.ownTransportResource(() => {
+    if (viewers.get(hostId)?.sftp === sftp) viewers.delete(hostId)
+    sftp.hostLinkLost()
+    sftp.stop()
+  })
+  viewers.set(hostId, { link, client: link.activeClient, sftp, release })
   return sftp
 }
 export function stopResourceSftp(hostId: string): void {
   const entry = viewers.get(hostId)
   if (entry) {
-    entry.sftp.stop()
     viewers.delete(hostId)
+    entry.release()
+    entry.sftp.stop()
   } else getLink(hostId)?.sftp.stop()
 }
