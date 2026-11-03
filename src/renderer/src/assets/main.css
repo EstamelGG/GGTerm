@@ -32,9 +32,8 @@
   /* 菜单项高亮：白色叠加 —— 在偏亮的玻璃面板上比 bg-hover 亮灰更可读；
      配合"无颜色过渡"使用，光标扫过即时点亮（原生菜单手感） */
   --at-menu-hl: rgb(255 255 255 / 0.1);
-  /* 顶部导航条：刻意比 surface 亮一档且更高不透明度 —— 原值与窗口底几乎同色，
-     导航条与内容区糊成一片；提亮后与下方 bg-sidebar 内容区形成可见的层次分界 */
-  --at-chrome-bar: rgb(54 59 65 / calc(1 - 0.08 * var(--at-surface-mix)));
+  /* 顶部导航条：比内容底色略亮，以低对比分隔线区分工作区层级。 */
+  --at-chrome-bar: rgb(32 36 41 / calc(1 - 0.08 * var(--at-surface-mix)));
 
   /* 模态面板：弹窗类用不透明底（表单/设置等内容密集，不参与透明叠层） */
   --at-modal: rgb(18 20 22);
@@ -45,13 +44,16 @@
   --at-glass: rgb(50 55 62 / 0.78);
 
   /* 工作区工具栏 / 标签栏共用几何；分隔线独立于内容行高度。 */
-  --at-chrome-row-height: 40px;
-  --at-chrome-row-padding-inline: 14px;
+  --at-chrome-row-height: 36px;
+  --at-chrome-row-padding-inline: 12px;
   --at-chrome-row-gap: 6px;
+  --at-workspace-inset: 8px;
+  --at-terminal-inset: 8px;
+  --at-panel-radius: 8px;
 
   /* 分隔线 */
   --at-line: rgb(255 255 255 / 0.07);
-  --at-chrome-sep: rgb(255 255 255 / 0.16);
+  --at-chrome-sep: rgb(255 255 255 / 0.1);
 
   /* 文字 */
   --at-fg: #e8eaed;

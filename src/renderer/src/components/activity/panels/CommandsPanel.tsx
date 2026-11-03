@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Pencil, Play, Trash2 } from 'lucide-react'
+import { Pencil, Play, Trash2, SquareTerminal } from 'lucide-react'
 import { errorMessage } from '@shared/error'
 import { useLocalTerminalStore } from '@/stores/localTerminal'
 import { useSessionStore } from '@/stores/session'
@@ -85,7 +85,7 @@ export function CommandsPanel({
           onClick={startNew}
         />
         <div className="flex-1" />
-        <span className="text-caption text-muted/60">
+        <span className="text-caption text-muted">
           {runnable ? t('activity.commandsRun') : t('activity.commandsNoTarget')}
         </span>
       </div>
@@ -133,9 +133,14 @@ export function CommandsPanel({
 
       {/* 列表 */}
       {commands.length === 0 && editing === null ? (
-        <div className="flex flex-col items-center gap-1.5 py-8 text-center">
-          <p className="text-minor text-muted">{t('activity.commandsEmpty')}</p>
-          <p className="text-caption text-muted/60">{t('activity.commandsEmptyHint')}</p>
+        <div className="flex flex-col items-center gap-2 px-3 py-6 text-center">
+          <div className="flex h-9 w-9 items-center justify-center rounded-[var(--at-panel-radius)] border border-line bg-raised text-muted">
+            <SquareTerminal size={18} aria-hidden="true" />
+          </div>
+          <p className="text-minor font-medium text-fg">{t('activity.commandsEmpty')}</p>
+          <p className="max-w-60 text-caption leading-relaxed text-muted">
+            {t('activity.commandsEmptyHint')}
+          </p>
         </div>
       ) : (
         <div className="flex flex-col">
@@ -145,7 +150,7 @@ export function CommandsPanel({
               className="flex items-center gap-1 rounded-lg px-1.5 py-1.5 hover:bg-hover/30"
             >
               <div className="min-w-0 flex-1">
-                <div className="truncate text-caption text-fg">{c.name}</div>
+                <div className="truncate text-minor font-medium text-fg">{c.name}</div>
                 <div className="truncate font-mono text-caption text-muted/75" title={c.command}>
                   {c.command}
                 </div>

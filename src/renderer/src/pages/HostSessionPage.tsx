@@ -150,7 +150,7 @@ export function HostSessionPage({
           <div
             ref={heightPreviewRef}
             className="pointer-events-none absolute inset-x-0 z-20 h-0.5 bg-at-accent/85"
-            style={{ top: previewH + 40 }}
+            style={{ top: `calc(${previewH}px + var(--at-chrome-row-height))` }}
           />
         )}
         {/* 上：文件编辑区（无打开文件时整体隐藏，终端占满全高）。

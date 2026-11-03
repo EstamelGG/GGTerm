@@ -25,7 +25,7 @@ const MAX_WIDTH = 720
 function loadWidth(): number {
   const raw = localStorage.getItem(WIDTH_KEY)
   const value = raw === null ? NaN : Number(raw)
-  return Number.isFinite(value) ? Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, value)) : 460
+  return Number.isFinite(value) ? Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, value)) : 360
 }
 
 const PANELS = [
@@ -152,7 +152,7 @@ export function ActivityRail(): React.JSX.Element {
                   </div>
                 )}
               </ActivityPanelHeader>
-              <div className="min-h-0 flex-1 overflow-y-auto p-3">
+              <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
                 {active === 'forwards' ? (
                   <PortForwardsPanel />
                 ) : active === 'transfers' ? (
@@ -171,7 +171,7 @@ export function ActivityRail(): React.JSX.Element {
           )
         )}
       </div>
-      <div className="flex w-10 shrink-0 flex-col items-center gap-1.5 border-l border-line bg-sidebar py-3">
+      <div className="flex w-10 shrink-0 flex-col items-center gap-1.5 border-l border-line bg-sidebar py-2">
         {PANELS.map((panel) => (
           <span key={panel.id} className="relative">
             <IconButton

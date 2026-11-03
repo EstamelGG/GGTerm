@@ -115,6 +115,36 @@ app.on('browser-window-created', (_event, win) => {
       `[...document.querySelectorAll('button')].find(e => e.textContent.trim() === 'General').click()`
     )
     await waitFor(win, `document.body.innerText.includes('Accent color')`)
+    const settingsCache = path.join(__dirname, '../node_modules/.cache')
+    fs.mkdirSync(settingsCache, { recursive: true })
+    win.webContents.invalidate()
+    await delay(250)
+    fs.writeFileSync(
+      path.join(settingsCache, 'settings-wide.png'),
+      (await win.webContents.capturePage({ stayHidden: true, stayAwake: true })).toPNG()
+    )
+    const previousSize = win.getContentSize()
+    win.setContentSize(980, 620)
+    await win.webContents.executeJavaScript(
+      `document.querySelector('button[aria-label="Show right sidebar"]').click()`
+    )
+    await delay(250)
+    win.webContents.invalidate()
+    await delay(150)
+    fs.writeFileSync(
+      path.join(settingsCache, 'settings-compact.png'),
+      (await win.webContents.capturePage({ stayHidden: true, stayAwake: true })).toPNG()
+    )
+    const settingsLayout = await win.webContents.executeJavaScript(`(() => {
+      const container = document.querySelector('#settings-general').closest('[class~="@container"]');
+      const edge = container.getBoundingClientRect().right;
+      return { width: container.clientWidth, scrollWidth: container.scrollWidth, overflow: [...container.querySelectorAll('*')].filter(e => e.getClientRects().length && (e.getBoundingClientRect().right > edge + 1 || e.scrollWidth > e.clientWidth + 1)).slice(0, 12).map(e => ({tag: e.tagName, cls: e.className, width: e.getBoundingClientRect().width, scrollWidth: e.scrollWidth, overflowX: getComputedStyle(e).overflowX})) };
+    })()`)
+    assert(settingsLayout.scrollWidth <= settingsLayout.width + 1, JSON.stringify(settingsLayout))
+    await win.webContents.executeJavaScript(
+      `document.querySelector('button[aria-label="Hide right sidebar"]').click()`
+    )
+    win.setContentSize(...previousSize)
     assert(
       !(await win.webContents.executeJavaScript(
         `document.body.textContent.includes('coming in Phase')`
@@ -652,6 +682,7 @@ app.on('browser-window-created', (_event, win) => {
           'real renderer startup',
           'manual login cancellation',
           'settings page navigation',
+          'compact settings with sidebar preserves content without horizontal overflow',
           'SSH/SFTP connection',
           'GB18030 auto-detection and save round trip',
           'native close preserves dirty files',

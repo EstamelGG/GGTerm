@@ -63,7 +63,7 @@ export function AppHeader({
   return (
     <header
       className={cn(
-        'drag flex h-10 shrink-0 items-center border-b border-chrome-sep bg-chrome-bar pr-3',
+        'drag flex h-[var(--at-chrome-row-height)] shrink-0 items-center border-b border-chrome-sep bg-chrome-bar pr-3',
         window.aterm.window.platform === 'darwin' ? 'pl-[78px]' : 'pl-3'
       )}
     >

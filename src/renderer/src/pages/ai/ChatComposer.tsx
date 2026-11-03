@@ -31,7 +31,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 /** 输入框高度下限（约 3 行，VS Code 风格大输入区）与上限 */
-const COMPOSER_MIN_H = 72
+const COMPOSER_MIN_H = 64
 const COMPOSER_MAX_H = 200
 
 /** 审批强度图标（盾牌系，与设置页同语义）：严格=盾+勾（安全）/ 默认=盾 / 宽松=盾+叹号（需警惕）；
@@ -329,7 +329,7 @@ export function ChatComposer({
         {/* 大输入容器：光圈三态（审批/输入黄闪 · 会话活动彩虹 · 空闲普通描边+聚焦绿边） */}
         <div
           className={cn(
-            'rounded-xl border bg-raised transition-colors duration-100',
+            'rounded-[var(--at-panel-radius)] border bg-raised transition-colors duration-100',
             humanPending > 0
               ? 'ai-ring-approval'
               : busy || hasRunningExec
@@ -407,7 +407,7 @@ export function ChatComposer({
               }}
               onKeyDown={onKeyDown}
               style={{ maxHeight: COMPOSER_MAX_H, minHeight: COMPOSER_MIN_H }}
-              className="no-drag block w-full resize-none bg-transparent px-3 py-2.5 text-body leading-relaxed text-fg placeholder:text-muted outline-none"
+              className="no-drag block w-full resize-none bg-transparent px-3 py-2 text-body leading-relaxed text-fg placeholder:text-muted outline-none"
             />
             {/* 补全菜单：锚在输入区上方 */}
             {menu !== null && (
@@ -530,7 +530,7 @@ export function ChatComposer({
                 type="button"
                 onClick={onCancel}
                 title={t('ai.stop')}
-                className="flex h-7 w-7 cursor-pointer shrink-0 items-center justify-center rounded-xl bg-danger text-white transition-opacity hover:opacity-90"
+                className="flex h-7 w-7 cursor-pointer shrink-0 items-center justify-center rounded-md bg-danger text-white transition-opacity hover:opacity-90"
               >
                 <Square size={11} strokeWidth={2.4} />
               </button>
@@ -540,7 +540,7 @@ export function ChatComposer({
                 onClick={submit}
                 disabled={!text.trim() || disabled}
                 title={t('ai.send')}
-                className="flex h-7 w-7 cursor-pointer shrink-0 items-center justify-center rounded-xl bg-at-accent text-white transition-opacity hover:opacity-90 disabled:opacity-35"
+                className="flex h-7 w-7 cursor-pointer shrink-0 items-center justify-center rounded-md bg-at-accent text-white transition-opacity hover:opacity-90 disabled:opacity-35"
               >
                 <ArrowUp size={14} strokeWidth={2.6} />
               </button>

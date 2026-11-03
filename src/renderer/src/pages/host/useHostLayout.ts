@@ -25,6 +25,14 @@ const EDITOR_H_MIN = 140
 /** 下区最小高度（标签栏 + 可用终端视口） */
 const SHELL_H_MIN = 160
 
+function chromeRowHeight(): number {
+  return (
+    Number.parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue('--at-chrome-row-height')
+    ) || 36
+  )
+}
+
 function loadEditorH(): number | null {
   const raw = localStorage.getItem(EDITOR_H_KEY)
   const v = raw === null ? NaN : Number(raw)
@@ -53,7 +61,12 @@ export function useHostLayout(canSftp: boolean): HostLayout {
   /** 左栏收纳：面板保持挂载（树/选中/滚动不丢），只把宽度归零 */
   const [sftpOpen, setSftpOpen] = useState(loadSftpOpen)
   const rootRef = useRef<HTMLDivElement>(null)
-  const [bounds, setBounds] = useState({ width: 980, height: 540, overlayOpen: false })
+  const [bounds, setBounds] = useState(() => ({
+    width: 980,
+    height: 540,
+    overlayOpen: false,
+    chromeHeight: chromeRowHeight()
+  }))
   const sftpOverlay = bounds.width < MIN_WIDTH + WORKSPACE_MIN_WIDTH + 1
   const sftpVisible = canSftp && (sftpOverlay ? bounds.overlayOpen : sftpOpen)
   const toggleSftp = (): void => {
@@ -74,7 +87,12 @@ export function useHostLayout(canSftp: boolean): HostLayout {
     const root = rootRef.current
     if (!root) return
     return observeSettledResize(root, () =>
-      setBounds({ width: root.clientWidth, height: root.clientHeight, overlayOpen: false })
+      setBounds({
+        width: root.clientWidth,
+        height: root.clientHeight,
+        overlayOpen: false,
+        chromeHeight: chromeRowHeight()
+      })
     )
   }, [])
   const maxSftpWidth = Math.max(
@@ -83,7 +101,8 @@ export function useHostLayout(canSftp: boolean): HostLayout {
   )
   const effectiveWidth = Math.min(width, maxSftpWidth)
   // Reserve both tab rows and the divider in addition to the terminal viewport.
-  const maxEditorH = Math.max(EDITOR_H_MIN, bounds.height - SHELL_H_MIN - 81)
+  const chromeHeight = bounds.chromeHeight * 2 + 1
+  const maxEditorH = Math.max(EDITOR_H_MIN, bounds.height - SHELL_H_MIN - chromeHeight)
   const widthResize = useResizePreview({
     value: effectiveWidth,
     min: MIN_WIDTH,
@@ -97,7 +116,10 @@ export function useHostLayout(canSftp: boolean): HostLayout {
     }
   })
   const heightResize = useResizePreview({
-    value: Math.min(editorH ?? Math.round(Math.max(0, bounds.height - 81) / 2), maxEditorH),
+    value: Math.min(
+      editorH ?? Math.round(Math.max(0, bounds.height - chromeHeight) / 2),
+      maxEditorH
+    ),
     min: EDITOR_H_MIN,
     max: maxEditorH,
     axis: 'y',
@@ -106,7 +128,8 @@ export function useHostLayout(canSftp: boolean): HostLayout {
       localStorage.setItem(EDITOR_H_KEY, String(next))
     },
     onPreview: (next) => {
-      if (heightPreviewRef.current) heightPreviewRef.current.style.top = `${next + 40}px`
+      if (heightPreviewRef.current)
+        heightPreviewRef.current.style.top = `calc(${next}px + var(--at-chrome-row-height))`
     }
   })
   const previewWidth = widthResize.preview

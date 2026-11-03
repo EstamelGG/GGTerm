@@ -233,11 +233,11 @@ export function SettingsPage({
   }
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto flex w-full max-w-3xl gap-8 px-8 py-6">
+    <div className="@container h-full overflow-y-auto">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 @xl:flex-row @xl:gap-6 @xl:p-5">
         {/* 左侧分区导航（粘性） */}
-        <nav className="sticky top-6 flex w-36 shrink-0 flex-col gap-0.5 self-start">
-          <span className="mb-2 px-2 text-caption font-medium uppercase tracking-wide text-muted">
+        <nav className="flex shrink-0 flex-wrap gap-1 self-start @xl:sticky @xl:top-5 @xl:w-32 @xl:flex-col">
+          <span className="mb-1 w-full px-2 text-caption font-medium uppercase tracking-wide text-muted">
             {t('settings.title')}
           </span>
           {SECTIONS.map((s) => (
@@ -255,7 +255,7 @@ export function SettingsPage({
             </button>
           ))}
           {/* 关于：分割线与功能分区隔开 */}
-          <div className="mx-2 my-1.5 h-px bg-line" />
+          <div className="mx-2 my-1.5 hidden h-px bg-line @xl:block" />
           <button
             type="button"
             onClick={() => setSection('about')}
