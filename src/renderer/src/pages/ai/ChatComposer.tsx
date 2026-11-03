@@ -1,3 +1,4 @@
+import { useExecutionTabs } from '@/stores/executionTabs'
 import { BrowserReferenceChip } from '@/components/ai/BrowserReferenceChip'
 import { ContextUsageIndicator } from '@/components/ai/ContextUsageIndicator'
 import { ExecutionSessionsButton } from '@/components/ai/ExecutionSessionsButton'
@@ -105,28 +106,12 @@ export function ChatComposer({
   )
   const humanPending = pendingCount + pendingInputCount + pendingQuestionCount
   /** 会话内是否仍有 running 执行：对话 turn 已结束但后台命令还在跑时，光圈保持彩虹 */
-  const [hasRunningExec, setHasRunningExec] = useState(false)
-  useEffect(() => {
-    let active = true
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const refresh = async (): Promise<void> => {
-      try {
-        const tasks = await window.aterm.executions.list(sessionId)
-        if (active)
-          setHasRunningExec(
-            tasks.some((task) => task.status === 'starting' || task.status === 'running')
-          )
-      } catch {
-        if (active) setHasRunningExec(false)
-      }
-      if (active) timer = setTimeout(() => void refresh(), 1000)
-    }
-    void refresh()
-    return () => {
-      active = false
-      clearTimeout(timer)
-    }
-  }, [sessionId])
+  const hasRunningExec = useExecutionTabs((s) =>
+    s.tasks.some(
+      (task) =>
+        task.sessionId === sessionId && (task.status === 'starting' || task.status === 'running')
+    )
+  )
   /** 对话场景当前绑定（下拉选中值） */
   const chatBinding = ai?.scenarios.chat ?? null
   const contextUsage = useAiStore((s) => s.sessions.find((x) => x.id === sessionId)?.contextUsage)

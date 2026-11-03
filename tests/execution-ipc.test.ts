@@ -1,7 +1,13 @@
+vi.mock('../src/main/ipc/delivery', () => ({ broadcast: vi.fn() }))
 import { expect, it, vi } from 'vitest'
 import { registerExecutionIpc } from '../src/main/ai/executionIpc'
 const handle = vi.hoisted(() => vi.fn())
-const executions = vi.hoisted(() => ({ list: vi.fn(), snapshot: vi.fn(), close: vi.fn() }))
+const executions = vi.hoisted(() => ({
+  list: vi.fn(),
+  snapshot: vi.fn(),
+  close: vi.fn(),
+  onChanged: vi.fn()
+}))
 vi.mock('electron', () => ({ ipcMain: { handle } }))
 vi.mock('../src/main/ai/exec', () => ({ executions }))
 

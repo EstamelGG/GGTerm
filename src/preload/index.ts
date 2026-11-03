@@ -165,6 +165,11 @@ const api = {
     }
   },
   executions: {
+    onChanged: (cb: (sessionId: string) => void): (() => void) => {
+      const listener = (_event: unknown, sessionId: string): void => cb(sessionId)
+      ipcRenderer.on('execution:changed', listener)
+      return () => ipcRenderer.removeListener('execution:changed', listener)
+    },
     list: (sessionId: string, hostId?: string): Promise<ExecutionSnapshot[]> =>
       ipcRenderer.invoke('execution:list', sessionId, hostId),
     read: (sessionId: string, id: string, cursor: number): Promise<ExecutionSnapshot> =>

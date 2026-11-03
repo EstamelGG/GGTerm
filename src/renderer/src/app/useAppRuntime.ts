@@ -1,3 +1,4 @@
+import { watchExecutions } from '@/lib/watchExecutions'
 import { applyAccent, applyBgTransparency, applyUiScale } from '@/lib/accent'
 import { useAiStore } from '@/stores/ai'
 import { useConnectionsStore } from '@/stores/connections'
@@ -18,25 +19,27 @@ import { useEffect } from 'react'
 /** Own all application-level subscriptions and their cleanup in one mounted hook. */
 export function useAppRuntime(flash: (text: string, danger?: boolean) => void): void {
   const connections = useConnectionsStore((s) => s.connections)
-  useEffect(() => {
-    let active = true
-    let timer: ReturnType<typeof setTimeout>
-    const refresh = async (): Promise<void> => {
-      const sessions = useAiStore.getState().sessions
-      const results = await Promise.allSettled(
-        sessions.map((s) => window.aterm.executions.list(s.id))
-      )
-      if (!active) return
-      const tasks = results.flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
-      useExecutionTabs.getState().sync(tasks)
-      timer = setTimeout(() => void refresh(), 1000)
-    }
-    void refresh()
-    return () => {
-      active = false
-      clearTimeout(timer)
-    }
-  }, [])
+  useEffect(
+    () =>
+      watchExecutions({
+        ids: () => useAiStore.getState().sessions.map((session) => session.id),
+        load: (id) => window.aterm.executions.list(id),
+        onChanged: (callback) => window.aterm.executions.onChanged(callback),
+        onSessionsChanged: (callback) =>
+          useAiStore.subscribe((next, previous) => {
+            if (
+              next.sessions.length !== previous.sessions.length ||
+              next.sessions.some((session, index) => session.id !== previous.sessions[index]?.id)
+            )
+              callback()
+          }),
+        apply: (tasks) => useExecutionTabs.getState().sync(tasks),
+        failed: (id, error, retry) =>
+          useWorkspaceIssues.getState().report('executions:' + id, error, 'recovery', retry),
+        recovered: (id) => useWorkspaceIssues.getState().clear('executions:' + id)
+      }),
+    []
+  )
   useEffect(() => {
     useSessionStore.setState((state) => ({
       hosts: state.hosts.map((h) => {

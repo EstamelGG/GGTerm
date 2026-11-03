@@ -28,6 +28,22 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers())
 
 describe('execution lifecycle', () => {
+  it('notifies lifecycle changes without streaming output through the change channel', async () => {
+    const changed = vi.fn()
+    const off = manager.onChanged(changed)
+    start()
+    await Promise.resolve()
+    expect(changed).toHaveBeenCalledTimes(2)
+    events.data('some output')
+    expect(changed).toHaveBeenCalledTimes(2)
+    events.exit(0)
+    expect(changed).toHaveBeenCalledTimes(3)
+    expect(changed.mock.calls).toEqual([['owner'], ['owner'], ['owner']])
+    off()
+    start()
+    await Promise.resolve()
+    expect(changed).toHaveBeenCalledTimes(3)
+  })
   it('returns a switch password-change confirmation as ordinary input, then protects the real password prompt', async () => {
     const requests: HumanInputRequest[] = []
     manager.onHumanInputRequest((request) => requests.push(request))
