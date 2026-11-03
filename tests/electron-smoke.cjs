@@ -5,6 +5,7 @@ const path = require('node:path')
 const assert = require('node:assert/strict')
 const iconv = require('iconv-lite')
 let fixture
+let launchedAt = 0
 
 const root = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'aterm-smoke-'))
 app.setPath('userData', root)
@@ -85,6 +86,7 @@ app.on('browser-window-created', (_event, win) => {
   win.webContents.setBackgroundThrottling(false)
   const run = async () => {
     await waitFor(win, `document.body.textContent.includes('Manual test')`)
+    const startupMs = Date.now() - launchedAt
     await win.webContents.executeJavaScript(`
       [...document.querySelectorAll('button')].find(e => e.textContent.trim() === 'Hosts').click();
       [...document.querySelectorAll('span')].find(e => e.textContent.trim() === 'Manual test').dispatchEvent(new MouseEvent('dblclick', {bubbles:true}));
@@ -631,9 +633,21 @@ app.on('browser-window-created', (_event, win) => {
       "[...document.querySelectorAll('[role=\"dialog\"] button')].find(e => e.textContent === 'Cancel').click()"
     )
     assert.deepEqual(closedIds, ['agent-live-one'])
+    const metrics = {
+      platform: process.platform,
+      recordedAt: new Date().toISOString(),
+      startupMs,
+      mainRssMiB: Math.round(process.memoryUsage().rss / 1024 / 1024),
+      scenarioMs: Date.now() - launchedAt
+    }
+    fs.writeFileSync(
+      path.join(__dirname, '../node_modules/.cache/desktop-metrics.json'),
+      JSON.stringify(metrics, null, 2)
+    )
     console.log(
       JSON.stringify({
         status: 'passed',
+        metrics,
         checks: [
           'real renderer startup',
           'manual login cancellation',
@@ -670,10 +684,13 @@ app.on('browser-window-created', (_event, win) => {
     })
   })
 })
-setTimeout(() => {
-  console.error('Electron smoke test timed out')
-  app.exit(1)
-}, 30000).unref()
+setTimeout(
+  () => {
+    console.error('Electron smoke test timed out')
+    app.exit(1)
+  },
+  Number(process.env.GGTERM_SMOKE_TIMEOUT_MS) || 30000
+).unref()
 require('./ssh-fixture.cjs')
   .startFixture()
   .then((server) => {
@@ -694,6 +711,7 @@ require('./ssh-fixture.cjs')
       })
     )
     app.on('will-quit', () => fixture.close())
+    launchedAt = Date.now()
     require('../out/main/index.js')
   })
   .catch((error) => {
