@@ -1,24 +1,28 @@
 import { isNetworkDevice } from '@shared/device'
-import { useWorkspaceStore } from './workspace'
-import { create } from 'zustand'
-import i18next from 'i18next'
+import { shellDirectoryCommand } from '@shared/sftpPath'
 import type {
   HostConnection,
   HostStateEvent,
-  LinkPhase,
-  SftpEntry,
   ShellAnnounceEvent,
   ShellDataEvent,
   ShellStateEvent,
   ShellStatus
 } from '@shared/types'
-import { errorMessage } from '@shared/error'
-import { shellDirectoryCommand } from '@shared/sftpPath'
-import type { EncodingMode, FileEncoding } from '@shared/encoding'
-import { useSftpStore } from './sftp'
+import { create } from 'zustand'
 import { useConnectionsStore } from './connections'
-import { useWorkspaceIssues } from './workspaceIssues'
 import { useLinksStore } from './links'
+import { createRemoteFilesSlice } from './session/remoteFiles'
+import type { HostWorkspaceMirror, SessionState, WorkspaceTab } from './session/types'
+import { useSftpStore } from './sftp'
+import { useWorkspaceStore } from './workspace'
+import { useWorkspaceIssues } from './workspaceIssues'
+export type {
+  HostShell,
+  HostWorkspaceMirror,
+  PendingManualSecrets,
+  RemoteFileDoc,
+  WorkspaceTab
+} from './session/types'
 
 /**
  * xterm 注册表按需加载：@xterm/* 体积大且只有终端会话才需要，动态 import
@@ -42,102 +46,6 @@ function loadRegistry(): Promise<typeof import('@/terminal/registry')> {
 function writeViaRegistry(key: string, data: string): void {
   if (registrySync) registrySync.writeTerminal(key, data)
   else void loadRegistry().then((r) => r.writeTerminal(key, data))
-}
-
-/** 对照 ATerminal-Swift SessionCenter.WorkspaceTab */
-export type WorkspaceTab =
-  | { kind: 'local' }
-  | { kind: 'browser' }
-  | { kind: 'connections' }
-  | { kind: 'ai' }
-  | { kind: 'host'; id: string }
-  /** section：打开设置页时定位的分区（对话页「管理模型」等深链入口） */
-  | { kind: 'settings'; section?: 'general' | 'host' | 'ai' | 'about' }
-/** 对照 SSHTerminalController 镜像（进程与通道在主进程） */
-export interface HostShell {
-  id: string
-  number: number
-  status: ShellStatus
-  error?: string
-}
-
-/** 对照 RemoteDocument：远程编辑文档（读写经 SFTP） */
-export interface RemoteFileDoc {
-  encoding: FileEncoding
-  encodingMode: EncodingMode
-  bom: boolean
-  confidence: number
-  readOnly: boolean
-  id: string
-  path: string
-  name: string
-  /** 远端文件大小（readForEdit 超限判断/下载入口用） */
-  size: number
-  text: string
-  /** 上次保存内容；dirty = text !== saved */
-  saved: string
-  loading: boolean
-  saving: boolean
-  error: string | null
-}
-
-/** 手动登录勾选"保存"时暂存的凭据；connected 后落盘并清空 */
-export interface PendingManualSecrets {
-  authType: 'password' | 'privateKey'
-  password?: string
-  privateKey?: string
-  passphrase?: string
-}
-
-/** 对照 HostWorkspace 镜像：主机工作区渲染层状态 */
-export interface HostWorkspaceMirror {
-  viewerOnly?: boolean
-  id: string
-  conn: HostConnection
-  title: string
-  phase: LinkPhase
-  attempt: number
-  offlineReason: string
-  awaiting: boolean
-  pendingSecrets: PendingManualSecrets | null
-  shells: HostShell[]
-  focusShellId: string | null
-  /** 上部编辑区打开的远程编辑文档（上下分栏：与 shell 区独立展示） */
-  files: RemoteFileDoc[]
-  focusFileId: string | null
-}
-
-interface SessionState {
-  tab: WorkspaceTab
-  hosts: HostWorkspaceMirror[]
-  setTab: (tab: WorkspaceTab) => void
-  connect: (conn: HostConnection, enter?: boolean) => Promise<void>
-  restoreViewer: (conn: HostConnection, focusShellId: string) => void
-  closeHost: (id: string, agentConnectionIds?: string[]) => void
-  detachHost: (id: string) => void
-  addShell: (hostId: string, bootstrap?: string) => Promise<void>
-  closeShell: (hostId: string, shellId: string) => void
-  focusShell: (hostId: string, shellId: string) => void
-  openFile: (hostId: string, entry: SftpEntry) => void
-  saveFile: (hostId: string, fileId: string) => Promise<boolean>
-  reloadFile: (hostId: string, fileId: string, encoding?: EncodingMode) => void
-  closeFile: (hostId: string, fileId: string) => void
-  focusFile: (hostId: string, fileId: string) => void
-  setFileText: (hostId: string, fileId: string, text: string) => void
-  reconnectHost: (hostId: string) => void
-  reconnectShell: (hostId: string, shellId: string) => void
-  submitAuth: (
-    hostId: string,
-    cred: {
-      username: string
-      password?: string
-      privateKey?: string
-      passphrase?: string
-      persist?: boolean
-    }
-  ) => void
-  applyHostState: (e: HostStateEvent) => void
-  applyShellState: (e: ShellStateEvent) => void
 }
 
 export const isTab = (a: WorkspaceTab, b: WorkspaceTab): boolean =>
@@ -180,17 +88,6 @@ const pendingShellStates = new Map<string, ShellStateEvent>()
 const workspaceVersions = new Map<string, number>()
 const credentialVersions = new Map<string, number>()
 let navigationVersion = 0
-
-/** 文档异步操作只更新仍然打开的目标文件，不重新创建已关闭的文档。 */
-function patchFile(hostId: string, fileId: string, patch: Partial<RemoteFileDoc>): void {
-  useSessionStore.setState((s) => ({
-    hosts: s.hosts.map((h) =>
-      h.id === hostId
-        ? { ...h, files: h.files.map((f) => (f.id === fileId ? { ...f, ...patch } : f)) }
-        : h
-    )
-  }))
-}
 
 function workspaceFor(conn: HostConnection): HostWorkspaceMirror {
   return {
@@ -436,193 +333,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   /** 对照 SessionCenter.openFile：已开聚焦；binary/tooLarge 转下载并提示 */
-  openFile: (hostId, entry) => {
-    if (entry.isDir) return
-    const host = get().hosts.find((h) => h.id === hostId)
-    if (!host) return
-    const existing = host.files.find((f) => f.path === entry.path)
-    if (existing) {
-      set((s) => ({
-        hosts: s.hosts.map((h) => (h.id === hostId ? { ...h, focusFileId: existing.id } : h))
-      }))
-      return
-    }
-    const doc: RemoteFileDoc = {
-      encoding: 'utf8',
-      encodingMode: 'auto',
-      bom: false,
-      confidence: 100,
-      readOnly: true,
-      id: crypto.randomUUID(),
-      path: entry.path,
-      name: entry.name,
-      size: entry.size,
-      text: '',
-      saved: '',
-      loading: true,
-      saving: false,
-      error: null
-    }
-    set((s) => ({
-      hosts: s.hosts.map((h) =>
-        h.id === hostId ? { ...h, files: [...h.files, doc], focusFileId: doc.id } : h
-      )
-    }))
-    void (async () => {
-      try {
-        const res = await window.aterm.sftp.readForEdit(hostId, entry.path, entry.size)
-        if (
-          !get()
-            .hosts.find((h) => h.id === hostId)
-            ?.files.some((f) => f.id === doc.id)
-        )
-          return
-        if (res.kind === 'text') {
-          set((s) => ({
-            hosts: s.hosts.map((h) =>
-              h.id === hostId
-                ? {
-                    ...h,
-                    files: h.files.map((f) =>
-                      f.id === doc.id
-                        ? {
-                            ...f,
-                            text: res.text,
-                            saved: res.text,
-                            loading: false,
-                            encoding: res.encoding,
-                            bom: res.bom,
-                            confidence: res.confidence,
-                            size: res.size,
-                            readOnly: res.lossy || res.binary,
-                            error: res.binary
-                              ? i18next.t('editor.binaryReadOnly')
-                              : res.lossy
-                                ? i18next.t('editor.lossyReadOnly')
-                                : null
-                          }
-                        : f
-                    )
-                  }
-                : h
-            )
-          }))
-          return
-        }
-        // 兜底（>10MB 已在 SftpPane 弹窗拦截）：移除标签页并提示改走下载，不自动下载
-        set((s) => ({
-          hosts: s.hosts.map((h) => {
-            if (h.id !== hostId) return h
-            const files = h.files.filter((f) => f.id !== doc.id)
-            return {
-              ...h,
-              files,
-              focusFileId:
-                h.focusFileId === doc.id ? (files[files.length - 1]?.id ?? null) : h.focusFileId
-            }
-          })
-        }))
-        useSftpStore.getState().setBanner(hostId, i18next.t('sftp.tooLargeBanner', { limit: 10 }))
-      } catch (err) {
-        const message = errorMessage(err)
-        set((s) => ({
-          hosts: s.hosts.map((h) =>
-            h.id === hostId
-              ? {
-                  ...h,
-                  files: h.files.map((f) =>
-                    f.id === doc.id ? { ...f, loading: false, error: message } : f
-                  )
-                }
-              : h
-          )
-        }))
-      }
-    })()
-  },
-
-  /** 对照 SessionCenter.saveFile：writeText + saved/error 状态 */
-  saveFile: async (hostId, fileId) => {
-    const host = get().hosts.find((h) => h.id === hostId)
-    const doc = host?.files.find((f) => f.id === fileId)
-    if (!host || !doc || doc.saving || doc.loading || doc.readOnly) return false
-    if (doc.text === doc.saved) return true
-    const text = doc.text
-    patchFile(hostId, fileId, { saving: true, error: null })
-    try {
-      await window.aterm.sftp.writeText(hostId, doc.path, text, doc.encoding, doc.bom)
-      patchFile(hostId, fileId, { saving: false, saved: text, error: null })
-      const current = get()
-        .hosts.find((h) => h.id === hostId)
-        ?.files.find((f) => f.id === fileId)
-      return !!current && current.text === text
-    } catch (err) {
-      patchFile(hostId, fileId, { saving: false, error: errorMessage(err) })
-      return false
-    }
-  },
-
-  /** 重新拉取远端内容（编辑器"刷新"按钮；dirty 由 UI 层先行确认） */
-  reloadFile: (hostId, fileId, encoding) => {
-    const host = get().hosts.find((h) => h.id === hostId)
-    const doc = host?.files.find((f) => f.id === fileId)
-    if (!host || !doc || doc.loading || doc.saving) return
-    const patch = (p: Partial<RemoteFileDoc>): void => patchFile(hostId, fileId, p)
-    patch({ loading: true, error: null })
-    void (async () => {
-      try {
-        const mode = encoding ?? doc.encodingMode
-        const res = await window.aterm.sftp.readForEdit(hostId, doc.path, doc.size, mode)
-        if (res.kind === 'text') {
-          patch({
-            text: res.text,
-            saved: res.text,
-            loading: false,
-            encoding: res.encoding,
-            encodingMode: mode,
-            bom: res.bom,
-            confidence: res.confidence,
-            size: res.size,
-            readOnly: res.lossy || res.binary,
-            error: res.binary
-              ? i18next.t('editor.binaryReadOnly')
-              : res.lossy
-                ? i18next.t('editor.lossyReadOnly')
-                : null
-          })
-          return
-        }
-        patch({ loading: false, error: i18next.t('sftp.tooLargeBanner', { limit: 10 }) })
-      } catch (err) {
-        patch({ loading: false, error: errorMessage(err) })
-      }
-    })()
-  },
-
-  /** 对照 SessionCenter.closeFile：焦点回退到最后一个文件或 shell */
-  closeFile: (hostId, fileId) => {
-    set((s) => ({
-      hosts: s.hosts.map((h) => {
-        if (h.id !== hostId) return h
-        const files = h.files.filter((f) => f.id !== fileId)
-        return {
-          ...h,
-          files,
-          focusFileId:
-            h.focusFileId === fileId ? (files[files.length - 1]?.id ?? null) : h.focusFileId
-        }
-      })
-    }))
-  },
-
-  focusFile: (hostId, fileId) => {
-    // 上下分栏：文件焦点与会话焦点独立，不再互相清空
-    set((s) => ({
-      hosts: s.hosts.map((h) => (h.id === hostId ? { ...h, focusFileId: fileId } : h))
-    }))
-  },
-
-  setFileText: (hostId, fileId, text) => patchFile(hostId, fileId, { text }),
+  ...createRemoteFilesSlice(set, get),
 
   reconnectHost: (hostId) => {
     window.aterm.hosts.reconnect(hostId)
