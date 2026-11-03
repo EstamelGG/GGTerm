@@ -28,3 +28,6 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - run: npm run ${{ matrix.command }}
+      - name: Windows native terminal cleanup
+        if: matrix.os == 'windows-latest' && matrix.command == 'test'
+        run: npm run test:pty-cleanup

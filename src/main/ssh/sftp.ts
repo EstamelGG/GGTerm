@@ -222,7 +222,7 @@ export class SftpSession {
     if (!client) throw new Error('host link not active')
     this.emitState('connecting')
     const lifetime = this.channelLifetime.capture(this.client)
-    const opening = this.request<SFTPWrapper>((cb) =>
+    const opening = this.request<SFTPWrapper>(null, (cb) =>
       client.sftp((error, channel) => {
         if (lifetime.signal.aborted || client !== this.client) {
           channel?.destroy()
@@ -263,6 +263,7 @@ export class SftpSession {
 
   /** Bound callback requests to the current channel, including Agent-only sessions. */
   private request<T>(
+    channel: SFTPWrapper | null,
     fn: (cb: (err: Error | null | undefined, res?: T) => void) => void
   ): Promise<T> {
     const lifetime = this.channelLifetime.capture(this.client)
@@ -282,6 +283,10 @@ export class SftpSession {
         if (lifetime.current()) this.teardown()
       }, 30000)
       lifetime.signal.addEventListener('abort', abort, { once: true })
+      if (!lifetime.current() || (channel && channel !== this.sftp)) {
+        abort()
+        return
+      }
       try {
         fn((err, value) =>
           finish(err ? (err instanceof Error ? err : new Error(errorMessage(err))) : null, value)
@@ -293,6 +298,7 @@ export class SftpSession {
   }
 
   private teardown(): void {
+    this.abortMeasure()
     const current = this.sftp
     this.sftp = null
     this.channelLock = null
@@ -323,8 +329,8 @@ export class SftpSession {
   async list(path: string): Promise<SftpListing> {
     const sftp = await this.ensureChannel()
     const [raw, resolved] = await Promise.all([
-      this.request<SftpFileEntry[]>((cb) => sftp.readdir(path, cb)),
-      this.request<string>((cb) => sftp.realpath(path, cb)).catch(() => path)
+      this.request<SftpFileEntry[]>(sftp, (cb) => sftp.readdir(path, cb)),
+      this.request<string>(sftp, (cb) => sftp.realpath(path, cb)).catch(() => path)
     ])
     const entries = raw.map((f) => entryFrom(f, resolved)).filter((e): e is SftpEntry => e !== null)
     appLog('sftp', `List directory "${path}" → ${entries.length} entries`)
@@ -334,7 +340,7 @@ export class SftpSession {
   /** 仅 readdir（测量专用：省去 realpath 往返，取消后在途请求减半） */
   private async listEntries(path: string): Promise<SftpEntry[]> {
     const sftp = await this.ensureChannel()
-    const raw = await this.request<SftpFileEntry[]>((cb) => sftp.readdir(path, cb))
+    const raw = await this.request<SftpFileEntry[]>(sftp, (cb) => sftp.readdir(path, cb))
     const entries = raw.map((f) => entryFrom(f, path)).filter((e): e is SftpEntry => e !== null)
     appLog('sftp', `List directory "${path}" → ${entries.length} entries`)
     return entries
@@ -344,7 +350,9 @@ export class SftpSession {
     const hit = this.realpathCache.get(path)
     if (hit) return hit
     const sftp = await this.ensureChannel()
-    const resolved = await this.request<string>((cb) => sftp.realpath(path, cb)).catch(() => null)
+    const resolved = await this.request<string>(sftp, (cb) => sftp.realpath(path, cb)).catch(
+      () => null
+    )
     if (resolved === null) return path // 通道暂时不可用不缓存，避免固化错误结果
     this.realpathCache.set(path, resolved)
     return resolved
@@ -352,12 +360,12 @@ export class SftpSession {
 
   async readlink(path: string): Promise<string> {
     const sftp = await this.ensureChannel()
-    return this.request<string>((cb) => sftp.readlink(path, cb)).catch(() => '')
+    return this.request<string>(sftp, (cb) => sftp.readlink(path, cb)).catch(() => '')
   }
 
   async stat(path: string): Promise<SftpStat> {
     const sftp = await this.ensureChannel()
-    const attrs = await this.request<SftpStats>((cb) => sftp.stat(path, cb))
+    const attrs = await this.request<SftpStats>(sftp, (cb) => sftp.stat(path, cb))
     return {
       size: attrs.size ?? 0,
       permissions: attrs.mode ?? null,
@@ -397,7 +405,7 @@ export class SftpSession {
   async isDirectory(path: string): Promise<boolean> {
     const sftp = await this.ensureChannel()
     try {
-      const attrs = await this.request<SftpStats>((cb) => sftp.stat(path, cb))
+      const attrs = await this.request<SftpStats>(sftp, (cb) => sftp.stat(path, cb))
       return (attrs.mode & 0o170000) === 0o040000
     } catch {
       return false
@@ -408,23 +416,23 @@ export class SftpSession {
 
   async mkdir(path: string): Promise<void> {
     const sftp = await this.ensureChannel()
-    await this.request<null>((cb) => sftp.mkdir(path, cb))
+    await this.request<null>(sftp, (cb) => sftp.mkdir(path, cb))
   }
 
   async touch(path: string): Promise<void> {
     const sftp = await this.ensureChannel()
-    const handle = await this.request<Buffer>((cb) => sftp.open(path, 'w', cb))
-    await this.request<null>((cb) => sftp.close(handle, cb))
+    const handle = await this.request<Buffer>(sftp, (cb) => sftp.open(path, 'w', cb))
+    await this.request<null>(sftp, (cb) => sftp.close(handle, cb))
   }
 
   async rename(src: string, dest: string): Promise<void> {
     const sftp = await this.ensureChannel()
-    await this.request<null>((cb) => sftp.rename(src, dest, cb))
+    await this.request<null>(sftp, (cb) => sftp.rename(src, dest, cb))
   }
 
   async chmod(path: string, mode: number): Promise<void> {
     const sftp = await this.ensureChannel()
-    await this.request<null>((cb) => sftp.chmod(path, mode, cb))
+    await this.request<null>(sftp, (cb) => sftp.chmod(path, mode, cb))
   }
 
   /* ---------------- 远程编辑（阶段⑤，对照 readForEdit/writeText） ---------------- */
@@ -438,13 +446,13 @@ export class SftpSession {
   ): Promise<SftpEditPayload> {
     const limit = SftpSession.EDIT_MAX_BYTES
     const sftp = await this.ensureChannel()
-    const handle = await this.request<Buffer>((cb) => sftp.open(path, 'r', cb))
+    const handle = await this.request<Buffer>(sftp, (cb) => sftp.open(path, 'r', cb))
     try {
       const chunks: Buffer[] = []
       let offset = 0
       for (;;) {
         const buf = Buffer.alloc(64_000)
-        const n = await this.request<number>((cb) =>
+        const n = await this.request<number>(sftp, (cb) =>
           sftp.read(handle, buf, 0, buf.length, offset, (err, bytesRead) => cb(err, bytesRead))
         )
         if (n <= 0) break
@@ -454,7 +462,7 @@ export class SftpSession {
       }
       return { kind: 'text', ...decodeFile(Buffer.concat(chunks), encoding), size: offset }
     } finally {
-      await this.request<null>((cb) => sftp.close(handle, cb)).catch(() => {})
+      await this.request<null>(sftp, (cb) => sftp.close(handle, cb)).catch(() => {})
     }
   }
 
@@ -466,12 +474,12 @@ export class SftpSession {
   ): Promise<void> {
     const data = encodeFile(text, encoding, bom)
     const sftp = await this.ensureChannel()
-    await writeRemoteAtomic(sftp, path, data)
+    await writeRemoteAtomic(sftp, path, data, (action) => this.request(sftp, action))
   }
 
   async unlink(path: string): Promise<void> {
     const sftp = await this.ensureChannel()
-    await this.request<null>((cb) => sftp.unlink(path, cb))
+    await this.request<null>(sftp, (cb) => sftp.unlink(path, cb))
   }
 
   /** 删除：文件走 unlink；目录走共享连接 exec rm -rf（对照 remove()） */
@@ -479,8 +487,9 @@ export class SftpSession {
     if (entry.isDir) {
       const client = this.client
       if (!client) throw new Error('host link not active')
+      const lease = this.channelLifetime.capture(client)
       const resolved = await this.realpath(entry.path)
-      await execCommand(client, removeDirCommand(resolved))
+      await execCommand(client, removeDirCommand(resolved), 65536, lease.signal)
       return
     }
     await this.unlink(entry.path)
@@ -999,6 +1008,7 @@ export class SftpSession {
     let last = 0
     const acc = { bytes: 0, files: 0, dirs: 0, skipped: 0, skippedPaths: [] as string[] }
     const emit = (done: boolean, error?: string): void => {
+      if (abort.signal.aborted) return
       this.events.onSftpMeasure({ hostId, path, ...acc, done, error })
     }
     try {

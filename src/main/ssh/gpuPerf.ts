@@ -56,7 +56,7 @@ export function sessionGpuWatch(hostId: string | null): void {
   loggedFail = false
   watched = hostId
   lifetime = new ResourceLifetime(hostId ?? '', 'gpu')
-  if (!hostId || !getResourceLink(hostId)) return
+  if (!hostId) return
   void sample(hostId)
   timer = setInterval(() => void sample(hostId), GPU_INTERVAL_MS)
 }

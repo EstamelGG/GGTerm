@@ -50,6 +50,7 @@ vi.mock('node-pty', () => ({
 }))
 import {
   disposeLocalTerminals,
+  waitForLocalTerminalCleanup,
   installLocalTerminals,
   registerLocalTerminalIpc
 } from '../src/main/localTerminal'
@@ -66,10 +67,31 @@ const call = (name: string, sender: WebContents, ...args: unknown[]): ReturnType
     { sender, senderFrame: sender.mainFrame } as Parameters<Handler>[0],
     ...args
   )
-beforeEach(() => {
+beforeEach(async () => {
   disposeLocalTerminals()
+  for (const child of mocks.children) child.exit({ exitCode: 0 })
+  await waitForLocalTerminalCleanup()
   mocks.children.length = 0
   registerLocalTerminalIpc()
+})
+
+it('waits for asynchronous cleanup already started by window destruction', async () => {
+  const sender = owner()
+  installLocalTerminals(sender)
+  await call('create', sender)
+  const child = mocks.children[0]
+  sender.emit('destroyed')
+  disposeLocalTerminals()
+  let complete = false
+  const cleanup = waitForLocalTerminalCleanup().then(() => {
+    complete = true
+  })
+  await Promise.resolve()
+  expect(complete).toBe(false)
+  expect(child.kill).toHaveBeenCalledOnce()
+  child.exit({ exitCode: 0 })
+  await cleanup
+  expect(complete).toBe(true)
 })
 
 it('preserves output and a fast shell exit until the renderer is ready', async () => {

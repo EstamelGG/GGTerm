@@ -18,6 +18,7 @@ export function bindTransport(client: Client, connectionId = randomUUID(), gener
 }
 
 export function invalidateTransport(client: Client): void {
+  if (!transports.has(client)) bindTransport(client)
   transports.get(client)?.abort.abort()
 }
 

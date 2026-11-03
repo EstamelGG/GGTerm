@@ -177,6 +177,7 @@ export class ShellSession {
         // 旧通道的 close（this.chan 已被新通道接管）忽略，避免误清/误报
         if (this.chan !== chan) return
         this.chan = null
+        this.lifetime.reset()
         if (this.closedByUser) {
           this.setStatus('disconnected')
           return
@@ -200,8 +201,9 @@ export class ShellSession {
     }
     this.lifetime.reset()
     this.clearOpenTimer()
-    this.chan?.close()
+    const channel = this.chan
     this.chan = null
+    channel?.close()
     this.setStatus('disconnected')
   }
 
@@ -220,7 +222,9 @@ export class ShellSession {
     if (this.closedByUser) return
     this.lifetime.reset()
     this.clearOpenTimer()
+    const channel = this.chan
     this.chan = null
+    channel?.close()
     this.writeTail = Promise.resolve()
     if (!this.dropAnnounced) {
       this.dropAnnounced = true
@@ -251,11 +255,19 @@ export class ShellSession {
             resolve()
             return
           }
-          const timer = setTimeout(resolve, 2000)
-          channel.write(data, () => {
+          const finish = (): void => {
             clearTimeout(timer)
+            lease.signal.removeEventListener('abort', finish)
             resolve()
-          })
+          }
+          const timer = setTimeout(finish, 2000)
+          lease.signal.addEventListener('abort', finish, { once: true })
+          try {
+            channel.write(data, finish)
+          } catch (error) {
+            finish()
+            if (lease.current()) this.setStatus('error', errorMessage(error))
+          }
         })
     )
   }

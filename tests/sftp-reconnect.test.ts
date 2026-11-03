@@ -10,7 +10,8 @@ vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => [] }
 }))
 vi.mock('../src/main/localAccess', () => ({ localAccessDeniedError: vi.fn() }))
-import { SftpSession } from '../src/main/ssh/sftp'
+import { execCommand, SftpSession } from '../src/main/ssh/sftp'
+import { invalidateTransport } from '../src/main/ssh/resourceLifetime'
 
 type TestChannel = EventEmitter & {
   readdir: ReturnType<typeof vi.fn>
@@ -46,6 +47,60 @@ function setup(ch = channel()): {
   return { ch, client, link, session }
 }
 afterEach(() => vi.useRealTimers())
+
+it('rejects operations on an already invalidated transport without opening SFTP', async () => {
+  const { client, session } = setup()
+  invalidateTransport(client as unknown as Client)
+  await expect(session.list('/')).rejects.toThrow(/connection lost/)
+  expect(client.sftp).not.toHaveBeenCalled()
+  session.stop()
+})
+
+it('does not issue requests against a channel invalidated between await continuations', async () => {
+  const { session, ch } = setup()
+  await session.start()
+  const pending = session.list('/')
+  session.stop()
+  await expect(pending).rejects.toThrow(/connection lost/)
+  expect(ch.readdir).not.toHaveBeenCalled()
+})
+
+it('rejects an interrupted atomic save and never continues it on a replacement channel', async () => {
+  const { session, ch } = setup()
+  let reply!: (error: null, attrs: object) => void
+  const stat = vi.fn((_path, cb) => {
+    reply = cb
+  })
+  const open = vi.fn()
+  Object.assign(ch, { stat, open })
+  await session.start()
+  const save = session.writeText('/file', 'content')
+  const rejected = expect(save).rejects.toThrow(/connection lost/)
+  await vi.waitFor(() => expect(stat).toHaveBeenCalledOnce())
+  session.stop()
+  await rejected
+  reply(null, { uid: 1, gid: 1, mode: 0o644 })
+  await Promise.resolve()
+  expect(open).not.toHaveBeenCalled()
+})
+
+it('cancels pending exec immediately and closes its late channel without accepting output', async () => {
+  let reply!: (error: null, channel: unknown) => void
+  const client = {
+    exec: vi.fn((_cmd, cb) => {
+      reply = cb
+    })
+  } as unknown as Client
+  const abort = new AbortController()
+  const pending = execCommand(client, 'sample', 1024, abort.signal)
+  const rejected = expect(pending).rejects.toThrow(/invalidated/)
+  abort.abort()
+  await rejected
+  const stream = Object.assign(new EventEmitter(), { close: vi.fn(), stderr: new EventEmitter() })
+  reply(null, stream)
+  expect(stream.close).toHaveBeenCalledOnce()
+  expect(() => stream.emit('error', new Error('late channel failure'))).not.toThrow()
+})
 
 describe('Agent SFTP reconnect lifecycle without opening the file panel', () => {
   it('does not reopen a stopped viewer when its connection becomes ready later', async () => {

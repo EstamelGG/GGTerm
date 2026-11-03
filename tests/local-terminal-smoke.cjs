@@ -24,9 +24,12 @@ app
       packages: 'external',
       logLevel: 'silent'
     })
-    const { registerLocalTerminalIpc, installLocalTerminals, disposeLocalTerminals } = require(
-      bundle
-    )
+    const {
+      registerLocalTerminalIpc,
+      installLocalTerminals,
+      disposeLocalTerminals,
+      waitForLocalTerminalCleanup
+    } = require(bundle)
     registerLocalTerminalIpc()
     const window = new BrowserWindow({
       show: false,
@@ -99,6 +102,7 @@ app
     assert.ok(pid > 0)
     window.destroy()
     disposeLocalTerminals()
+    await waitForLocalTerminalCleanup()
     let gone = false
     for (let i = 0; i < 50; i++) {
       try {
