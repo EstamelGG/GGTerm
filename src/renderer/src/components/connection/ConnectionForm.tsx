@@ -285,7 +285,7 @@ export function ConnectionForm({
       title={editing ? t('conn.editConnection') : t('conn.newConnection')}
       width={720}
       preventAutoFocus
-      contentClassName="flex max-h-[70vh] min-h-[400px] overflow-hidden p-0"
+      contentClassName="flex min-h-0 flex-col overflow-hidden p-0 sm:min-h-[min(400px,55vh)] sm:flex-row"
       footerAside={<ConnectionTestButton state={testState} disabled={!canTest} onClick={runTest} />}
       footer={
         <>
@@ -299,11 +299,12 @@ export function ConnectionForm({
       }
     >
       {/* 左侧标签栏 + 右侧内容区（各自独立滚动） */}
-      <nav className="flex w-[128px] shrink-0 flex-col gap-0.5 border-r border-line bg-sidebar p-2">
+      <nav className="flex shrink-0 flex-wrap gap-0.5 border-b border-line bg-sidebar p-2 sm:w-32 sm:flex-col sm:flex-nowrap sm:border-r sm:border-b-0">
         {TAB_ITEMS.map(({ id, key, icon: Icon }) => (
           <button
             key={id}
             disabled={busy}
+            aria-pressed={tab === id}
             type="button"
             className={cn(
               'flex items-center gap-2 rounded-md px-2.5 py-[7px] text-left text-body transition-colors duration-150 outline-none focus-visible:ring-[1.5px] focus-visible:ring-at-accent/70',
@@ -363,7 +364,7 @@ export function ConnectionForm({
               {networkDevice && (
                 <p className="text-minor text-muted">{t('conn.form.networkHint')}</p>
               )}
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <ATField title={t('conn.form.group')} className="flex-1">
                   {/* 触发器/列表项带分组色点（与侧栏一致的颜色锚点） */}
                   <Select value={groupId} onValueChange={setGroupId}>
@@ -410,7 +411,7 @@ export function ConnectionForm({
                 </ATField>
               </div>
 
-              <div className="flex gap-2">
+              <div className="grid grid-cols-[minmax(0,1fr)_64px] gap-2 @md/dialog:grid-cols-[minmax(0,1fr)_64px_minmax(0,1fr)]">
                 <ATField title={t('conn.form.host')} required className="min-w-0 flex-1">
                   <ATTextField
                     value={host}
@@ -421,13 +422,17 @@ export function ConnectionForm({
                 <ATField title={t('conn.form.port')} required className="w-16 shrink-0">
                   <ATNumberField value={port} onChange={setPort} />
                 </ATField>
-                <ATField title={t('conn.form.username')} required className="min-w-0 flex-1">
+                <ATField
+                  title={t('conn.form.username')}
+                  required
+                  className="col-span-2 min-w-0 @md/dialog:col-span-1"
+                >
                   <ATTextField value={username} onChange={setUsername} />
                 </ATField>
               </div>
 
               <ATField title={t('conn.form.authMethod')}>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <SegmentedControl
                     className="h-8 items-center px-[3px]"
                     value={auth}
@@ -446,7 +451,7 @@ export function ConnectionForm({
                       value={passphrase}
                       onChange={setPassphrase}
                       placeholder={t('conn.form.passphrase')}
-                      className="ml-auto w-56"
+                      className="min-w-0 w-full @md/dialog:ml-auto @md/dialog:w-56"
                     />
                   )}
                 </div>

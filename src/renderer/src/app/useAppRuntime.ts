@@ -90,64 +90,42 @@ export function useAppRuntime(flash: (text: string, danger?: boolean) => void): 
       }
     })
     // 链路相位全局镜像：连接列表状态列与拓扑图共用（主进程为唯一权威）
-    const offLinks = useLinksStore.getState().watch()
-    const offShell = window.aterm.shells.onState((e) =>
-      useSessionStore.getState().applyShellState(e)
-    )
-    const offData = window.aterm.shells.onData(pumpShellData)
-    const offAnnounce = window.aterm.shells.onAnnounce(pumpShellAnnounce)
-    const offSftpState = window.aterm.sftp.onState((e) =>
-      useSftpStore.getState().applyStateEvent(e)
-    )
-    const offSftpTransfer = window.aterm.sftp.onTransfer((e) =>
-      useSftpStore.getState().applyTransferEvent(e)
-    )
-    const offPerf = window.aterm.perf.onSample((e) => usePerfStore.getState().apply(e))
-    const offPerfGpu = window.aterm.perf.onGpu((e) => usePerfStore.getState().applyGpu(e))
-    const offOs = window.aterm.perf.onOs((e) => usePerfStore.getState().applyOs(e))
-    // 任意来源（表单/agent tool/导入）的连接增删改 → 全量刷新目录数据
-    const offConnChanged = window.aterm.connections.onChange(
-      () =>
-        void useConnectionsStore
-          .getState()
-          .load()
-          .catch((error) => useWorkspaceIssues.getState().report('catalog', error, 'recovery'))
-    )
-    const offLog = window.aterm.logs.onLog((e) => useLogStore.getState().append(e))
-    const offLogOpen = window.aterm.logs.onOpen(() => {
-      const s = useLogStore.getState()
-      s.setOpen(true)
-      s.setCollapsed(false) // 折叠态下再次呼出 → 展开
-    })
-    const offAiEvent = window.aterm.ai.onEvent((e) => {
-      useAiStore.getState().applyEvent(e)
-      // 人工审批请求（非规则自动决策）到达时提示
-      if (e.type === 'chunk' && e.chunk.type === 'tool-approval-request' && !e.chunk.isAutomatic)
-        flash(i18next.t('ai.approvalToast'))
-    })
-    // 人工输入待办（密码/验证码）：主进程推送 → 对应工具卡挂出输入区；启动时恢复未收尾的待办
-    const offQuestions = useQuestionsStore.getState().watch()
-    const offHumanInput = useHumanInputStore
-      .getState()
-      .watch(() => flash(i18next.t('ai.inputToast')))
+    const subscriptions = [
+      offHost,
+      useLinksStore.getState().watch(),
+      window.aterm.shells.onState((e) => useSessionStore.getState().applyShellState(e)),
+      window.aterm.shells.onData(pumpShellData),
+      window.aterm.shells.onAnnounce(pumpShellAnnounce),
+      window.aterm.sftp.onState((e) => useSftpStore.getState().applyStateEvent(e)),
+      window.aterm.sftp.onTransfer((e) => useSftpStore.getState().applyTransferEvent(e)),
+      window.aterm.perf.onSample((e) => usePerfStore.getState().apply(e)),
+      window.aterm.perf.onGpu((e) => usePerfStore.getState().applyGpu(e)),
+      window.aterm.perf.onOs((e) => usePerfStore.getState().applyOs(e)),
+      window.aterm.connections.onChange(
+        () =>
+          void useConnectionsStore
+            .getState()
+            .load()
+            .catch((error) => useWorkspaceIssues.getState().report('catalog', error, 'recovery'))
+      ),
+      window.aterm.logs.onLog((e) => useLogStore.getState().append(e)),
+      window.aterm.logs.onOpen(() => {
+        const s = useLogStore.getState()
+        s.setOpen(true)
+        s.setCollapsed(false) // 折叠态下再次呼出 → 展开
+      }),
+      window.aterm.ai.onEvent((e) => {
+        useAiStore.getState().applyEvent(e)
+        // 人工审批请求（非规则自动决策）到达时提示
+        if (e.type === 'chunk' && e.chunk.type === 'tool-approval-request' && !e.chunk.isAutomatic)
+          flash(i18next.t('ai.approvalToast'))
+      }),
+      useQuestionsStore.getState().watch(),
+      useHumanInputStore.getState().watch(() => flash(i18next.t('ai.inputToast')))
+    ]
     return () => {
       active = false
-      offQuestions()
-      offHost()
-      offLinks()
-      offShell()
-      offData()
-      offAnnounce()
-      offSftpState()
-      offSftpTransfer()
-      offPerf()
-      offPerfGpu()
-      offOs()
-      offConnChanged()
-      offLog()
-      offLogOpen()
-      offAiEvent()
-      offHumanInput()
+      subscriptions.forEach((unsubscribe) => unsubscribe())
     }
   }, [flash])
 }

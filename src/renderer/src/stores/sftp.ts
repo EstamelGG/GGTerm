@@ -13,7 +13,7 @@ import { useConnectionsStore } from './connections'
 /**
  * 对照 ATerminal-Swift SftpController.swift 的树状态（渲染层 zustand 版）：
  * children 缓存 / expanded / showHidden / reveal 逐级展开 / 传输镜像。
- * 主进程只做无状态 IPC 操作；断线/恢复由 sftp:state + host:state 事件驱动。
+ * 主进程只做无状态 IPC 操作；断线/恢复由 sftp:state 事件驱动。
  */
 
 export interface SftpPaneState {

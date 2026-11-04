@@ -47,13 +47,10 @@ export function IconButton({
           'focus-visible:ring-[1.5px] focus-visible:ring-at-accent/70',
           variant === 'toolbar'
             ? cn(
-                'border hover:text-fg',
+                'border border-transparent hover:text-fg',
                 selected
-                  ? 'text-fg border-at-accent/45 bg-raised'
-                  : cn(
-                      'text-muted border-line hover:border-chrome-sep hover:bg-hover',
-                      filled ? 'bg-raised' : 'bg-raised/55'
-                    )
+                  ? 'text-at-accent bg-at-accent/10'
+                  : cn('text-muted hover:bg-hover', filled ? 'bg-raised' : 'bg-transparent')
               )
             : cn(
                 'hover:bg-hover/80',

@@ -71,7 +71,10 @@ export function ModelManagerPanel({
   const providers = ai?.providers ?? []
 
   /** 正在编辑的供应商 id；默认第一个 */
-  const [editingId, setEditingId] = useState<string | null>(() => providers[0]?.id ?? null)
+  const [preferredEditingId, setEditingId] = useState<string | null>(null)
+  const editingId = providers.some((provider) => provider.id === preferredEditingId)
+    ? preferredEditingId
+    : (providers[0]?.id ?? null)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [hasKey, setHasKey] = useState(false)
   const [keyInput, setKeyInput] = useState('')
@@ -263,26 +266,27 @@ export function ModelManagerPanel({
   }
 
   return (
-    <div className="flex flex-col gap-4 rounded-lg border border-line p-3">
+    <div className="@container/ai flex flex-col gap-4 rounded-lg border border-line p-3">
       {/* ① 供应商管理：左列表 + 右侧编辑表单；两栏抬头同行对齐（列宽与下方内容一致：w-36 / flex-1） */}
       <div className="flex flex-col gap-1.5">
-        <div className="flex gap-3">
-          <span className="w-36 shrink-0 text-caption font-semibold text-fg">
+        <div className="flex flex-col gap-3 @lg/ai:flex-row">
+          <span className="w-36 shrink-0 text-minor font-semibold text-fg">
             {t('settings.aiProviders')}
           </span>
-          <span className="min-w-0 flex-1 text-caption font-semibold text-fg">
+          <span className="hidden min-w-0 flex-1 text-minor font-semibold text-fg @lg/ai:block">
             {t('settings.aiProviderEdit')}
           </span>
         </div>
-        <div className="flex gap-3">
-          <div className="flex w-36 shrink-0 flex-col gap-1 rounded-md bg-surface p-1">
+        <div className="flex flex-col gap-3 @lg/ai:flex-row">
+          <div className="flex w-full shrink-0 flex-wrap gap-1 rounded-md bg-surface p-1 @lg/ai:w-36 @lg/ai:flex-col">
             {providers.map((p) => (
               <button
                 key={p.id}
                 type="button"
+                aria-pressed={p.id === editingId}
                 onClick={() => setEditingId(p.id)}
                 className={cn(
-                  'flex items-center gap-1.5 rounded-md bg-raised px-2 py-1.5 text-left transition-colors',
+                  'flex min-w-0 max-w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left outline-none transition-colors focus-visible:ring-1 focus-visible:ring-at-accent',
                   p.id === editingId ? 'bg-hover' : 'hover:bg-hover/60'
                 )}
               >
@@ -315,7 +319,7 @@ export function ModelManagerPanel({
           </div>
 
           {editing ? (
-            <div className="flex min-w-0 flex-1 flex-col gap-2.5 rounded-lg border border-line p-3">
+            <div className="flex min-w-0 flex-1 flex-col gap-3 @lg/ai:border-l @lg/ai:border-line @lg/ai:pl-3">
               <ATField title={t('ai.modelName')}>
                 <ATTextField
                   value={editing.label}
@@ -349,12 +353,12 @@ export function ModelManagerPanel({
                   ) : undefined
                 }
               >
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <ATTextField
                     value={keyInput}
                     onChange={setKeyInput}
                     placeholder={hasKey && !noKey ? t('settings.aiApiKeyHint') : ''}
-                    className="flex-1"
+                    className="w-full min-w-0 @md/ai:w-auto @md/ai:flex-1"
                     disabled={noKey}
                   />
                   {/* 空密钥开关（免密供应商）：选中禁填 key，保存即清除已存密钥 */}
@@ -469,8 +473,11 @@ export function ModelManagerPanel({
           const providerValue = binding?.providerId ?? NONE
           const modelValue = binding?.model ?? NONE
           return (
-            <div key={key} className="flex items-center gap-2">
-              <span className="w-20 shrink-0 text-minor text-fg">{t(labelKey)}</span>
+            <div
+              key={key}
+              className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] items-center gap-2 rounded-md bg-surface p-2"
+            >
+              <span className="col-span-2 text-minor font-medium text-fg">{t(labelKey)}</span>
               <Select
                 value={providerValue}
                 onValueChange={(v) => {
@@ -478,7 +485,7 @@ export function ModelManagerPanel({
                   if (v !== NONE) ensureModels(v)
                 }}
               >
-                <SelectTrigger className="h-7 w-32 shrink-0 text-minor">
+                <SelectTrigger className="h-7 min-w-0 w-full text-minor">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -503,7 +510,7 @@ export function ModelManagerPanel({
                   onOpenChange={(open) => open && ensureModels(binding.providerId)}
                   onValueChange={(v) => setBinding(key, { ...binding, model: v === NONE ? '' : v })}
                 >
-                  <SelectTrigger className="h-7 min-w-0 flex-1 font-mono text-minor">
+                  <SelectTrigger className="h-7 min-w-0 w-full font-mono text-minor">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -529,7 +536,7 @@ export function ModelManagerPanel({
                 />
               )}
               <span
-                className="w-36 shrink-0 truncate text-caption text-muted"
+                className="col-span-2 min-w-0 whitespace-normal text-caption leading-relaxed text-muted"
                 title={hintKey ? t(hintKey) : undefined}
               >
                 {!binding && key !== 'chat' ? t('ai.scenarioFallback') : hintKey ? t(hintKey) : ''}

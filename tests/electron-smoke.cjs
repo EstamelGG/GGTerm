@@ -85,8 +85,50 @@ app.on('browser-window-created', (_event, win) => {
   win.show = () => {}
   win.webContents.setBackgroundThrottling(false)
   const run = async () => {
+    const dialogCache = path.resolve('node_modules/.cache/dialogs')
+    fs.mkdirSync(dialogCache, { recursive: true })
+    const inspectDialog = async (name) => {
+      await waitFor(win, `document.querySelector('[data-slot="dialog-shell"]')`)
+      await delay(220)
+      const layout = await win.webContents.executeJavaScript(`(() => {
+        const dialog = [...document.querySelectorAll('[data-slot="dialog-shell"]')].at(-1);
+        const r = dialog.getBoundingClientRect();
+        const footer = dialog.querySelector('[data-slot="dialog-shell-footer"]');
+        return { fits: r.left >= 0 && r.right <= innerWidth + 1 && r.top >= 0 && r.bottom <= innerHeight + 1,
+          scrollWidth: dialog.scrollWidth, width: dialog.clientWidth,
+          actionsFit: !footer || [...footer.querySelectorAll('button')].every(button => {
+            const b = button.getBoundingClientRect();
+            return b.left >= r.left && b.right <= r.right + 1 && b.top >= r.top && b.bottom <= r.bottom + 1;
+          }) };
+      })()`)
+      assert(
+        layout.fits && layout.actionsFit && layout.scrollWidth <= layout.width + 1,
+        `${name}: ${JSON.stringify(layout)}`
+      )
+      fs.writeFileSync(
+        path.join(dialogCache, `${name}.png`),
+        (await win.webContents.capturePage({ stayHidden: true, stayAwake: true })).toPNG()
+      )
+    }
     await waitFor(win, `document.body.textContent.includes('Manual test')`)
     const startupMs = Date.now() - launchedAt
+    const toolbarWidth = await win.webContents.executeJavaScript(
+      `document.querySelector('input[aria-label="Search"]').closest('[data-slot="chrome-row"]').getBoundingClientRect().width`
+    )
+    await win.webContents.executeJavaScript(
+      `document.querySelector('button[aria-label="Hide host directory"]').click()`
+    )
+    await waitFor(
+      win,
+      `document.querySelector('input[aria-label="Search"]').closest('[data-slot="chrome-row"]').getBoundingClientRect().width > ${toolbarWidth + 200}`
+    )
+    await win.webContents.executeJavaScript(
+      `document.querySelector('button[aria-label="Show host directory"]').click()`
+    )
+    await waitFor(
+      win,
+      `Math.abs(document.querySelector('input[aria-label="Search"]').closest('[data-slot="chrome-row"]').getBoundingClientRect().width - ${toolbarWidth}) < 2`
+    )
     await win.webContents.executeJavaScript(`
       [...document.querySelectorAll('button')].find(e => e.textContent.trim() === 'Hosts').click();
       [...document.querySelectorAll('span')].find(e => e.textContent.trim() === 'Manual test').dispatchEvent(new MouseEvent('dblclick', {bubbles:true}));
@@ -95,6 +137,7 @@ app.on('browser-window-created', (_event, win) => {
       win,
       `document.querySelector('[role="dialog"]')?.textContent.includes('Manual Login')`
     )
+    await inspectDialog('manual-login')
     await win.webContents.executeJavaScript(
       `document.querySelector('[role="dialog"] button[data-slot="dialog-shell-close"]').click()`
     )
@@ -107,6 +150,32 @@ app.on('browser-window-created', (_event, win) => {
     assert(
       await win.webContents.executeJavaScript(`document.body.textContent.includes('New Host')`)
     )
+    const gallerySize = win.getContentSize()
+    for (const scale of [1, 1.75]) {
+      win.setContentSize(980, 620)
+      win.webContents.setZoomFactor(scale)
+      for (const [name, selector] of [
+        [
+          'connection',
+          `[...document.querySelectorAll('button')].find(e => e.getClientRects().length && e.textContent.trim() === 'New Host')`
+        ],
+        ['group', `document.querySelector('button[aria-label="New Group"]')`],
+        [
+          'import',
+          `[...document.querySelectorAll('button')].find(e => e.getClientRects().length && e.textContent.trim() === 'Import ~/.ssh/config')`
+        ],
+        ['note', `document.querySelector('button[aria-label="Server Note"]')`]
+      ]) {
+        await win.webContents.executeJavaScript(`${selector}.click()`)
+        await inspectDialog(`${name}-${scale}`)
+        await win.webContents.executeJavaScript(
+          `document.querySelector('[data-slot="dialog-shell-close"]').click()`
+        )
+        await waitFor(win, `!document.querySelector('[data-slot="dialog-shell"]')`)
+      }
+    }
+    win.webContents.setZoomFactor(1)
+    win.setContentSize(...gallerySize)
     await win.webContents.executeJavaScript(
       `document.querySelector('button[aria-label="Settings"]').click()`
     )
@@ -141,6 +210,22 @@ app.on('browser-window-created', (_event, win) => {
       return { width: container.clientWidth, scrollWidth: container.scrollWidth, overflow: [...container.querySelectorAll('*')].filter(e => e.getClientRects().length && (e.getBoundingClientRect().right > edge + 1 || e.scrollWidth > e.clientWidth + 1)).slice(0, 12).map(e => ({tag: e.tagName, cls: e.className, width: e.getBoundingClientRect().width, scrollWidth: e.scrollWidth, overflowX: getComputedStyle(e).overflowX})) };
     })()`)
     assert(settingsLayout.scrollWidth <= settingsLayout.width + 1, JSON.stringify(settingsLayout))
+    await win.webContents.executeJavaScript(
+      `[...document.querySelectorAll('nav button')].find(e => e.textContent.trim() === 'AI').click()`
+    )
+    await waitFor(win, `document.querySelector('#settings-ai').getBoundingClientRect().height > 0`)
+    await delay(200)
+    assert(
+      await win.webContents.executeJavaScript(`(() => {
+        const container = document.querySelector('#settings-ai').closest('[class~="@container"]');
+        return container.scrollWidth <= container.clientWidth + 1;
+      })()`),
+      'AI settings fit beside the open activity sidebar without horizontal overflow'
+    )
+    fs.writeFileSync(
+      path.join(settingsCache, 'settings-ai-compact.png'),
+      (await win.webContents.capturePage({ stayHidden: true, stayAwake: true })).toPNG()
+    )
     await win.webContents.executeJavaScript(
       `document.querySelector('button[aria-label="Hide right sidebar"]').click()`
     )
@@ -234,6 +319,38 @@ app.on('browser-window-created', (_event, win) => {
       await win.webContents.capturePage({ stayHidden: true, stayAwake: true })
       await delay(80)
     }
+    // Real transport loss: cancellation preserves both the terminal identity and dirty editor.
+    fixture.suspend()
+    await waitFor(
+      win,
+      `document.querySelector('[data-testid="host-recovery"]')?.textContent.includes('Cancel connection')`
+    )
+    fs.writeFileSync(
+      path.join(dialogCache, 'reconnecting.png'),
+      (await win.webContents.capturePage({ stayHidden: true, stayAwake: true })).toPNG()
+    )
+    await win.webContents.executeJavaScript(
+      `document.querySelector('[data-testid="host-recovery"] button').click()`
+    )
+    await waitFor(
+      win,
+      `document.querySelector('[data-testid="host-recovery"] button')?.textContent === 'Reconnect'`
+    )
+    fixture.resume()
+    await win.webContents.executeJavaScript(
+      `document.querySelector('[data-testid="host-recovery"] button').click()`
+    )
+    await waitFor(
+      win,
+      `!document.querySelector('[data-testid="host-recovery"]') && [...document.querySelectorAll('span')].some(e => e.textContent === 'Connected')`
+    )
+    await waitFor(win, `document.querySelector('[data-sftp-path="/config.txt"]')`)
+    assert(
+      await win.webContents.executeJavaScript(
+        `[...document.querySelectorAll('span')].some(e => e.textContent === 'Unsaved')`
+      ),
+      'reconnection preserves dirty editor state'
+    )
     const splitter = await win.webContents.executeJavaScript(`(()=>{
       const e=[...document.querySelectorAll('[role="separator"][aria-orientation="vertical"]')].find(e => e.getClientRects().length > 0);
       const r=e.getBoundingClientRect();
@@ -287,6 +404,10 @@ app.on('browser-window-created', (_event, win) => {
       await win.webContents.capturePage({ stayHidden: true, stayAwake: true })
       await delay(80)
     }
+    fs.writeFileSync(
+      path.join(settingsCache, 'workspace-layout.png'),
+      (await win.webContents.capturePage({ stayHidden: true, stayAwake: true })).toPNG()
+    )
     const terminal = await win.webContents.executeJavaScript(
       `(()=>{const e=[...document.querySelectorAll('.xterm')].find(e => e.getBoundingClientRect().width > 0); const r=e.getBoundingClientRect(); return {width:r.width,height:r.height}})()`
     )
@@ -510,6 +631,32 @@ app.on('browser-window-created', (_event, win) => {
       viewport,
       'status changes preserve the viewport'
     )
+    assert.equal(
+      await win.webContents.executeJavaScript(
+        `document.querySelector('input[aria-label="Link spacing"]').getBoundingClientRect().width`
+      ),
+      0,
+      'topology view sliders are collapsed by default'
+    )
+    await win.webContents.executeJavaScript(
+      `document.querySelector('button[aria-label="View options"]').click()`
+    )
+    await waitFor(
+      win,
+      `document.querySelector('input[aria-label="Link spacing"]').getBoundingClientRect().width > 0`
+    )
+    await win.webContents.executeJavaScript(
+      `document.querySelector('button[aria-label="View options"]').click();
+       document.querySelector('button[aria-label="Zoom out"]').click()`
+    )
+    await waitFor(
+      win,
+      `document.querySelector('.react-flow__viewport').style.transform !== ${JSON.stringify(viewport)}`
+    )
+    await win.webContents.executeJavaScript(
+      `document.querySelector('button[aria-label="Fit view"]').click()`
+    )
+    await delay(1400)
     const topologyScreenshot = path.resolve('node_modules/.cache/topology.png')
     fs.writeFileSync(topologyScreenshot, (await win.webContents.capturePage()).toPNG())
     ipcMain.removeHandler('host:connectionSessions')
@@ -680,12 +827,14 @@ app.on('browser-window-created', (_event, win) => {
         metrics,
         checks: [
           'real renderer startup',
+          'host directory collapse frees workspace width and restores its layout',
           'manual login cancellation',
           'settings page navigation',
           'compact settings with sidebar preserves content without horizontal overflow',
           'SSH/SFTP connection',
           'GB18030 auto-detection and save round trip',
           'native close preserves dirty files',
+          'transport loss, cancellation, and manual reconnect preserve terminals and dirty files',
           'splitter commits dimensions only on release',
           '980px layout, responsive SFTP overlay, and usable terminal',
           'background execution preserves focus, per-conversation read-only tabs, and explicit termination'

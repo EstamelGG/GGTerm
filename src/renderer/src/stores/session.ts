@@ -67,7 +67,7 @@ function nextConsoleNumber(used: number[]): number {
 }
 
 /**
- * 早于镜像落地到达的 host:state 事件缓冲（hostId → 最新一条）：
+ * 早于镜像落地到达的 连接状态 事件缓冲（hostId → 最新一条）：
  * hosts:connect 的 handler 在返回前 emitCurrentState，该事件可跑赢 invoke 回复到达，
  * 此时镜像未入 store 会被丢弃——已连接 link 重开 tab 时唯一一次 connected 事件即在此窗口被丢，
  * 镜像永久停在初始 connecting。同通道 IPC 保序，latest 覆盖即可；镜像落地同 tick replay，
@@ -77,7 +77,7 @@ const pendingHostStates = new Map<string, HostStateEvent>()
 
 /**
  * 早于镜像落地到达的 shell:state 事件缓冲（`${hostId}:${shellId}` → 最新一条）：
- * 与 host:state 同源竞态——addShell 的镜像落库要等 `await loadRegistry()`（首次动态 import xterm），
+ * 与 连接状态 同源竞态——addShell 的镜像落库要等 `await loadRegistry()`（首次动态 import xterm），
  * 期间主进程 connectLoop 重建循环 / autoStart 3.5s 兜底可能先发起 start 并发出
  * connecting→connected 事件，渲染层此刻还没有该 shellId 条目，applyShellState 会静默丢弃。
  * latest 覆盖即可；镜像落库同 tick replay；closeShell/closeHost 清项防残留。
@@ -413,8 +413,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           ? {
               ...h,
               phase: e.phase,
-              attempt: e.attempt ?? h.attempt,
-              offlineReason: e.reason ?? h.offlineReason,
+              attempt: e.attempt ?? 0,
+              offlineReason: e.reason ?? '',
               awaiting: e.awaiting ?? h.awaiting,
               pendingSecrets: e.phase === 'connected' ? null : h.pendingSecrets,
               conn:

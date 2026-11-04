@@ -411,7 +411,7 @@ export function ChatComposer({
             />
             {/* 补全菜单：锚在输入区上方 */}
             {menu !== null && (
-              <div className="absolute bottom-full left-0 z-20 mb-1.5 max-h-56 w-80 overflow-y-auto rounded-lg border border-line bg-raised shadow-lg">
+              <div className="absolute bottom-full left-0 z-20 mb-1.5 max-h-56 w-full max-w-80 overflow-y-auto rounded-lg border border-line bg-raised shadow-lg">
                 {menu === 'cmd' ? (
                   cmdItems.length > 0 ? (
                     cmdItems.map((id, i) => (
@@ -492,7 +492,7 @@ export function ChatComposer({
             >
               <SelectTrigger
                 aria-label={t('ai.modelTitle')}
-                className="h-7 w-auto max-w-56 gap-1 border-none bg-transparent px-1.5 text-minor shadow-none hover:bg-hover"
+                className="h-7 min-w-0 w-auto max-w-56 gap-1 border-none bg-transparent px-1.5 text-minor shadow-none hover:bg-hover"
               >
                 <SelectValue placeholder={t('ai.modelNone')} />
               </SelectTrigger>

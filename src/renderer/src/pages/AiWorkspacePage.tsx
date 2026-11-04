@@ -221,7 +221,7 @@ export function AiWorkspacePage(): React.JSX.Element {
             </div>
 
             {/* 输入区（多行 + /命令 + @主机；发送/停止按钮由 Composer 持有） */}
-            <div className="shrink-0 border-t border-chrome-sep p-3">
+            <div className="shrink-0 p-2">
               <ChatComposer
                 key={active.id}
                 sessionId={active.id}

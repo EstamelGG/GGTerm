@@ -45,7 +45,7 @@ export function TabChip({
   const chipFill = selected ? 'bg-at-accent/10' : 'bg-transparent hover:bg-hover/70'
   const chipBorder = cn(
     'border',
-    accentBorder && selected ? 'border-at-accent/45' : 'border-line hover:border-chrome-sep'
+    accentBorder && selected ? 'border-at-accent/25' : 'border-transparent'
   )
 
   return (
@@ -61,7 +61,7 @@ export function TabChip({
       <button
         type="button"
         className={cn(
-          'flex min-w-0 cursor-pointer items-center gap-1.5 rounded-md py-[3px] pl-2.5 outline-none focus-visible:ring-1 focus-visible:ring-at-accent',
+          'flex min-w-0 cursor-pointer items-center gap-1.5 rounded-md py-px pl-2 outline-none focus-visible:ring-1 focus-visible:ring-at-accent',
           showClose ? 'pr-0.5' : 'pr-2.5'
         )}
         onClick={onClick}

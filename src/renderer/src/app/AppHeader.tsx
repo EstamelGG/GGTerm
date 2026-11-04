@@ -43,7 +43,7 @@ export function AppHeader({
   const hosts = useSessionStore((s) => s.hosts)
   const setTab = useSessionStore((s) => s.setTab)
   // 链路相位（与连接列表同源）：header 主机 tab 状态点的唯一数据源。
-  // 只订阅「已打开 tab」的相位序列 —— 订阅整张 byHost 会让**每个** host:state 都把根组件整树重渲染
+  // 只订阅「已打开 tab」的相位序列 —— 订阅整张 byHost 会让**每个**连接状态更新 都把根组件整树重渲染
   // （批量建连时一秒几十次），把扇出宽度收窄到眼前这几个 tab。
   const tabPhases = useLinksStore(useShallow((s) => hosts.map((h) => s.byHost[h.id]?.phase)))
   // 主机 tab 标题按所属分组色着色（未分组沿用默认配色）
@@ -67,7 +67,7 @@ export function AppHeader({
         window.aterm.window.platform === 'darwin' ? 'pl-[78px]' : 'pl-3'
       )}
     >
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="flex shrink-0 items-center gap-1">
         <IconButton
           variant="toolbar"
           title={t('session.tabConnections')}
@@ -95,13 +95,7 @@ export function AppHeader({
             setTab({ kind: 'local' })
           }}
         />
-        <div
-          className={cn(
-            'rounded-md transition-shadow duration-200',
-            browserHasContent &&
-              'ring-1 ring-at-accent/70 ring-offset-2 ring-offset-chrome-bar shadow-[0_0_10px_rgb(var(--at-accent-rgb)/0.35)]'
-          )}
-        >
+        <div className={cn('rounded-md', browserHasContent && 'bg-at-accent/10')}>
           <IconButton
             variant="toolbar"
             title={t('browser.tab')}
@@ -112,7 +106,7 @@ export function AppHeader({
           />
         </div>
       </div>
-      {hosts.length > 0 && <div className="mx-3 h-4 w-px shrink-0 bg-chrome-sep" />}
+      {hosts.length > 0 && <div className="mx-2 h-4 w-px shrink-0 bg-chrome-sep" />}
       <OverflowTabs
         tabs={hosts.map((host, idx) => ({
           id: host.id,
@@ -153,7 +147,7 @@ export function AppHeader({
           )
         }))}
       />
-      <div className="w-8 shrink-0" />
+      <div className="w-2 shrink-0" />
       {/* 日志面板入口：Windows/Linux 窗口菜单栏默认隐藏（autoHideMenuBar）,
             仅靠「视图 → 日志面板」无法触达，故在设置图标左侧常驻一个可见开关 */}
       {window.aterm.window.platform !== 'darwin' && (

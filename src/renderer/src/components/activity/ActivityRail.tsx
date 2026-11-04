@@ -58,6 +58,9 @@ export function ActivityRail(): React.JSX.Element {
   const aiInput = useHumanInputStore((s) => Object.keys(s.pending).length > 0)
   const forwardsRunning = usePortForwardsStore((s) => s.rules.some((r) => r.status === 'running'))
   const forwardFilter = usePortForwardsStore((s) => s.filterHostId)
+  const forwardHasRules = usePortForwardsStore((s) =>
+    s.rules.some((rule) => !s.filterHostId || rule.hostId === s.filterHostId)
+  )
 
   useEffect(() => {
     let subscribed = true
@@ -142,7 +145,7 @@ export function ActivityRail(): React.JSX.Element {
                       : host?.title}
                   </span>
                 )}
-                {active === 'forwards' && (
+                {active === 'forwards' && forwardHasRules && (
                   <div className="ml-auto">
                     <IconButton
                       icon={Plus}

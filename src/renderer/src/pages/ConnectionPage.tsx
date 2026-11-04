@@ -3,7 +3,7 @@ import { TopologyCanvas } from '@/components/ai/TopologyCanvas'
 import { useSessionStore } from '@/stores/session'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Search, Server } from 'lucide-react'
+import { PanelLeftOpen, Search, Server } from 'lucide-react'
 import type { HostConnection, HostGroup } from '@shared/types'
 import { cn } from '@/lib/utils'
 import { useResizePreview } from '@/lib/useResizePreview'
@@ -21,6 +21,7 @@ import { ConnectionForm, type FormPayload } from '@/components/connection/Connec
 import { SshConfigImport } from '@/components/connection/SshConfigImport'
 import { GroupEditor, type GroupEditorPayload } from '@/components/connection/GroupEditor'
 import { DialogShell } from '@/components/ui/DialogShell'
+import { IconButton } from '@/components/ui/IconButton'
 
 /** 左侧分组侧栏宽度：可拖拽调节，上下限 + localStorage 持久化（对照 HostSessionPage 的 SFTP 分栏 splitter） */
 const SIDEBAR_WIDTH_KEY = 'ggterm.sidebarWidth'
@@ -61,6 +62,7 @@ export default function ConnectionPage({
 
   // 侧栏宽度：拖拽调节 + 持久化（splitter 模式同 HostSessionPage 的 SFTP 分栏）
   const [sidebarWidth, setSidebarWidth] = useState(() => loadSidebarWidth())
+  const [directoryOpen, setDirectoryOpen] = useState(true)
   const widthPreviewRef = useRef<HTMLDivElement>(null)
   const widthResize = useResizePreview({
     value: sidebarWidth,
@@ -310,10 +312,11 @@ export default function ConnectionPage({
   return (
     <div className="relative flex h-full">
       <div
-        className="flex shrink-0 flex-col overflow-hidden"
+        className={cn('flex shrink-0 flex-col overflow-hidden', !directoryOpen && 'hidden')}
         style={{ width: sidebarWidth, maxWidth: 'max(160px, calc(100% - 361px))' }}
       >
         <GroupSidebar
+          onCollapse={() => setDirectoryOpen(false)}
           pick={pick}
           onPick={(pick) => {
             setPick(pick)
@@ -343,9 +346,23 @@ export default function ConnectionPage({
           onDelete={setDeleteTarget}
         />
       </div>
+      {!directoryOpen && (
+        <div className="flex w-[var(--at-directory-rail-width)] shrink-0 flex-col items-center border-r border-line bg-sidebar">
+          <div className="flex h-[var(--at-chrome-row-height)] items-center">
+            <IconButton
+              variant="toolbar"
+              icon={PanelLeftOpen}
+              title={t('conn.showDirectory')}
+              aria-expanded={false}
+              onClick={() => setDirectoryOpen(true)}
+            />
+          </div>
+        </div>
+      )}
       <div
         className={cn(
           'relative z-10 w-px shrink-0 cursor-col-resize touch-none',
+          !directoryOpen && 'hidden',
           dragging ? 'bg-at-accent/35' : 'bg-line'
         )}
       >
@@ -370,10 +387,11 @@ export default function ConnectionPage({
         >
           {/* 共用工具行：与分组侧栏、浏览器标签栏对齐。 */}
           <ChromeRow className="[&>button]:shrink-0 [&>button]:whitespace-nowrap">
-            <div className="flex h-6 w-64 min-w-0 items-center gap-1.5 rounded-full border border-line bg-raised px-2.5 transition-colors duration-100 focus-within:border-at-accent/50">
+            <div className="flex h-6 w-52 min-w-16 items-center gap-1.5 rounded-[var(--at-control-radius)] border border-line bg-bg px-2 transition-colors duration-100 focus-within:border-at-accent/50">
               <Search size={11} strokeWidth={2.2} className="shrink-0 text-muted" />
               <input
                 type="text"
+                aria-label={t('common.search')}
                 className="h-full min-w-0 flex-1 bg-transparent text-minor text-fg placeholder:text-muted outline-none"
                 placeholder={t('common.search')}
                 value={search}

@@ -3,7 +3,6 @@ import type { AiUIMessage } from '../../shared/types'
 import * as ai from '../ai/engine'
 import { getApiKey, setApiKey } from '../data/aiSecrets'
 import { channels } from './channels'
-import { runOneWay } from './delivery'
 import {
   parseInput,
   sessionSchema,
@@ -20,13 +19,9 @@ export function registerAiIpc(): void {
   ipcMain.handle(channels.aiGetMessages, (_e, input: unknown) =>
     ai.getMessages(parseInput(sessionSchema, input).sessionId)
   )
-  const close = (input: unknown): Promise<void> =>
+  ipcMain.handle(channels.aiCloseSession, (_e, input: unknown) =>
     ai.closeSession(parseInput(sessionSchema, input).sessionId)
-  // Keep legacy send callers while allowing the current UI to await acknowledgement.
-  ipcMain.on(channels.aiCloseSession, (_e, input: unknown) =>
-    runOneWay(channels.aiCloseSession, () => close(input))
   )
-  ipcMain.handle(channels.aiCloseSession, (_e, input: unknown) => close(input))
   ipcMain.handle(channels.aiRun, (_e, input: unknown) => {
     const { sessionId, messages, turnId } = parseInput(runSchema, input)
     return ai.run(sessionId, messages as AiUIMessage[], turnId)

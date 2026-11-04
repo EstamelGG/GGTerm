@@ -6,7 +6,7 @@ import { getPreferences, setPreferences } from './data/prefs'
 /**
  * 主进程 i18n：菜单 + 终端 announce（写入 PTY 流的可见文案）。
  * 语言真源在 prefs（electron-store），auto 跟随 app.getLocale()，英文兜底；
- * 切换由 ipc locale:set 驱动（写偏好 → changeLanguage → 重建菜单 → 广播渲染层）。
+ * 切换由 ipc locale:apply 驱动（写偏好 → changeLanguage → 重建菜单 → 广播渲染层）。
  */
 
 export type AppLocale = Exclude<LocalePref, 'auto'>

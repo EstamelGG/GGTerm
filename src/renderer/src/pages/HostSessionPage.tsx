@@ -15,7 +15,7 @@ import type { ShellStatus } from '@shared/types'
 import { PanelLeftClose, PanelLeftOpen, Plus } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { LinkStatusPill, ShellPane } from './host/HostConnectionStatus'
+import { HostRecoveryBanner, LinkStatusPill, ShellPane } from './host/HostConnectionStatus'
 import { HostFilesPane } from './host/HostFilesPane'
 import { ManualAuthDialog } from './host/ManualAuthDialog'
 import { useHostLayout } from './host/useHostLayout'
@@ -74,17 +74,8 @@ export function HostSessionPage({
   const focused = activeAgent
     ? undefined
     : (host.shells.find((s) => s.id === host.focusShellId) ?? host.shells[0])
-  /** 链路级重连：offline（重试超限）与 idle（被主动断开，含 AI 断开）都需要；点重连后原会话自动恢复 */
-  const showLinkReconnect =
-    !host.viewerOnly &&
-    !activeAgent &&
-    (host.phase === 'offline' || host.phase === 'idle') &&
-    !host.awaiting
   const showShellReconnect =
-    !showLinkReconnect &&
-    focused !== undefined &&
-    shouldShowReconnect(focused.status) &&
-    host.phase === 'connected'
+    focused !== undefined && shouldShowReconnect(focused.status) && host.phase === 'connected'
 
   return (
     <div ref={rootRef} className="relative flex h-full bg-sidebar">
@@ -231,28 +222,22 @@ export function HostSessionPage({
               <LinkStatusPill host={host} />
             )}
           </span>
-          {(showLinkReconnect || showShellReconnect) && (
+          {showShellReconnect && (
             <Button
               variant="ghost"
-              title={t('session.reconnect')}
+              title={t('session.restartTerminal')}
               className="animate-in fade-in duration-150"
               onClick={() => {
-                if (showLinkReconnect) reconnectHost(host.id)
-                else if (focused) reconnectShell(host.id, focused.id)
+                if (focused) reconnectShell(host.id, focused.id)
               }}
             />
           )}
         </div>
 
+        {!activeAgent && (
+          <HostRecoveryBanner host={host} onReconnect={() => reconnectHost(host.id)} />
+        )}
         <div className="relative min-h-0 flex-1 bg-sidebar">
-          {!activeAgent && host.phase === 'offline' && host.offlineReason && (
-            <p
-              role="alert"
-              className="absolute inset-x-0 top-0 z-20 max-h-full overflow-auto whitespace-pre-wrap break-words bg-sidebar px-3 py-2 text-minor text-danger select-text"
-            >
-              {host.offlineReason}
-            </p>
-          )}
           {host.shells.map((s) => (
             <ShellPane key={s.id} host={host} shell={s} focused={focused?.id === s.id} />
           ))}

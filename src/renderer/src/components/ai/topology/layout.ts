@@ -69,7 +69,7 @@ export function layoutTopology(
   const byAngle = (a: string, b: string): number => (slots.get(a) ?? 0) - (slots.get(b) ?? 0)
 
   /* ---------- ④ 密铺：逐节点从最内层往外试，铺不下就扩一层 ---------- */
-  const gap = Math.max(120, 90 * nodeSize)
+  const gap = Math.max(144, 90 * nodeSize)
   const base = Math.max(gap, 160 * spacing)
   const radiusOf = (layer: number): number => base + (layer - 1) * gap
   /** 半径 R 上相邻节点所需的最小角宽（弦距刚好等于 gap 的圆心角） */

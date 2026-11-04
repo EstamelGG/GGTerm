@@ -22,6 +22,7 @@ import { canMove, guardHits, joinPath, normalizePath, parentPath } from '@shared
 import { cn } from '@/lib/utils'
 import { IconButton } from '@/components/ui/IconButton'
 import { ChromeSeparator } from '@/components/chrome/ChromeSeparator'
+import { CHROME_ROW } from '@/components/chrome/layout'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -452,19 +453,19 @@ export function SftpPane({
   return (
     <div className="relative flex h-full min-h-0 flex-col bg-sidebar">
       {/* 工具栏（对照 toolbar） */}
-      <div className="flex shrink-0 items-center gap-1 px-2 py-1.5">
+      <div className={CHROME_ROW}>
         <IconButton
           variant="toolbar"
           icon={Home}
           frame={22}
-          aria-label={t('sftp.home')}
+          title={t('sftp.home')}
           onClick={() => store.getState().goHome(hostId)}
         />
         <IconButton
           variant="toolbar"
           icon={RotateCw}
           frame={22}
-          aria-label={t('common.refresh')}
+          title={t('common.refresh')}
           onClick={() => store.getState().refresh(hostId)}
         />
         <div className="flex-1" />
@@ -486,6 +487,8 @@ export function SftpPane({
         <IconButton
           variant="toolbar"
           icon={pane?.showHidden ? Eye : EyeOff}
+          selected={pane?.showHidden}
+          aria-pressed={!!pane?.showHidden}
           frame={22}
           title={pane?.showHidden ? t('sftp.hideHidden') : t('sftp.showHidden')}
           onClick={() => store.getState().toggleHidden(hostId)}

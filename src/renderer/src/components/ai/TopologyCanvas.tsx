@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { Circle, FolderTree, ListTree, Sparkles, Waypoints } from 'lucide-react'
+import { FolderTree, ListTree, Scan, SlidersHorizontal, ZoomIn, ZoomOut } from 'lucide-react'
 import {
   applyNodeChanges,
   Background,
@@ -227,12 +227,15 @@ function HostNode({ data }: NodeProps<Node<TopoNodeData>>): React.JSX.Element {
               } as React.CSSProperties
             }
           >
-            <OsIcon osName={data.osName} onLight />
+            <OsIcon osName={data.osName} size={16} onLight />
           </span>
         </div>
 
         {/* 标签脱离文档流（挂在圆上）：节点尺寸只由圆决定，加粗或换名称都不会挪动圆心 */}
-        <span className="topo-node-label absolute top-full left-1/2 mt-0.5 max-w-24 -translate-x-1/2 truncate text-caption text-muted">
+        <span
+          title={data.label}
+          className="topo-node-label absolute top-full left-1/2 mt-1 max-w-32 -translate-x-1/2 truncate rounded bg-bg/85 px-1.5 py-0.5 text-body font-medium text-fg/85"
+        >
           {data.label}
         </span>
       </div>
@@ -262,9 +265,9 @@ function NodeBubble({ data }: { data: TopoNodeData }): React.JSX.Element {
   const groupText = chain.length ? chain.map((g) => g.name).join(' / ') : t('conn.ungrouped')
   const groupColor = chain.length ? hexToCss(chain[chain.length - 1].colorHex) : 'var(--at-muted)'
   return (
-    <div className="absolute bottom-3 left-3 z-10 w-max max-w-72 rounded-lg border border-line bg-raised/90 px-2.5 py-2 backdrop-blur">
-      <div className="text-body text-fg">{data.label}</div>
-      {address && <div className="mt-0.5 font-mono text-caption text-muted">{address}</div>}
+    <div className="absolute bottom-14 left-3 z-10 w-64 max-w-[calc(100%-1.5rem)] rounded-lg border border-line bg-raised/90 px-2.5 py-2 backdrop-blur">
+      <div className="break-words text-title font-medium text-fg">{data.label}</div>
+      {address && <div className="mt-1 break-all font-mono text-body text-muted">{address}</div>}
       <div
         className="mt-0.5 flex items-center gap-1.5"
         title={t('ai.topo.group', { name: groupText })}
@@ -322,7 +325,7 @@ function CenterNode({ data }: NodeProps<Node<TopoNodeData>>): React.JSX.Element 
           </svg>
         </div>
 
-        <span className="absolute top-full left-1/2 mt-0.5 -translate-x-1/2 text-caption text-muted">
+        <span className="absolute top-full left-1/2 mt-1 -translate-x-1/2 rounded bg-bg/85 px-1.5 py-0.5 text-body text-fg/85">
           {t('ai.topo.local')}
         </span>
       </div>
@@ -421,10 +424,11 @@ function LegendSwatch({ k }: { k: EdgeState }): React.JSX.Element {
 
 function TopologyInner(): React.JSX.Element {
   const { t } = useTranslation()
-  const { fitView } = useReactFlow()
+  const { fitView, zoomIn, zoomOut } = useReactFlow()
   const [spacing, setSpacing] = useState(() => loadViewPrefs().spacing)
   const [nodeSize, setNodeSize] = useState(() => loadViewPrefs().nodeSize)
   const [legendOpen, setLegendOpen] = useState(false)
+  const [viewOptionsOpen, setViewOptionsOpen] = useState(false)
   const [layoutVersion, setLayoutVersion] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
   const { nodes, edges } = useTopologyGraph(spacing, nodeSize)
@@ -628,7 +632,7 @@ function TopologyInner(): React.JSX.Element {
         deleteKeyCode={null}
         proOptions={{ hideAttribution: true }}
       >
-        <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="var(--at-line)" />
+        <Background variant={BackgroundVariant.Dots} gap={32} size={1} color="var(--at-line)" />
       </ReactFlow>
 
       {/* 左下角：被点节点的详情气泡（点击节点出现，取代原来的 hover 浮层） */}
@@ -651,38 +655,60 @@ function TopologyInner(): React.JSX.Element {
               </ul>
             </>
           )}
-          <div className="flex items-center gap-2">
-            <div className="flex flex-col gap-1.5">
-              <label className="flex items-center gap-2" title={t('ai.topo.spacing')}>
-                <Waypoints size={12} strokeWidth={2} className="shrink-0 text-muted" />
-                <input
-                  type="range"
-                  min={SPACING_MIN}
-                  max={SPACING_MAX}
-                  step={0.05}
-                  value={spacing}
-                  aria-label={t('ai.topo.spacing')}
-                  onChange={(e) => changeView('spacing', Number(e.target.value))}
-                  className="h-1 w-24 accent-(--at-accent)"
-                />
-              </label>
-              <label className="flex items-center gap-2" title={t('ai.topo.nodeSize')}>
-                <Circle size={12} strokeWidth={2} className="shrink-0 text-muted" />
-                <input
-                  type="range"
-                  min={SIZE_MIN}
-                  max={SIZE_MAX}
-                  step={0.05}
-                  value={nodeSize}
-                  aria-label={t('ai.topo.nodeSize')}
-                  onChange={(e) => changeView('nodeSize', Number(e.target.value))}
-                  className="h-1 w-24 accent-(--at-accent)"
-                />
-              </label>
-            </div>
+          <div
+            className={viewOptionsOpen ? 'flex flex-col gap-2 border-b border-line pb-2' : 'hidden'}
+          >
+            <label className="flex items-center gap-2" title={t('ai.topo.spacing')}>
+              <span className="w-20 text-minor text-muted">{t('ai.topo.spacing')}</span>
+              <input
+                type="range"
+                min={SPACING_MIN}
+                max={SPACING_MAX}
+                step={0.05}
+                value={spacing}
+                aria-label={t('ai.topo.spacing')}
+                onChange={(e) => changeView('spacing', Number(e.target.value))}
+                className="range-at w-24"
+              />
+            </label>
+            <label className="flex items-center gap-2" title={t('ai.topo.nodeSize')}>
+              <span className="w-20 text-minor text-muted">{t('ai.topo.nodeSize')}</span>
+              <input
+                type="range"
+                min={SIZE_MIN}
+                max={SIZE_MAX}
+                step={0.05}
+                value={nodeSize}
+                aria-label={t('ai.topo.nodeSize')}
+                onChange={(e) => changeView('nodeSize', Number(e.target.value))}
+                className="range-at w-24"
+              />
+            </label>
+          </div>
+          <div className="flex items-center justify-end gap-1">
             <IconButton
               variant="toolbar"
-              icon={Sparkles}
+              icon={ZoomOut}
+              title={t('ai.topo.zoomOut')}
+              onClick={() => void zoomOut({ duration: prefersReducedMotion() ? 0 : 150 })}
+            />
+            <IconButton
+              variant="toolbar"
+              icon={ZoomIn}
+              title={t('ai.topo.zoomIn')}
+              onClick={() => void zoomIn({ duration: prefersReducedMotion() ? 0 : 150 })}
+            />
+            <IconButton
+              variant="toolbar"
+              icon={SlidersHorizontal}
+              title={t('ai.topo.viewOptions')}
+              selected={viewOptionsOpen}
+              aria-expanded={viewOptionsOpen}
+              onClick={() => setViewOptionsOpen((value) => !value)}
+            />
+            <IconButton
+              variant="toolbar"
+              icon={Scan}
               size={12}
               frame={22}
               cornerRadius={11}

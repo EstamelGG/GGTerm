@@ -1,5 +1,7 @@
 import type { HostStateEvent } from './types'
 
+export const MAX_RECONNECTS = 3
+
 /** Runtime identity is separate from the saved host and survives transport retries. */
 export interface ConnectionState extends HostStateEvent {
   connectionId: string

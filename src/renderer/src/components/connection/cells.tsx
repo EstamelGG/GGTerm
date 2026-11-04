@@ -73,7 +73,9 @@ export function HostAddressCell({
         text={text}
         className="min-w-0 flex-1 truncate font-mono text-minor text-muted"
       />
-      <CopyIconButton value={text} label={t('conn.copyAddress')} onCopied={onCopy} />
+      <span className="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+        <CopyIconButton value={text} label={t('conn.copyAddress')} onCopied={onCopy} />
+      </span>
     </div>
   )
 }

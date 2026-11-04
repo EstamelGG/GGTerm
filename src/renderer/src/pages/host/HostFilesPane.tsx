@@ -1,4 +1,3 @@
-import { CHROME_ROW } from '@/components/chrome/layout'
 import { RevealRow } from '@/components/chrome/RevealRow'
 import { TabChip, TabScrollArea } from '@/components/chrome/TabChip'
 import { CloseDocumentsDialog } from '@/components/editor/CloseDocumentsDialog'
@@ -50,26 +49,6 @@ export function HostFilesPane({
         }
       >
         <>
-          {/* 文件标签行：chips 横滚限位（无行尾按钮，整行即滚动区） */}
-          <div className={cn(CHROME_ROW, 'bg-sidebar')}>
-            <TabScrollArea>
-              {host.files.map((f) => (
-                <TabChip
-                  key={f.id}
-                  title={f.text !== f.saved ? `${f.name} •` : f.name}
-                  icon={FileText}
-                  selected={activeFileId === f.id}
-                  accentBorder={f.text !== f.saved}
-                  showClose
-                  onClick={() => focusFile(host.id, f.id)}
-                  onClose={() => {
-                    if (f.text !== f.saved || f.saving) setPendingCloseFile(f)
-                    else closeFile(host.id, f.id)
-                  }}
-                />
-              ))}
-            </TabScrollArea>
-          </div>
           <div
             className={cn('relative min-h-0 bg-sidebar', editorH === null ? 'flex-1' : 'shrink-0')}
             style={editorH !== null ? { height: Math.min(editorH, maxEditorH) } : undefined}
@@ -77,6 +56,7 @@ export function HostFilesPane({
             {host.files.map((f) => (
               <div
                 key={f.id}
+                inert={activeFileId !== f.id}
                 className={cn(
                   'absolute inset-0',
                   activeFileId === f.id ? 'z-10' : 'pointer-events-none opacity-0'
@@ -85,6 +65,25 @@ export function HostFilesPane({
                 <Suspense fallback={null}>
                   <RemoteEditorView
                     doc={f}
+                    tabs={
+                      <TabScrollArea>
+                        {host.files.map((file) => (
+                          <TabChip
+                            key={file.id}
+                            title={file.text !== file.saved ? `${file.name} •` : file.name}
+                            icon={FileText}
+                            selected={activeFileId === file.id}
+                            accentBorder={file.text !== file.saved}
+                            showClose
+                            onClick={() => focusFile(host.id, file.id)}
+                            onClose={() => {
+                              if (file.text !== file.saved || file.saving) setPendingCloseFile(file)
+                              else closeFile(host.id, file.id)
+                            }}
+                          />
+                        ))}
+                      </TabScrollArea>
+                    }
                     onText={(text) => setFileText(host.id, f.id, text)}
                     onSave={() => saveFile(host.id, f.id)}
                     onReload={() => reloadFile(host.id, f.id)}

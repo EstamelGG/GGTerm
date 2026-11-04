@@ -22,6 +22,50 @@ export function createRemoteFilesSlice(
     }))
   }
 
+  async function loadFile(
+    hostId: string,
+    doc: RemoteFileDoc,
+    mode = doc.encodingMode,
+    opening = false
+  ): Promise<void> {
+    const patch = (value: Partial<RemoteFileDoc>): void => patchFile(hostId, doc.id, value)
+    patch({ loading: true, error: null })
+    try {
+      const res = await window.aterm.sftp.readForEdit(hostId, doc.path, doc.size, mode)
+      if (
+        !get()
+          .hosts.find((host) => host.id === hostId)
+          ?.files.some((file) => file.id === doc.id)
+      )
+        return
+      if (res.kind === 'text') {
+        patch({
+          text: res.text,
+          saved: res.text,
+          loading: false,
+          encoding: res.encoding,
+          encodingMode: mode,
+          bom: res.bom,
+          confidence: res.confidence,
+          size: res.size,
+          readOnly: res.lossy || res.binary,
+          error: res.binary
+            ? i18next.t('editor.binaryReadOnly')
+            : res.lossy
+              ? i18next.t('editor.lossyReadOnly')
+              : null
+        })
+      } else if (opening) {
+        get().closeFile(hostId, doc.id)
+        useSftpStore.getState().setBanner(hostId, i18next.t('sftp.tooLargeBanner', { limit: 10 }))
+      } else {
+        patch({ loading: false, error: i18next.t('sftp.tooLargeBanner', { limit: 10 }) })
+      }
+    } catch (error) {
+      patch({ loading: false, error: errorMessage(error) })
+    }
+  }
+
   return {
     openFile: (hostId, entry) => {
       if (entry.isDir) return
@@ -29,9 +73,7 @@ export function createRemoteFilesSlice(
       if (!host) return
       const existing = host.files.find((f) => f.path === entry.path)
       if (existing) {
-        set((s) => ({
-          hosts: s.hosts.map((h) => (h.id === hostId ? { ...h, focusFileId: existing.id } : h))
-        }))
+        get().focusFile(hostId, existing.id)
         return
       }
       const doc: RemoteFileDoc = {
@@ -55,84 +97,14 @@ export function createRemoteFilesSlice(
           h.id === hostId ? { ...h, files: [...h.files, doc], focusFileId: doc.id } : h
         )
       }))
-      void (async () => {
-        try {
-          const res = await window.aterm.sftp.readForEdit(hostId, entry.path, entry.size)
-          if (
-            !get()
-              .hosts.find((h) => h.id === hostId)
-              ?.files.some((f) => f.id === doc.id)
-          )
-            return
-          if (res.kind === 'text') {
-            set((s) => ({
-              hosts: s.hosts.map((h) =>
-                h.id === hostId
-                  ? {
-                      ...h,
-                      files: h.files.map((f) =>
-                        f.id === doc.id
-                          ? {
-                              ...f,
-                              text: res.text,
-                              saved: res.text,
-                              loading: false,
-                              encoding: res.encoding,
-                              bom: res.bom,
-                              confidence: res.confidence,
-                              size: res.size,
-                              readOnly: res.lossy || res.binary,
-                              error: res.binary
-                                ? i18next.t('editor.binaryReadOnly')
-                                : res.lossy
-                                  ? i18next.t('editor.lossyReadOnly')
-                                  : null
-                            }
-                          : f
-                      )
-                    }
-                  : h
-              )
-            }))
-            return
-          }
-          // 兜底（>10MB 已在 SftpPane 弹窗拦截）：移除标签页并提示改走下载，不自动下载
-          set((s) => ({
-            hosts: s.hosts.map((h) => {
-              if (h.id !== hostId) return h
-              const files = h.files.filter((f) => f.id !== doc.id)
-              return {
-                ...h,
-                files,
-                focusFileId:
-                  h.focusFileId === doc.id ? (files[files.length - 1]?.id ?? null) : h.focusFileId
-              }
-            })
-          }))
-          useSftpStore.getState().setBanner(hostId, i18next.t('sftp.tooLargeBanner', { limit: 10 }))
-        } catch (err) {
-          const message = errorMessage(err)
-          set((s) => ({
-            hosts: s.hosts.map((h) =>
-              h.id === hostId
-                ? {
-                    ...h,
-                    files: h.files.map((f) =>
-                      f.id === doc.id ? { ...f, loading: false, error: message } : f
-                    )
-                  }
-                : h
-            )
-          }))
-        }
-      })()
+      void loadFile(hostId, doc, 'auto', true)
     },
 
     /** 对照 SessionCenter.saveFile：writeText + saved/error 状态 */
     saveFile: async (hostId, fileId) => {
       const host = get().hosts.find((h) => h.id === hostId)
       const doc = host?.files.find((f) => f.id === fileId)
-      if (!host || !doc || doc.saving || doc.loading || doc.readOnly) return false
+      if (!doc || doc.saving || doc.loading || doc.readOnly) return false
       if (doc.text === doc.saved) return true
       const text = doc.text
       patchFile(hostId, fileId, { saving: true, error: null })
@@ -153,37 +125,8 @@ export function createRemoteFilesSlice(
     reloadFile: (hostId, fileId, encoding) => {
       const host = get().hosts.find((h) => h.id === hostId)
       const doc = host?.files.find((f) => f.id === fileId)
-      if (!host || !doc || doc.loading || doc.saving) return
-      const patch = (p: Partial<RemoteFileDoc>): void => patchFile(hostId, fileId, p)
-      patch({ loading: true, error: null })
-      void (async () => {
-        try {
-          const mode = encoding ?? doc.encodingMode
-          const res = await window.aterm.sftp.readForEdit(hostId, doc.path, doc.size, mode)
-          if (res.kind === 'text') {
-            patch({
-              text: res.text,
-              saved: res.text,
-              loading: false,
-              encoding: res.encoding,
-              encodingMode: mode,
-              bom: res.bom,
-              confidence: res.confidence,
-              size: res.size,
-              readOnly: res.lossy || res.binary,
-              error: res.binary
-                ? i18next.t('editor.binaryReadOnly')
-                : res.lossy
-                  ? i18next.t('editor.lossyReadOnly')
-                  : null
-            })
-            return
-          }
-          patch({ loading: false, error: i18next.t('sftp.tooLargeBanner', { limit: 10 }) })
-        } catch (err) {
-          patch({ loading: false, error: errorMessage(err) })
-        }
-      })()
+      if (!doc || doc.loading || doc.saving) return
+      void loadFile(hostId, doc, encoding)
     },
 
     /** 对照 SessionCenter.closeFile：焦点回退到最后一个文件或 shell */

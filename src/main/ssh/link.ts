@@ -10,9 +10,11 @@ import type {
   HostConnection,
   HostLinkSnapshot,
   HostStateEvent,
+  LinkPhase,
   SftpMeasureEvent,
   SftpStateEvent,
-  SftpTransferMirror
+  SftpTransferMirror,
+  ShellStatus
 } from '../../shared/types'
 import * as secretsStore from '../data/secrets'
 import { listConnections } from '../data/connections'
@@ -22,7 +24,7 @@ import { t } from '../i18n'
 import { SftpSession, execCommand } from './sftp'
 import { OS_NAME_SCRIPT } from './remoteScripts'
 import { connectionRegistry } from './connectionRegistry'
-import type { ConnectionState } from '../../shared/connectionState'
+import { MAX_RECONNECTS, type ConnectionState } from '../../shared/connectionState'
 import { bindTransport, invalidateTransport, ResourceLifetime } from './resourceLifetime'
 import type { ResourceIdentity } from '../../shared/resource'
 
@@ -37,12 +39,7 @@ import type { ResourceIdentity } from '../../shared/resource'
  * 不再外露 RTT / 丢包计数。
  */
 
-export type LinkPhase = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'offline'
-
-export type ShellStatus = 'connecting' | 'connected' | 'disconnected' | 'ended' | 'error'
-
-export const MAX_RECONNECTS = 3
-export const RECONNECT_DELAY_MS = 2000
+const RECONNECT_DELAY_MS = 2000
 
 export interface HostLinkEvents {
   onHostState: (payload: HostStateEvent) => void
@@ -104,7 +101,6 @@ export class ShellSession {
       this.autoStartTimer = null
     }
     this.closedByUser = false
-    this.dropAnnounced = false
     this.writeTail = Promise.resolve()
     const client = this.link.activeClient
     if (!client) {
@@ -185,7 +181,7 @@ export class ShellSession {
         // 通道干净关闭且主机链路仍活 = shell 正常退出（exit）
         if (this.link.isActive) {
           this.setStatus('ended')
-          this.announce('会话已结束')
+          this.announce(t('announce.sessionEnded'))
         } else {
           this.setStatus('disconnected')
         }
@@ -240,7 +236,7 @@ export class ShellSession {
 
   noteOffline(): void {
     if (this.closedByUser) return
-    this.announce('连接已断线，等待手动重连')
+    this.announce(t('announce.offlineManual'))
   }
 
   write(data: string): void {
@@ -436,7 +432,20 @@ export class HostLink {
     if (this.phase === 'connecting' || this.phase === 'connected' || this.phase === 'reconnecting')
       return
     this.nextGeneration()
+    this.offlineReason = ''
     void this.connectLoop(0)
+  }
+
+  /** Cancel dialing without disposing the workspace or its shell identities. */
+  cancelConnect(): void {
+    if (this.phase !== 'connecting' && this.phase !== 'reconnecting') return
+    this.nextGeneration()
+    this.teardownClient()
+    for (const shell of this.shells.values()) shell.hostClosed()
+    this.sftp.hostLinkLost()
+    this.offlineReason = ''
+    this.setPhase('idle')
+    this.emitState()
   }
 
   /** 拆链重连（连接参数变更时） */
@@ -487,7 +496,7 @@ export class HostLink {
     this.setPhase('idle')
     this.phaseSince = Date.now()
     this.loggedPhase = null
-    // 手动关闭也广播终态（拓扑图等依赖 host:state 的视图据此转入"已断开"态）
+    // 手动关闭也广播终态（连接状态镜像据此转入"已断开"态）
     this.emitState()
     appLog('ssh', `Connection "${this.conn.name}" closed`)
   }
@@ -564,6 +573,7 @@ export class HostLink {
         }
         this.client = client
         bindTransport(client, this.connectionId, gen)
+        this.offlineReason = ''
         this.setPhase('connected')
         this.emitState()
         client.on('close', () => this.handleDisconnect(gen))
@@ -585,13 +595,19 @@ export class HostLink {
         // 记录最新失败原因（重连中 waitForActive/connect 工具可读取），最终 offline 时亦复用
         this.offlineReason = message
         attempt += 1
-        if (attempt > MAX_RECONNECTS || (err as { code?: string }).code === 'HOST_KEY_CHANGED') {
+        const failure = err as { code?: string; level?: string }
+        const authFailed = failure.level === 'client-authentication'
+        if (attempt > MAX_RECONNECTS || failure.code === 'HOST_KEY_CHANGED' || authFailed) {
+          if (authFailed && this.conn.authType === 'manual') this.sessionSecrets = null
           this.setPhase('offline')
           this.offlineReason = message
           this.emitState()
           for (const s of this.shells.values()) s.noteOffline()
           return
         }
+        this.attempt = attempt
+        this.setPhase('reconnecting')
+        this.emitState()
         await new Promise<void>((resolve) => {
           const finish = (): void => {
             clearTimeout(timer)

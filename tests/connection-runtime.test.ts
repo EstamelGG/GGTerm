@@ -132,3 +132,64 @@ it('cancels retry waits and disposes borrowed resources exactly once', async () 
   expect(fixture.clients).toHaveLength(1)
   expect(dispose).toHaveBeenCalledOnce()
 })
+
+it('stops retrying rejected credentials and lets manual login request fresh credentials', async () => {
+  const link = create({ authType: 'manual' })
+  link.update(link.connection, { password: 'wrong' })
+  link.start()
+  fixture.clients[0].emit(
+    'error',
+    Object.assign(new Error('Bad credentials'), { level: 'client-authentication' })
+  )
+  await vi.advanceTimersByTimeAsync(10_000)
+  expect(fixture.clients).toHaveLength(1)
+  expect(link.phase).toBe('offline')
+  expect(link.awaitingCredentials).toBe(true)
+  expect(link.offlineReason).toBe('Bad credentials')
+})
+
+it('cancels backoff without losing shells and permits a clean manual retry', async () => {
+  const link = create()
+  const shell = link.addShell()
+  link.start()
+  fixture.clients[0].emit('error', new Error('unreachable'))
+  await vi.advanceTimersByTimeAsync(0)
+  expect(link.phase).toBe('reconnecting')
+  link.cancelConnect()
+  await vi.advanceTimersByTimeAsync(10_000)
+  expect(fixture.clients).toHaveLength(1)
+  expect(link.phase).toBe('idle')
+  expect(link.shells.get(shell.id)).toBe(shell)
+  link.start()
+  expect(fixture.clients).toHaveLength(2)
+  expect(link.offlineReason).toBe('')
+  link.cancelConnect()
+})
+
+it('reopens the existing terminal after transport loss and announces recovery once', async () => {
+  const link = create()
+  const shell = link.addShell()
+  const readyShell = (client: EventEmitter): void => {
+    Object.assign(client, {
+      shell: (_options: unknown, cb: (error: null, channel: EventEmitter) => void) =>
+        cb(null, Object.assign(new EventEmitter(), { stderr: new EventEmitter(), close: vi.fn() }))
+    })
+    client.emit('ready')
+  }
+  link.start()
+  readyShell(fixture.clients[0])
+  await vi.advanceTimersByTimeAsync(0)
+  expect(shell.status).toBe('connected')
+  fixture.clients[0].emit('close')
+  expect(link.phase).toBe('reconnecting')
+  readyShell(fixture.clients[1])
+  await vi.advanceTimersByTimeAsync(0)
+  expect(shell.status).toBe('connected')
+  expect(link.offlineReason).toBe('')
+  expect(link.events.onShellAnnounce).toHaveBeenCalledWith(
+    expect.objectContaining({ text: 'announce.reconnected' })
+  )
+  // Cancel is deliberately a no-op once a connection has recovered.
+  link.cancelConnect()
+  expect(link.phase).toBe('connected')
+})

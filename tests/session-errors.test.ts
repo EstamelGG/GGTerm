@@ -34,3 +34,20 @@ it('reports credential persistence failure once and retries without re-authentic
   expect(update).toHaveBeenCalledTimes(2)
   expect(useWorkspaceIssues.getState().issues['credentials:host']).toBeUndefined()
 })
+
+it('clears stale retry counts and failure details when a host recovers', () => {
+  useSessionStore.setState({
+    hosts: [
+      {
+        id: 'host',
+        conn: {},
+        shells: [],
+        phase: 'offline',
+        attempt: 3,
+        offlineReason: 'old timeout'
+      } as unknown as HostWorkspaceMirror
+    ]
+  })
+  useSessionStore.getState().applyHostState({ hostId: 'host', phase: 'connected', since: 1 })
+  expect(useSessionStore.getState().hosts[0]).toMatchObject({ attempt: 0, offlineReason: '' })
+})

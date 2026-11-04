@@ -15,7 +15,7 @@ import {
 } from '../portForward'
 import { connectionRegistry } from '../ssh/connectionRegistry'
 import type { HostLinkEvents } from '../ssh/link'
-import { getLink, getOrCreateLink, listLinks, probeLinksOsName, removeLink } from '../ssh/link'
+import { getLink, getOrCreateLink, probeLinksOsName, removeLink } from '../ssh/link'
 import { getResourceLink } from '../ssh/resourceLink'
 
 import { channels } from './channels'
@@ -34,7 +34,6 @@ export function registerWorkspaceIpc(): void {
   const forwardConnectedHosts = new Set<string>()
   const linkEvents = (sender: Electron.WebContents): HostLinkEvents => ({
     onHostState: (payload) => {
-      if (!sender.isDestroyed()) sender.send('host:state', payload)
       if (payload.phase === 'connected' && !forwardConnectedHosts.has(payload.hostId)) {
         forwardConnectedHosts.add(payload.hostId)
         portForwards.autoStart(payload.hostId)
@@ -75,7 +74,6 @@ export function registerWorkspaceIpc(): void {
     return link
   })
 
-  ipcMain.handle(channels.linksList, () => listLinks())
   ipcMain.handle('connections:runtime', () => connectionRegistry.snapshot())
   connectionRegistry.subscribe((event) => {
     for (const window of BrowserWindow.getAllWindows()) {
@@ -130,6 +128,10 @@ export function registerWorkspaceIpc(): void {
 
   ipcMain.on(channels.hostReconnect, (_e, hostId: string) => {
     getLink(hostId)?.start()
+  })
+
+  ipcMain.on(channels.hostCancelConnect, (_e, hostId: string) => {
+    getLink(hostId)?.cancelConnect()
   })
 
   ipcMain.on(channels.hostRestart, (_e, hostId: string) => {

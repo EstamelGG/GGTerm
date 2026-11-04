@@ -158,7 +158,7 @@ export interface HostStateEvent {
   jumpIds?: string[]
 }
 
-/** 链路状态快照（links:list）：拓扑图等视图的初始化数据源 */
+/** 用户链路快照，供 AI 连接清单使用 */
 export interface HostLinkSnapshot {
   hostId: string
   phase: LinkPhase

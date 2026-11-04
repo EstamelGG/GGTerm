@@ -101,6 +101,17 @@ async function chooseModel(name: string): Promise<void> {
   fireEvent.keyDown(option, { key: 'Enter' })
 }
 
+it('selects the first provider when preferences arrive after mounting', async () => {
+  usePrefsStore.setState({ data: null })
+  render(<ModelManagerPanel />)
+  await act(async () => {
+    usePrefsStore.setState({ data: structuredClone(saved) })
+  })
+  expect(screen.getByRole('button', { name: 'Local A' }).getAttribute('aria-pressed')).toBe('true')
+  expect(screen.getByRole('textbox', { name: 'settings.aiBaseURL' })).toBeTruthy()
+  await waitFor(() => expect(window.aterm.ai.hasApiKey).toHaveBeenCalledWith('p1'))
+})
+
 it('在供应商下编辑不同模型的窗口，恢复各自设置且不修改当前对话模型', async () => {
   render(<ModelManagerPanel />)
   const size = (): HTMLInputElement =>

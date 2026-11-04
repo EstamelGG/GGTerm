@@ -13,7 +13,8 @@ export function ATTextField({
   className,
   autoFocus,
   onKeyDown,
-  disabled
+  disabled,
+  'aria-label': ariaLabel
 }: {
   value: string
   onChange: (v: string) => void
@@ -22,11 +23,13 @@ export function ATTextField({
   autoFocus?: boolean
   onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>
   disabled?: boolean
+  'aria-label'?: string
 }): React.JSX.Element {
   const labelId = useFieldLabel()
   return (
     <input
       aria-labelledby={labelId}
+      aria-label={ariaLabel}
       type="text"
       className={cn(fieldBase, 'h-8', disabled && 'cursor-not-allowed opacity-45', className)}
       value={value}

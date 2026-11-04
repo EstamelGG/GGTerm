@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { ArrowDown, ArrowUp, Ban, Loader2, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowDownUp, Ban, Loader2, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useConnectionsStore } from '@/stores/connections'
 import { useSessionStore } from '@/stores/session'
@@ -9,6 +9,7 @@ import { IconButton } from '@/components/ui/IconButton'
 import { Button } from '@/components/form/Buttons'
 import { fmtSpeed } from '../format'
 import type { SftpTransferMirror } from '@shared/types'
+import { PanelEmptyState } from '../PanelEmptyState'
 
 /**
  * 文件传输面板（全局活动栏）：全局主机传输列表 + 进度条 + 取消。
@@ -194,7 +195,7 @@ export function TransfersPanel(): React.JSX.Element {
         />
       </div>
       {transfers.length === 0 ? (
-        <p className="py-8 text-center text-minor text-muted/60">{t('activity.transfersEmpty')}</p>
+        <PanelEmptyState icon={ArrowDownUp} title={t('activity.transfersEmpty')} />
       ) : (
         <div className="flex flex-col">
           {transfers.map(({ hostId, hostName, tr }) => (

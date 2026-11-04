@@ -134,7 +134,7 @@ export class SftpSession {
     this.emitState('disconnected')
   }
 
-  /** 主机链路（重）建立 —— 重开通道；目录刷新由渲染层监听 host:state 驱动 */
+  /** 主机链路（重）建立 —— 重开通道；目录刷新由渲染层监听 sftp:state 驱动 */
   hostLinkRestored(): void {
     if (!this.started) return
     void this.ensureChannel().catch(() => {})

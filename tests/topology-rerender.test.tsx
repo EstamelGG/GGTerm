@@ -67,7 +67,6 @@ beforeEach(() => {
       hosts: {
         onState: noop,
         onAgentState: noop,
-        listLinks: async () => [],
         listAgentLinks: async () => []
       },
       perf: { probeOs: () => {} },

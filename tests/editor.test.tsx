@@ -132,6 +132,26 @@ it('does not claim a failed read was saved', () => {
   expect(screen.queryByText('editor.saved')).toBeNull()
 })
 
+it('keeps reload confirmation when the action is opened from the compact menu', async () => {
+  const reload = vi.fn()
+  render(
+    <RemoteEditorView
+      doc={doc}
+      onText={vi.fn()}
+      onSave={vi.fn()}
+      onReload={reload}
+      onEncoding={vi.fn()}
+      onDownload={vi.fn()}
+    />
+  )
+  fireEvent.keyDown(screen.getByRole('button', { name: 'common.moreActions' }), { key: 'Enter' })
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'editor.reload' }))
+  expect(reload).not.toHaveBeenCalled()
+  const confirm = await screen.findByRole('button', { name: 'editor.reload' })
+  fireEvent.click(confirm)
+  expect(reload).toHaveBeenCalledOnce()
+})
+
 it('blocks saving a lossy/binary or failed initial read', async () => {
   useSessionStore.setState({
     hosts: [{ id: 'host', files: [{ ...doc, readOnly: true }] } as HostWorkspaceMirror]

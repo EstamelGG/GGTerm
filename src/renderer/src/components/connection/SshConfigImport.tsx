@@ -176,7 +176,7 @@ export function SshConfigImport({ onDone }: { onDone: () => void }): React.JSX.E
         </div>
       )}
 
-      <div className="max-h-[50vh] min-h-[160px] overflow-y-auto p-3.5">
+      <div className="min-w-0 p-3">
         {error ? (
           <p className="py-8 text-center text-body text-danger">{error}</p>
         ) : entries === null ? (

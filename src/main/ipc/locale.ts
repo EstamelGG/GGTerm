@@ -4,7 +4,7 @@ import * as prefs from '../data/prefs'
 import { resolveLocale, setLocalePref, type AppLocale } from '../i18n'
 import { installMenu } from '../menu'
 import { channels } from './channels'
-import { broadcast, runOneWay } from './delivery'
+import { broadcast } from './delivery'
 import { localeSchema, parseInput } from './validation'
 
 // Serialize switches so a slower earlier change cannot overwrite a newer language.
@@ -26,16 +26,6 @@ export function registerLocaleIpc(): void {
     pref: prefs.getPreferences().locale,
     locale: resolveLocale()
   }))
-  ipcMain.handle(channels.localeSet, (_e, input: unknown) => {
-    const pref = parseInput(localeSchema, input)
-    // Legacy callers receive the immediate reply after the preference write.
-    const result = setLocalePref(pref).then((locale) => {
-      installMenu()
-      broadcast('locale:changed', { locale })
-    })
-    runOneWay(channels.localeSet, () => result)
-    return { pref, locale: resolveLocale() }
-  })
   ipcMain.handle('locale:apply', (_e, input: unknown) =>
     applyLocale(parseInput(localeSchema, input))
   )

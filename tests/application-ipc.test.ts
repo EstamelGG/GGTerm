@@ -117,14 +117,10 @@ it('isolates destroyed and failing renderers during broadcasts', () => {
   expect(live.webContents.send).toHaveBeenCalledOnce()
 })
 
-it('rejects acknowledged closes and consumes failures from legacy close events', async () => {
+it('returns AI close failures to the caller', async () => {
   state.closeSession.mockRejectedValue(new Error('Close failed'))
   await expect(state.invoke.get('ai:closeSession')!({}, { sessionId: 's' })).rejects.toThrow(
     'Close failed'
-  )
-  state.send.get('ai:closeSession')!({}, { sessionId: 's' })
-  await vi.waitFor(() =>
-    expect(state.log).toHaveBeenCalledWith('ipc', 'ai:closeSession: Close failed', 'error')
   )
 })
 
@@ -182,7 +178,7 @@ it('broadcasts main-process preference updates to all surviving windows', () => 
   expect(closed.webContents.send).not.toHaveBeenCalled()
 })
 
-it('preserves the immediate locale reply and broadcasts after language and menu updates', async () => {
+it('acknowledges language changes after updating the menu and notifying windows', async () => {
   state.getPreferences.mockReturnValue({ locale: 'auto' })
   state.resolveLocale.mockReturnValue('en')
   expect(state.invoke.get('locale:get')!()).toEqual({ pref: 'auto', locale: 'en' })
@@ -195,12 +191,13 @@ it('preserves the immediate locale reply and broadcasts after language and menu 
   )
   const send = vi.fn(() => expect(state.menu).toHaveBeenCalledOnce())
   state.windows = [{ isDestroyed: () => false, webContents: { isDestroyed: () => false, send } }]
-  expect(state.invoke.get('locale:set')!({}, 'zh-CN')).toEqual({ pref: 'zh-CN', locale: 'en' })
+  const applied = state.invoke.get('locale:apply')!({}, 'zh-CN')
+  await Promise.resolve()
   expect(state.setLocale).toHaveBeenCalledWith('zh-CN')
   expect(state.menu).not.toHaveBeenCalled()
   expect(send).not.toHaveBeenCalled()
   finish('zh-CN')
-  await Promise.resolve()
+  await expect(applied).resolves.toEqual({ pref: 'zh-CN', locale: 'zh-CN' })
   expect(send).toHaveBeenCalledWith('locale:changed', { locale: 'zh-CN' })
 })
 
@@ -217,7 +214,7 @@ it('keeps log history as a request and log writes and clears as events', async (
   expect(state.invoke.has('app:log-push')).toBe(false)
 })
 
-it('retains AI session replies and the one-way close event', async () => {
+it('returns AI session data and acknowledges closes', async () => {
   const sessions = [{ id: 'session' }],
     messages = [{ id: 'message' }]
   state.listSessions.mockReturnValue(sessions)
@@ -227,10 +224,8 @@ it('retains AI session replies and the one-way close event', async () => {
   expect(state.invoke.get('ai:createSession')!()).toBe(sessions[0])
   expect(state.invoke.get('ai:getMessages')!({}, { sessionId: 'session' })).toBe(messages)
   expect(state.getMessages).toHaveBeenCalledWith('session')
-  expect(state.send.get('ai:closeSession')!({}, { sessionId: 'session' })).toBeUndefined()
-  await Promise.resolve()
+  await state.invoke.get('ai:closeSession')!({}, { sessionId: 'session' })
   expect(state.closeSession).toHaveBeenCalledWith('session')
-  expect(state.invoke.has('ai:closeSession')).toBe(true)
 })
 
 it('preserves AI run errors and cancellation session and turn identity', async () => {

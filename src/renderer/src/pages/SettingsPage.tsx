@@ -216,11 +216,6 @@ export function SettingsPage({
   }
 
   const ai = prefs?.ai ?? AI_DEFAULTS
-  // 对话场景当前绑定（供应商 · 模型）摘要展示
-  const chatBinding = ai.scenarios.chat ?? null
-  const chatProvider = chatBinding
-    ? (ai.providers.find((p) => p.id === chatBinding.providerId) ?? null)
-    : null
   const onChangeAi = (patch: Partial<AppPreferencesData['ai']>): void =>
     onChange({ ai: { ...ai, ...patch } })
 
@@ -338,17 +333,12 @@ export function SettingsPage({
             <div className="flex flex-col gap-2">
               <div className="flex items-baseline justify-between gap-4">
                 <span className="text-body text-fg">{t('settings.aiModels')}</span>
-                <span className="truncate text-caption text-muted">
-                  {chatBinding?.model
-                    ? `${chatProvider?.label ?? ''} · ${chatBinding.model}`
-                    : t('ai.modelNone')}
-                </span>
               </div>
               <ModelManagerPanel onToast={onToast} />
             </div>
             {/* 审批偏好：标题+选择器一行，分割线下逐档说明 */}
             <div className="rounded-lg border border-line px-3 py-2.5">
-              <div className="flex items-center justify-between gap-6">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="text-body text-fg">{t('settings.aiApprovalLevel')}</div>
                 <SegmentedControl
                   value={ai.approvalLevel}
@@ -373,7 +363,7 @@ export function SettingsPage({
                       <span className="w-10 shrink-0 text-minor font-medium text-fg">
                         {t(opt.key)}
                       </span>
-                      <span className="min-w-0 flex-1 text-caption leading-relaxed text-muted">
+                      <span className="min-w-0 flex-1 text-minor leading-relaxed text-muted">
                         {t(opt.descKey)}
                       </span>
                     </div>

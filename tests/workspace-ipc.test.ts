@@ -32,7 +32,6 @@ vi.mock('../src/main/ssh/link', () => ({
   getLink: state.get,
   getOrCreateLink: state.create,
   removeLink: state.remove,
-  listLinks: () => [],
   probeLinksOsName: vi.fn()
 }))
 vi.mock('../src/main/ssh/resourceLink', () => ({ getResourceLink: state.resource }))
@@ -106,9 +105,11 @@ it('shares one event factory with SFTP and preserves sender isolation and forwar
   events.onHostState({ hostId: 'host', phase: 'connected', since: 1 })
   events.onHostState({ hostId: 'host', phase: 'connected', since: 2 })
   expect(state.autoStart).toHaveBeenCalledOnce()
+  events.onShellData({ hostId: 'host', shellId: 'shell', data: 'live' })
   destroyed = true
   events.onShellData({ hostId: 'host', shellId: 'shell', data: 'late' })
-  expect(send).toHaveBeenCalledTimes(2)
+  expect(send).toHaveBeenCalledOnce()
+  expect(send).toHaveBeenCalledWith('shell:data', expect.objectContaining({ data: 'live' }))
   events.onHostState({ hostId: 'host', phase: 'idle', since: 3 })
   expect(state.closeHost).toHaveBeenCalledWith('host', 'user')
   events.onHostState({ hostId: 'host', phase: 'connected', since: 4 })

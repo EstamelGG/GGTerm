@@ -1,8 +1,27 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Editor, { type BeforeMount, type OnMount } from '@monaco-editor/react'
-import { Download, Loader2, Redo2, RotateCw, Save, Search, Undo2, WrapText } from 'lucide-react'
+import {
+  Download,
+  Ellipsis,
+  Loader2,
+  Redo2,
+  RotateCw,
+  Save,
+  Search,
+  Undo2,
+  WrapText
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { IconButton } from '@/components/ui/IconButton'
+import { CHROME_ROW } from '@/components/chrome/layout'
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
 import { DialogShell } from '@/components/ui/DialogShell'
 import { Button } from '@/components/form/Buttons'
 import { terminalFontFamily } from '@/terminal/theme'
@@ -90,6 +109,7 @@ function detectLanguage(path: string): string {
 
 export function RemoteEditorView({
   doc,
+  tabs,
   onText,
   onSave,
   onReload,
@@ -97,6 +117,7 @@ export function RemoteEditorView({
   onDownload
 }: {
   doc: RemoteFileDoc
+  tabs?: ReactNode
   onText: (text: string) => void
   onSave: () => void
   /** 重新拉取远端内容（dirty 确认已在本组件内处理） */
@@ -144,35 +165,9 @@ export function RemoteEditorView({
 
   return (
     <div className="flex h-full min-h-0 flex-col" style={{ backgroundColor: BG }}>
-      {/* 工具行（tab 栏下方）：全部桥接 Monaco 原生命令 / 既有链路 */}
-      <div className="flex h-8 shrink-0 items-center gap-1 border-b border-line bg-sidebar px-2">
-        {/* 第一组：撤销/重做 */}
-        <IconButton
-          variant="toolbar"
-          icon={Undo2}
-          frame={22}
-          title={t('editor.undo')}
-          disabled={doc.loading}
-          onClick={() => editorRef.current?.trigger('api', 'undo', null)}
-        />
-        <IconButton
-          variant="toolbar"
-          icon={Redo2}
-          frame={22}
-          title={t('editor.redo')}
-          disabled={doc.loading}
-          onClick={() => editorRef.current?.trigger('api', 'redo', null)}
-        />
-        <div className="mx-1 h-4 w-px bg-line" />
-        {/* 第二组：刷新/保存/下载 */}
-        <IconButton
-          variant="toolbar"
-          icon={RotateCw}
-          frame={22}
-          title={t('editor.reload')}
-          disabled={doc.loading || doc.saving}
-          onClick={() => (dirty ? setPendingReload(true) : onReload())}
-        />
+      {/* 文件标签与操作共用一行；次级动作保留在更多菜单。 */}
+      <div className={`${CHROME_ROW} border-b border-line bg-sidebar`}>
+        {tabs ?? <div className="min-w-0 flex-1" />}
         <IconButton
           variant="toolbar"
           icon={Save}
@@ -183,32 +178,55 @@ export function RemoteEditorView({
         />
         <IconButton
           variant="toolbar"
-          icon={Download}
-          frame={22}
-          title={t('common.download')}
-          disabled={doc.loading || doc.saving}
-          onClick={onDownload}
-        />
-        <div className="mx-1 h-4 w-px bg-line" />
-        {/* 第三组：搜索 */}
-        <IconButton
-          variant="toolbar"
           icon={Search}
           frame={22}
           title={t('editor.find')}
           disabled={doc.loading}
           onClick={() => void editorRef.current?.getAction('actions.find')?.run()}
         />
-        <IconButton
-          variant="toolbar"
-          icon={WrapText}
-          frame={22}
-          title={t(wordWrap ? 'editor.disableWordWrap' : 'editor.enableWordWrap')}
-          aria-label={t('editor.wordWrap')}
-          aria-pressed={wordWrap}
-          selected={wordWrap}
-          onClick={() => setWordWrap((enabled) => !enabled)}
-        />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <IconButton
+              variant="toolbar"
+              icon={Ellipsis}
+              frame={22}
+              title={t('common.moreActions')}
+            />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              disabled={doc.loading}
+              onClick={() => editorRef.current?.trigger('api', 'undo', null)}
+            >
+              <Undo2 />
+              {t('editor.undo')}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={doc.loading}
+              onClick={() => editorRef.current?.trigger('api', 'redo', null)}
+            >
+              <Redo2 />
+              {t('editor.redo')}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              disabled={doc.loading || doc.saving}
+              onClick={() => (dirty ? setPendingReload(true) : onReload())}
+            >
+              <RotateCw />
+              {t('editor.reload')}
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={doc.loading || doc.saving} onClick={onDownload}>
+              <Download />
+              {t('common.download')}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuCheckboxItem checked={wordWrap} onCheckedChange={setWordWrap}>
+              <WrapText />
+              {t('editor.wordWrap')}
+            </DropdownMenuCheckboxItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {/* 不加 overflow-hidden：Monaco 浮层（搜索框 tooltip 等）由 ContextView 挂在编辑器容器内、
@@ -227,7 +245,9 @@ export function RemoteEditorView({
             options={{
               readOnly: doc.readOnly || doc.saving,
               fontFamily: terminalFontFamily,
-              fontSize: 13,
+              fontSize: parseFloat(
+                getComputedStyle(document.documentElement).getPropertyValue('--text-minor')
+              ),
               minimap: { enabled: true },
               wordWrap: wordWrap ? 'on' : 'off',
               scrollBeyondLastLine: false,

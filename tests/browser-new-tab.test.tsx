@@ -65,6 +65,7 @@ it('creates and selects a blank tab from the open result even without a state ev
   expect(open).toHaveBeenCalledWith('about:blank')
   await screen.findAllByRole('button', { name: 'browser.blankTab' })
   expect(screen.getAllByRole('button', { name: 'common.close' })).toHaveLength(2)
+  expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'browser.address' }))
 })
 it('shows a ready document while images are still loading', async () => {
   vi.stubGlobal(
@@ -129,6 +130,12 @@ it('shows a ready document while images are still loading', async () => {
     )
     await screen.findByRole('button', { name: 'Usable page' })
     expect(screen.queryByText('browser.loading')).toBeNull()
+    const address = screen.getByRole('textbox', { name: 'browser.address' }) as HTMLInputElement
+    fireEvent.change(address, { target: { value: 'https://different.test/' } })
+    expect(screen.getByRole('button', { name: 'browser.open' })).toBeTruthy()
+    fireEvent.keyDown(address, { key: 'Escape' })
+    expect(address.value).toBe('https://example.com/')
+    expect(screen.queryByRole('button', { name: 'browser.open' })).toBeNull()
     const { waitFor } = await import('@testing-library/react')
     await waitFor(() =>
       expect(layout).toHaveBeenCalledWith(

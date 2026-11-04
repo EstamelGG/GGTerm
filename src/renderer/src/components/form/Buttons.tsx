@@ -3,7 +3,7 @@ import { FieldContext } from './FieldContext'
 import { cn } from '@/lib/utils'
 
 const pillBase =
-  'no-drag cursor-pointer rounded-full px-3.5 py-1 leading-5 text-body transition-all duration-150 outline-none active:scale-[0.98] disabled:pointer-events-none focus-visible:ring-[1.5px]'
+  'no-drag cursor-pointer rounded-[var(--at-control-radius)] px-3 py-1 leading-5 text-body transition-all duration-150 outline-none active:scale-[0.98] disabled:pointer-events-none focus-visible:ring-[1.5px]'
 const variants = {
   accent:
     'bg-at-accent font-semibold text-white hover:bg-at-accent-dim disabled:bg-at-accent/35 focus-visible:ring-white/80',
@@ -68,7 +68,7 @@ export function ATField({
     <FieldContext.Provider value={labelId}>
       <div className={cn('flex flex-col gap-[5px]', className)}>
         <span className="flex items-center gap-2">
-          <span id={labelId} className="text-caption font-medium text-muted">
+          <span id={labelId} className="text-minor font-medium text-muted">
             {title}
             {required && <span className="ml-1 text-danger">*</span>}
           </span>

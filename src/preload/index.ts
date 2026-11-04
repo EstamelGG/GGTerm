@@ -15,7 +15,6 @@ import type {
   ConnectionSecrets,
   HostConnection,
   HostGroup,
-  HostLinkSnapshot,
   HostStateEvent,
   LocaleChangedEvent,
   LocalePref,
@@ -286,9 +285,6 @@ const api = {
     /** 初始语言：pref = 用户偏好（auto 跟随系统），locale = 解析后生效值 */
     get: (): Promise<{ pref: LocalePref; locale: Exclude<LocalePref, 'auto'> }> =>
       ipcRenderer.invoke('locale:get'),
-    /** 切换偏好；主进程换语言并广播 locale:changed */
-    set: (pref: LocalePref): Promise<{ pref: LocalePref; locale: Exclude<LocalePref, 'auto'> }> =>
-      ipcRenderer.invoke('locale:set', pref),
     onChanged: (cb: (payload: LocaleChangedEvent) => void): (() => void) => {
       const listener = (_e: unknown, payload: LocaleChangedEvent): void => cb(payload)
       ipcRenderer.on('locale:changed', listener)
@@ -350,8 +346,6 @@ const api = {
       inspectOnly = false
     ): Promise<{ awaiting: boolean; viewerOnly?: boolean; phase?: HostStateEvent['phase'] }> =>
       ipcRenderer.invoke('host:connect', conn, inspectOnly),
-    /** 全部链路状态快照（拓扑图初始化：phase + 进入时刻 + 重试次数 + 失败原因） */
-    listLinks: (): Promise<HostLinkSnapshot[]> => ipcRenderer.invoke('links:list'),
     runtimeSnapshot: (): Promise<ConnectionStateSnapshot> =>
       ipcRenderer.invoke('connections:runtime'),
     onConnectionState: (cb: (event: ConnectionStateEvent) => void): (() => void) => {
@@ -364,6 +358,7 @@ const api = {
       cred: { username: string; password?: string; privateKey?: string; passphrase?: string }
     ): void => ipcRenderer.send('host:submitAuth', { hostId, ...cred }),
     reconnect: (hostId: string): void => ipcRenderer.send('host:reconnect', hostId),
+    cancelConnect: (hostId: string): void => ipcRenderer.send('host:cancelConnect', hostId),
     restart: (hostId: string): void => ipcRenderer.send('host:restart', hostId),
     close: (hostId: string, agentConnectionIds: string[] = []): void =>
       ipcRenderer.send('host:close', hostId, agentConnectionIds),
@@ -376,11 +371,6 @@ const api = {
       const listener = (_e: unknown, payload: SshConnectionSession): void => cb(payload)
       ipcRenderer.on('agent:host:state', listener)
       return () => ipcRenderer.removeListener('agent:host:state', listener)
-    },
-    onState: (cb: (payload: HostStateEvent) => void): (() => void) => {
-      const listener = (_e: unknown, payload: HostStateEvent): void => cb(payload)
-      ipcRenderer.on('host:state', listener)
-      return () => ipcRenderer.removeListener('host:state', listener)
     }
   },
   logs: {

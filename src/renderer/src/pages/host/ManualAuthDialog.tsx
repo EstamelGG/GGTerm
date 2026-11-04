@@ -58,7 +58,12 @@ export function ManualAuthDialog({
           </>
         }
       >
-        <p className="font-mono text-caption text-muted">
+        {host.offlineReason && (
+          <p role="alert" className="mb-3 whitespace-pre-wrap break-words text-minor text-danger">
+            {host.offlineReason}
+          </p>
+        )}
+        <p className="break-all font-mono text-minor text-muted">
           {host.conn.host}:{host.conn.port}
         </p>
         <div className="mt-3 flex flex-col gap-3">
@@ -103,6 +108,7 @@ export function ManualAuthDialog({
           <div className="flex items-center">
             <button
               type="button"
+              aria-pressed={savePwd}
               className="flex cursor-pointer items-center gap-1.5 rounded-sm outline-none focus-visible:ring-[1.5px] focus-visible:ring-at-accent/70"
               onClick={() => setSavePwd((v) => !v)}
             >

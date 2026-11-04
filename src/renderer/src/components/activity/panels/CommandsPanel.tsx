@@ -8,6 +8,7 @@ import { useCommandsStore } from '@/stores/commands'
 import { IconButton } from '@/components/ui/IconButton'
 import { Button } from '@/components/form/Buttons'
 import { ATTextField, ATTextArea } from '@/components/form/Fields'
+import { PanelEmptyState } from '../PanelEmptyState'
 
 /**
  * 快捷指令库由本地与 SSH 终端共用，写入与各自键盘输入走同一通道。
@@ -77,7 +78,9 @@ export function CommandsPanel({
   return (
     <div className="flex flex-col gap-2">
       {/* 工具行 */}
-      <div className="flex items-center gap-2">
+      <div
+        className={commands.length === 0 && editing === null ? 'hidden' : 'flex items-center gap-2'}
+      >
         <Button
           variant="text"
           title={t('activity.commandsAdd')}
@@ -133,15 +136,13 @@ export function CommandsPanel({
 
       {/* 列表 */}
       {commands.length === 0 && editing === null ? (
-        <div className="flex flex-col items-center gap-2 px-3 py-6 text-center">
-          <div className="flex h-9 w-9 items-center justify-center rounded-[var(--at-panel-radius)] border border-line bg-raised text-muted">
-            <SquareTerminal size={18} aria-hidden="true" />
-          </div>
-          <p className="text-minor font-medium text-fg">{t('activity.commandsEmpty')}</p>
-          <p className="max-w-60 text-caption leading-relaxed text-muted">
-            {t('activity.commandsEmptyHint')}
-          </p>
-        </div>
+        <PanelEmptyState
+          icon={SquareTerminal}
+          title={t('activity.commandsEmpty')}
+          description={t('activity.commandsEmptyHint')}
+        >
+          <Button size="sm" title={t('activity.commandsAdd')} onClick={startNew} />
+        </PanelEmptyState>
       ) : (
         <div className="flex flex-col">
           {commands.map((c) => (

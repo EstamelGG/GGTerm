@@ -1,5 +1,6 @@
 {
   "browser": {
+    "agentControlling": "Agent is controlling this page",
     "bookmarks": "Bookmarks",
     "saveBookmark": "Bookmark this page",
     "editBookmark": "Edit bookmark",
@@ -218,6 +219,8 @@
     "deleteConnTitle": "Delete Host",
     "deleteConnMessage": "Are you sure you want to delete \"{{name}}\"? Saved credentials will also be removed.",
     "groups": "Groups",
+    "hideDirectory": "Hide host directory",
+    "showDirectory": "Show host directory",
     "newGroup": "New Group",
     "collapseAll": "Collapse All",
     "renameGroup": "Rename Group",
@@ -470,6 +473,9 @@
     "consoleTitle": "Console {{n}}",
     "newTerminal": "New Terminal",
     "reconnect": "Reconnect",
+    "restartTerminal": "Restart terminal",
+    "cancelConnect": "Cancel connection",
+    "recoveryHint": "Terminals will reopen when the connection recovers.",
     "noSessions": "No sessions",
     "closeFileMessage": "\"{{name}}\" has unsaved changes. Close it anyway?",
     "manualLoginTitle": "Manual Login",
@@ -763,6 +769,9 @@
       "reason": "Reason",
       "since": "Since",
       "fit": "Fit view",
+      "zoomIn": "Zoom in",
+      "zoomOut": "Zoom out",
+      "viewOptions": "View options",
       "spacing": "Link spacing",
       "nodeSize": "Node size"
     },

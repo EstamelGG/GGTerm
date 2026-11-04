@@ -45,11 +45,15 @@
 
   /* 工作区工具栏 / 标签栏共用几何；分隔线独立于内容行高度。 */
   --at-chrome-row-height: 36px;
-  --at-chrome-row-padding-inline: 12px;
+  --at-chrome-row-padding-inline: 8px;
   --at-chrome-row-gap: 6px;
-  --at-workspace-inset: 8px;
+  --at-workspace-inset: 4px;
   --at-terminal-inset: 8px;
   --at-panel-radius: 8px;
+  --at-control-radius: 6px;
+  --at-connection-row-height: 56px;
+  --at-memory-chart-size: 88px;
+  --at-directory-rail-width: 32px;
 
   /* 分隔线 */
   --at-line: rgb(255 255 255 / 0.07);
@@ -232,7 +236,8 @@
     height: 100%;
   }
   body {
-    @apply bg-bg font-sans text-fg;
+    @apply bg-bg font-sans text-body text-fg;
+    line-height: 1.5;
     overflow: hidden;
     user-select: none;
     -webkit-font-smoothing: antialiased;
