@@ -1,3 +1,4 @@
+import { ResizeHandle } from '@/components/ui/ResizeHandle'
 import { RevealRow } from '@/components/chrome/RevealRow'
 import { TabChip, TabScrollArea } from '@/components/chrome/TabChip'
 import { CloseDocumentsDialog } from '@/components/editor/CloseDocumentsDialog'
@@ -110,13 +111,7 @@ export function HostFilesPane({
             ))}
           </div>
           {/* 竖向 splitter：拖拽调编辑区高度（松手持久化；拖拽中 accent 提示） */}
-          <div
-            className={cn(
-              'h-px shrink-0 cursor-row-resize touch-none',
-              previewH !== null ? 'bg-at-accent/35' : 'bg-line'
-            )}
-            {...heightResize.handleProps}
-          />
+          <ResizeHandle axis="y" active={previewH !== null} {...heightResize.handleProps} />
         </>
       </RevealRow>
       {/* 关闭未保存文件确认 */}

@@ -3,6 +3,7 @@ import { CHROME_ROW } from '@/components/chrome/layout'
 import { SessionTabs } from '@/components/chrome/SessionTabs'
 import { Button } from '@/components/form/Buttons'
 import { SftpPane } from '@/components/sftp/SftpPane'
+import { ResizeHandle } from '@/components/ui/ResizeHandle'
 import { IconButton } from '@/components/ui/IconButton'
 import { shellStateDot } from '@/lib/linkPhase'
 import { cn } from '@/lib/utils'
@@ -113,18 +114,7 @@ export function HostSessionPage({
 
       {sftpVisible && !sftpOverlay && (
         <>
-          {/* splitter：1px，拖拽中 accent 35% + 预览线 */}
-          <div
-            className={cn(
-              'relative z-10 w-px shrink-0 cursor-col-resize touch-none',
-              dragging ? 'bg-at-accent/35' : 'bg-line'
-            )}
-          >
-            <div
-              className="absolute inset-y-0 -left-1 w-2.5 cursor-col-resize touch-none"
-              {...widthResize.handleProps}
-            />
-          </div>
+          <ResizeHandle active={dragging} {...widthResize.handleProps} />
           {dragging && previewWidth !== null && (
             <div
               ref={widthPreviewRef}

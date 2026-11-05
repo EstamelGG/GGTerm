@@ -1,4 +1,5 @@
-import { useRef, useState, type PointerEvent, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type PointerEvent, type KeyboardEvent } from 'react'
+import { lockResizeCursor } from './resizeCursor'
 
 interface ResizePreview {
   preview: number | null
@@ -39,12 +40,17 @@ export function useResizePreview({
   const [preview, setPreview] = useState<number | null>(null)
   const origin = useRef<{ value: number; position: number } | null>(null)
   const pending = useRef<number | null>(null)
+  const releaseCursor = useRef<(() => void) | null>(null)
+  useEffect(() => () => releaseCursor.current?.(), [])
   const clamp = (v: number): number => Math.min(max, Math.max(min, v))
   const end = (): void => {
-    if (pending.current !== null) onCommit(clamp(pending.current))
+    const next = pending.current
     pending.current = null
     origin.current = null
+    releaseCursor.current?.()
+    releaseCursor.current = null
     setPreview(null)
+    if (next !== null) onCommit(clamp(next))
   }
   return {
     preview,
@@ -56,12 +62,13 @@ export function useResizePreview({
       'aria-valuemin': min,
       'aria-valuemax': max,
       onPointerDown: (e: PointerEvent<HTMLElement>): void => {
-        if (e.button !== 0) return
+        if (e.button !== 0 || origin.current) return
         e.preventDefault()
         origin.current = { value, position: axis === 'x' ? e.clientX : e.clientY }
         pending.current = value
         setPreview(value)
         e.currentTarget.setPointerCapture(e.pointerId)
+        releaseCursor.current = lockResizeCursor(axis, end)
       },
       onPointerMove: (e: PointerEvent<HTMLElement>): void => {
         const base = origin.current

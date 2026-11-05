@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { ArrowDownUp, Bot, Gauge, Zap, Network, Plus } from 'lucide-react'
 import { useResizePreview } from '@/lib/useResizePreview'
 import { cn } from '@/lib/utils'
+import { ResizeHandle } from '@/components/ui/ResizeHandle'
 import { IconButton } from '@/components/ui/IconButton'
 import { useSftpStore } from '@/stores/sftp'
 import { useLocalTerminalStore } from '@/stores/localTerminal'
@@ -112,10 +113,7 @@ export function ActivityRail(): React.JSX.Element {
         )}
         style={{ width, maxWidth: '40vw' }}
       >
-        <div
-          className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize touch-none"
-          {...resize.handleProps}
-        />
+        <ResizeHandle edge="start" active={resize.preview !== null} {...resize.handleProps} />
         {/* AI 始终挂载，切换面板与折叠保留输入草稿、滚动位置和对话状态。 */}
         <div className={cn('h-full', active !== 'ai' && 'hidden')}>
           <Suspense fallback={null}>

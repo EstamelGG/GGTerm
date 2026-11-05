@@ -21,6 +21,7 @@ import { ConnectionForm, type FormPayload } from '@/components/connection/Connec
 import { SshConfigImport } from '@/components/connection/SshConfigImport'
 import { GroupEditor, type GroupEditorPayload } from '@/components/connection/GroupEditor'
 import { DialogShell } from '@/components/ui/DialogShell'
+import { ResizeHandle } from '@/components/ui/ResizeHandle'
 import { IconButton } from '@/components/ui/IconButton'
 
 /** 左侧分组侧栏宽度：可拖拽调节，上下限 + localStorage 持久化（对照 HostSessionPage 的 SFTP 分栏 splitter） */
@@ -359,18 +360,11 @@ export default function ConnectionPage({
           </div>
         </div>
       )}
-      <div
-        className={cn(
-          'relative z-10 w-px shrink-0 cursor-col-resize touch-none',
-          !directoryOpen && 'hidden',
-          dragging ? 'bg-at-accent/35' : 'bg-line'
-        )}
-      >
-        <div
-          className="absolute inset-y-0 -left-1 w-2.5 cursor-col-resize touch-none"
-          {...widthResize.handleProps}
-        />
-      </div>
+      <ResizeHandle
+        className={cn(!directoryOpen && 'hidden')}
+        active={dragging}
+        {...widthResize.handleProps}
+      />
       {dragging && previewWidth !== null && (
         <div
           ref={widthPreviewRef}
