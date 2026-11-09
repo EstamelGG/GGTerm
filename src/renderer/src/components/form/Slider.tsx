@@ -69,7 +69,6 @@ export function Slider({
       flush()
     }
     // flush 只依赖 ref，无需随渲染重建监听
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const pct = max === min ? 0 : ((value - min) / (max - min)) * 100

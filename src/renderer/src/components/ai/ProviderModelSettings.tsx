@@ -61,7 +61,7 @@ export function ProviderModelSettings({
               setChoice(value === MANUAL ? '' : value)
             }}
           >
-            <SelectTrigger aria-label={t('ai.modelContextModel')}>
+            <SelectTrigger className="min-w-0 w-full" aria-label={t('ai.modelContextModel')}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

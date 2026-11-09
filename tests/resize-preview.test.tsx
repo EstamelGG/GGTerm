@@ -60,3 +60,33 @@ it('supports keyboard resizing on the vertical axis and respects the lower bound
   expect(onCommit).toHaveBeenCalledExactlyOnceWith(240)
   expect(preventDefault).toHaveBeenCalledOnce()
 })
+
+it('locks the cursor across embedded content and releases it when capture is cancelled', () => {
+  const { result } = renderHook(() =>
+    useResizePreview({ value: 300, min: 240, max: 480, onCommit: vi.fn(), onPreview: vi.fn() })
+  )
+  act(() => result.current.handleProps.onPointerDown(pointer(100)))
+  expect(document.querySelector('[data-resize-shield]')).not.toBeNull()
+  expect(document.head.textContent).toContain('cursor: col-resize !important')
+  act(() => result.current.handleProps.onPointerCancel())
+  expect(document.querySelector('[data-resize-shield]')).toBeNull()
+  expect(document.head.textContent).not.toContain('cursor: col-resize !important')
+})
+
+it('commits the latest movement on window blur and cleans up on unmount', () => {
+  const onCommit = vi.fn()
+  const { result, unmount } = renderHook(() =>
+    useResizePreview({ value: 300, min: 240, max: 480, axis: 'y', onCommit, onPreview: vi.fn() })
+  )
+  act(() => result.current.handleProps.onPointerDown(pointer(100)))
+  act(() => result.current.handleProps.onPointerMove(pointer(150)))
+  act(() => window.dispatchEvent(new Event('blur')))
+  act(() => result.current.handleProps.onLostPointerCapture())
+  expect(onCommit).toHaveBeenCalledExactlyOnceWith(350)
+  expect(result.current.preview).toBeNull()
+  expect(document.querySelector('[data-resize-shield]')).toBeNull()
+  act(() => result.current.handleProps.onPointerDown(pointer(100)))
+  unmount()
+  expect(document.querySelector('[data-resize-shield]')).toBeNull()
+  expect(document.head.textContent).not.toContain('cursor: row-resize !important')
+})

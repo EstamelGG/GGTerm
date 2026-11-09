@@ -9,6 +9,7 @@ import { useWorkspaceStore } from '../src/renderer/src/stores/workspace'
 import type { HostConnection } from '../src/shared/types'
 import type { HostWorkspaceMirror } from '../src/renderer/src/stores/session'
 import { resourceHostId } from '../src/renderer/src/lib/resourceHost'
+import { useLinksStore } from '../src/renderer/src/stores/links'
 
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('../src/renderer/src/components/activity/panels/PerformancePanel', () => ({
@@ -28,6 +29,21 @@ beforeEach(() => {
   useSessionStore.setState({ hosts: [], connect })
   useAiStore.setState({ activeId: 'chat' })
   useWorkspaceStore.setState({ focusedHostId: null })
+  useLinksStore.setState({
+    connections: [
+      {
+        hostId: host.id,
+        sessionId: 'chat',
+        connectionId: 'agent-transport',
+        owner: 'agent',
+        phase: 'connected',
+        since: 1,
+        revision: 1,
+        generation: 1,
+        closed: false
+      }
+    ]
+  })
   Object.assign(window, {
     aterm: {
       hosts: {

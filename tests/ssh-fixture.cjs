@@ -7,12 +7,14 @@ exports.startFixture = async () => {
     ['/config.txt', iconv.encode('服务器配置：生产环境，中文编码测试。\n'.repeat(60), 'gb18030')]
   ])
   const clients = new Set()
+  let accepting = true
   const server = new Server(
     { hostKeys: [utils.generateKeyPairSync('rsa', { bits: 2048 }).private] },
     (client) => {
       clients.add(client)
       client.on('error', () => {})
       client.on('close', () => clients.delete(client))
+      if (!accepting) return client.end()
       client.on('authentication', (ctx) =>
         ctx.method === 'password' && ctx.password === 'test' ? ctx.accept() : ctx.reject()
       )
@@ -113,6 +115,13 @@ exports.startFixture = async () => {
   return {
     port: server.address().port,
     files,
+    suspend: () => {
+      accepting = false
+      for (const client of clients) client.end()
+    },
+    resume: () => {
+      accepting = true
+    },
     close: () => {
       for (const client of clients) client.end()
       server.close()

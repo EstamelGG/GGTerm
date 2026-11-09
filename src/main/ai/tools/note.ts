@@ -7,7 +7,7 @@ import {
   listGroups,
   setNote,
   updateGroup
-} from '../../data/connections'
+} from '../../connections'
 import { flattenGroups, groupChain } from '../../../shared/groupTree'
 import type { ServerNote } from '../../../shared/types'
 import { hostIdSchema, intentSchema, type AnyTool } from './shared'

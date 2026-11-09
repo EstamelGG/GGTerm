@@ -141,7 +141,7 @@ app.on('browser-window-created', (_event, win) => {
     await clickLabel('Local terminal')
     assert.equal(
       await js(`getComputedStyle(document.querySelector('.bg-terminal')).borderRadius`),
-      '10px'
+      '8px'
     )
     await clickLabel('New local terminal')
     await waitFor(`new Set(localEvents.map(e => e.id)).size === 2`)

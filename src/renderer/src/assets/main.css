@@ -32,9 +32,8 @@
   /* 菜单项高亮：白色叠加 —— 在偏亮的玻璃面板上比 bg-hover 亮灰更可读；
      配合"无颜色过渡"使用，光标扫过即时点亮（原生菜单手感） */
   --at-menu-hl: rgb(255 255 255 / 0.1);
-  /* 顶部导航条：刻意比 surface 亮一档且更高不透明度 —— 原值与窗口底几乎同色，
-     导航条与内容区糊成一片；提亮后与下方 bg-sidebar 内容区形成可见的层次分界 */
-  --at-chrome-bar: rgb(54 59 65 / calc(1 - 0.08 * var(--at-surface-mix)));
+  /* 顶部导航条：比内容底色略亮，以低对比分隔线区分工作区层级。 */
+  --at-chrome-bar: rgb(32 36 41 / calc(1 - 0.08 * var(--at-surface-mix)));
 
   /* 模态面板：弹窗类用不透明底（表单/设置等内容密集，不参与透明叠层） */
   --at-modal: rgb(18 20 22);
@@ -45,13 +44,23 @@
   --at-glass: rgb(50 55 62 / 0.78);
 
   /* 工作区工具栏 / 标签栏共用几何；分隔线独立于内容行高度。 */
-  --at-chrome-row-height: 40px;
-  --at-chrome-row-padding-inline: 14px;
+  --at-chrome-row-height: 36px;
+  --at-chrome-row-padding-inline: 8px;
   --at-chrome-row-gap: 6px;
+  --at-workspace-inset: 4px;
+  --at-terminal-inset: 8px;
+  --at-panel-radius: 8px;
+  --at-control-radius: 6px;
+  --at-connection-row-height: 56px;
+  --at-memory-chart-size: 88px;
+  --at-directory-rail-width: 32px;
+  --at-resize-hit-size: 12px;
+  --at-resize-grip-length: 28px;
+  --at-resize-grip-width: 3px;
 
   /* 分隔线 */
   --at-line: rgb(255 255 255 / 0.07);
-  --at-chrome-sep: rgb(255 255 255 / 0.16);
+  --at-chrome-sep: rgb(255 255 255 / 0.1);
 
   /* 文字 */
   --at-fg: #e8eaed;
@@ -230,11 +239,97 @@
     height: 100%;
   }
   body {
-    @apply bg-bg font-sans text-fg;
+    @apply bg-bg font-sans text-body text-fg;
+    line-height: 1.5;
     overflow: hidden;
     user-select: none;
     -webkit-font-smoothing: antialiased;
   }
+}
+
+/* 握把始终位于相邻内容之上，悬停与键盘聚焦使用同一视觉反馈。 */
+.at-resize-handle {
+  position: relative;
+  z-index: 30;
+  flex-shrink: 0;
+  touch-action: none;
+  -webkit-app-region: no-drag;
+  outline: none;
+  background: var(--at-line);
+}
+.at-resize-handle[data-axis='x'] {
+  width: 1px;
+  cursor: col-resize;
+}
+.at-resize-handle[data-axis='y'] {
+  height: 1px;
+  cursor: row-resize;
+}
+.at-resize-handle::before,
+.at-resize-handle::after {
+  content: '';
+  position: absolute;
+}
+.at-resize-handle[data-axis='x']::before {
+  inset-block: 0;
+  left: 50%;
+  width: var(--at-resize-hit-size);
+  transform: translateX(-50%);
+}
+.at-resize-handle[data-axis='y']::before {
+  inset-inline: 0;
+  top: 50%;
+  height: var(--at-resize-hit-size);
+  transform: translateY(-50%);
+}
+.at-resize-handle::after {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: var(--at-control-radius);
+  background: var(--at-muted);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 100ms;
+}
+.at-resize-handle[data-axis='x']::after {
+  width: var(--at-resize-grip-width);
+  height: var(--at-resize-grip-length);
+}
+.at-resize-handle[data-axis='y']::after {
+  width: var(--at-resize-grip-length);
+  height: var(--at-resize-grip-width);
+}
+.at-resize-handle:hover::after,
+.at-resize-handle:focus-visible::after,
+.at-resize-handle[data-active]::after {
+  opacity: 1;
+  background: var(--at-accent);
+}
+.at-resize-handle[data-edge='start'] {
+  position: absolute;
+}
+.at-resize-handle[data-axis='x'][data-edge='start'] {
+  inset-block: 0;
+  left: 0;
+}
+.at-resize-handle[data-axis='y'][data-edge='start'] {
+  inset-inline: 0;
+  top: 0;
+}
+.at-resize-handle[data-axis='x'][data-edge='start']::before {
+  left: 0;
+  transform: none;
+}
+.at-resize-handle[data-axis='y'][data-edge='start']::before {
+  top: 0;
+  transform: none;
+}
+.at-resize-handle[data-axis='x'][data-edge='start']::after {
+  left: calc(var(--at-resize-hit-size) / 2);
+}
+.at-resize-handle[data-axis='y'][data-edge='start']::after {
+  top: calc(var(--at-resize-hit-size) / 2);
 }
 
 @layer utilities {

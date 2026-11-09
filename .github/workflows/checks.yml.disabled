@@ -1,0 +1,80 @@
+name: Checks
+
+on:
+  push:
+    branches: ['codex/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: ${{ matrix.os }} / ${{ matrix.command }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        command: [typecheck, lint, test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run ${{ matrix.command }}
+      - name: Windows native terminal cleanup
+        if: matrix.os == 'windows-latest' && matrix.command == 'test'
+        run: npm run test:pty-cleanup
+
+  desktop:
+    name: ${{ matrix.os }} / desktop
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+      GGTERM_SMOKE_TIMEOUT_MS: 90000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - name: Desktop regression on Linux
+        if: runner.os == 'Linux'
+        run: |
+          xvfb-run -a npm run test:smoke
+          xvfb-run -a npm run test:connection-isolation
+          xvfb-run -a npm run test:execution
+      - name: Desktop regression on Windows and macOS
+        if: runner.os != 'Linux'
+        run: |
+          npm run test:smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run test:connection-isolation
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run test:execution
+          exit $LASTEXITCODE
+        shell: pwsh
+      - name: Keep desktop screenshots and measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.os }}
+          path: |
+            node_modules/.cache/*.png
+            node_modules/.cache/desktop-metrics.json
+          if-no-files-found: ignore

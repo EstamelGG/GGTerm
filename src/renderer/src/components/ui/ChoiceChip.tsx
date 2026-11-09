@@ -21,7 +21,7 @@ export function SegmentedControl<T extends string>({
   return (
     <div
       className={cn(
-        'flex shrink-0 gap-1 rounded-md border border-line bg-raised/60 p-[3px]',
+        'flex max-w-full shrink-0 flex-wrap gap-1 rounded-md border border-line bg-raised/60 p-[3px]',
         className
       )}
     >
@@ -63,6 +63,7 @@ export function ChoiceChip({
   return (
     <button
       type="button"
+      aria-pressed={selected}
       className={cn(
         'no-drag cursor-pointer outline-none transition-colors duration-150 focus-visible:ring-[1.5px] focus-visible:ring-at-accent/70',
         shape === 'pill'

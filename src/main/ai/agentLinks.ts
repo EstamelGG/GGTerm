@@ -73,7 +73,7 @@ export function getOrCreateAgentLink(conn: HostConnection): HostLink {
       },
       onSftpMeasure: noop
     },
-    { probeOs: false }
+    { probeOs: false, sessionId }
   )
   links.set(key, { sessionId, link })
   return link
@@ -109,9 +109,12 @@ export function listAgentConnections(): SshConnectionSession[] {
 export function closeAgentConnection(hostId: string, connectionId: string): void {
   for (const [key, entry] of links) {
     if (entry.link.hostId !== hostId || entry.link.connectionId !== connectionId) continue
-    executions.closeHost(hostId, entry.sessionId)
-    entry.link.shutdown()
     links.delete(key)
+    try {
+      executions.closeHost(hostId, entry.sessionId)
+    } finally {
+      entry.link.shutdown()
+    }
   }
 }
 
@@ -122,22 +125,17 @@ export function disconnectAgentLink(hostId: string): void {
 
 /** 对话关闭时回收其全部链路：空闲即关；有执行在跑的等该会话执行全部完结后再关 */
 export function reclaimAgentSession(sessionId: string): void {
-  for (const [key, entry] of [...links]) {
+  const pending: { hostId: string; connectionId: string }[] = []
+  for (const entry of [...links.values()]) {
     if (entry.sessionId !== sessionId) continue
     if (runningExecutionsOf(sessionId, entry.link.hostId) === 0) {
-      executions.closeHost(entry.link.hostId, sessionId)
-      entry.link.shutdown()
-      links.delete(key)
-    }
+      closeAgentConnection(entry.link.hostId, entry.link.connectionId)
+    } else pending.push({ hostId: entry.link.hostId, connectionId: entry.link.connectionId })
   }
-  if ([...links.values()].some((e) => e.sessionId === sessionId)) {
+  if (pending.length > 0) {
     executions.onSessionIdle(sessionId, () => {
-      for (const [key, entry] of [...links]) {
-        if (entry.sessionId !== sessionId) continue
-        executions.closeHost(entry.link.hostId, sessionId)
-        entry.link.shutdown()
-        links.delete(key)
-      }
+      // A later reopening of this conversation may already own a replacement transport.
+      for (const { hostId, connectionId } of pending) closeAgentConnection(hostId, connectionId)
     })
   }
 }

@@ -1,5 +1,6 @@
 {
   "browser": {
+    "agentControlling": "Agent 正在控制此页面",
     "bookmarks": "书签",
     "saveBookmark": "保存当前页面为书签",
     "editBookmark": "编辑书签",
@@ -218,6 +219,8 @@
     "deleteConnTitle": "删除主机",
     "deleteConnMessage": "确定要删除「{{name}}」吗？保存的凭据将一并清除。",
     "groups": "分组",
+    "hideDirectory": "收起主机目录",
+    "showDirectory": "展开主机目录",
     "newGroup": "新建分组",
     "collapseAll": "折叠全部",
     "renameGroup": "重命名分组",
@@ -470,6 +473,9 @@
     "consoleTitle": "控制台 {{n}}",
     "newTerminal": "新终端",
     "reconnect": "重连",
+    "restartTerminal": "重开终端",
+    "cancelConnect": "取消连接",
+    "recoveryHint": "链路恢复后将重新打开终端。",
     "noSessions": "暂无会话",
     "closeFileMessage": "「{{name}}」有未保存的修改，确定要关闭吗？",
     "manualLoginTitle": "手动登录",
@@ -763,6 +769,9 @@
       "reason": "原因",
       "since": "断开时间",
       "fit": "自动缩放",
+      "zoomIn": "放大",
+      "zoomOut": "缩小",
+      "viewOptions": "视图设置",
       "spacing": "连线间距",
       "nodeSize": "节点尺寸"
     },
@@ -795,5 +804,13 @@
     "NO_RELEASE": "暂时没有可用的发布版本。",
     "RATE_LIMITED": "GitHub 请求受限，请稍后重试。",
     "RELEASE_NOT_READY": "新版本安装包仍在准备中，请稍后重试。"
+  },
+  "workspaceErrors": {
+    "recovery": "工作区状态恢复失败",
+    "shell": "终端创建失败",
+    "credentials": "登录信息保存失败",
+    "preferences": "偏好设置加载失败",
+    "retry": "重试",
+    "dismiss": "关闭提示"
   }
 }

@@ -10,7 +10,15 @@ import { createChatModel } from './provider'
 export type GateAction = 'direct' | 'confirm' | 'deny'
 
 export type GateLevel =
-  'whitelist' | 'blacklist' | 'gray' | 'strict' | 'sftp' | 'session' | 'config' | 'local'
+  | 'whitelist'
+  | 'blacklist'
+  | 'gray'
+  | 'strict'
+  | 'sftp'
+  | 'session'
+  | 'config'
+  | 'local'
+  | 'arguments'
 
 export interface GateDecision {
   action: GateAction
@@ -29,20 +37,30 @@ export interface GateDecision {
 
 /** 安全命令（只读检视）；top/less/more 交互式 TUI 会挂住后台 shell，不列入 */
 const SAFE_CMDS =
-  'ls|cat|head|tail|df|du|ps|uptime|uname|who|whoami|id|pwd|echo|date|free|hostname|' +
-  'ss|netstat|ip|route|env|printenv|stat|file|wc|grep|find|locate|which|type|whereis|tree|' +
-  'lsof|lsblk|blkid|dmesg|last|pstree|history'
+  'ls|cat|head|tail|df|du|ps|uptime|uname|who|whoami|id|pwd|echo|free|' +
+  'ss|netstat|printenv|stat|wc|grep|locate|which|type|whereis|' +
+  'lsof|lsblk|last|pstree'
 
 const SAFE_RE = new RegExp(`^(?:${SAFE_CMDS})(?:\\s|$)`)
 
 /** 已知只读形态（按子命令白名单，而非整命令前缀） */
 const SAFE_FORMS: RegExp[] = [
-  /^journalctl(?:\s|$)/,
+  /^journalctl(?:\s+(?:--no-pager|-b|-k|--system|--user))*$/,
+  /^(?:date|hostname|env|dmesg|history|file|tree|blkid)$/,
+  /^git\s+status(?:\s+(?:--short|-s|--branch|-b|--porcelain))*$/,
+  /^git\s+(?:branch|tag)(?:\s+--list)?$/,
+  /^git\s+remote(?:\s+-v)?$/,
+  /^ip\s+(?:addr|address|link|route)(?:\s+show)?$/,
+  /^route\s+-n$/,
   /^docker\s+(?:ps|images|inspect|logs|stats|top|version|info)(?:\s|$)/,
-  /^git\s+(?:status|log|diff|show|branch|remote|tag|blame)(?:\s|$)/,
   /^systemctl\s+(?:status|is-active|is-enabled|show|list-units|list-unit-files|list-timers)(?:\s|$)/,
   /^kill\s+-0(?:\s|$)/
 ]
+
+// These commands have write/execute flags or subcommands. Unrecognized forms require
+// human review even if the model judge would call them safe; relaxed mode is unchanged.
+const REVIEW_FORMS =
+  /(?:^|\|)\s*(?:git|find|env|ip|route|date|hostname|journalctl|dmesg|history|file|tree|blkid)(?:\s|$)/
 
 /** 危险命令（毁灭性/不可逆/提权/递归破坏）：跳过 AI 直接人工审批 */
 const CRITICAL: RegExp[] = [
@@ -159,6 +177,13 @@ export async function judgeCommand(
   }
   if (isSafe(command)) {
     return { action: 'direct', level: 'whitelist', reason: '' }
+  }
+  if (REVIEW_FORMS.test(command)) {
+    return {
+      action: 'confirm',
+      level: 'arguments',
+      reason: 'Command arguments are outside the verified read-only forms'
+    }
   }
   // 严格模式跳过 AI：安全命令之外的其余全部人工审批
   if (config.approvalLevel === 'strict') {

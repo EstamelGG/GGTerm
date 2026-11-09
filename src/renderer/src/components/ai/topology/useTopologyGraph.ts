@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Edge, Node } from '@xyflow/react'
-import type { HostConnection, HostLinkSnapshot, HostStateEvent, LinkPhase } from '@shared/types'
+import type { HostConnection, HostLinkSnapshot, LinkPhase } from '@shared/types'
 import { useConnectionsStore } from '@/stores/connections'
 import { useLinksStore } from '@/stores/links'
 import { usePerfStore } from '@/stores/perf'
@@ -49,13 +49,7 @@ export type DisplayState = 'dialing' | 'retrying' | 'healthy' | 'failed' | 'clos
  * - pending 已连接且该操作在等人工审批（琥珀流光 + 呼吸光晕）—— 与审批卡黄框同语义
  */
 export type EdgeState =
-  | 'healthy'
-  | 'working'
-  | 'pending'
-  | 'dialing'
-  | 'retrying'
-  | 'failed'
-  | 'closed'
+  'healthy' | 'working' | 'pending' | 'dialing' | 'retrying' | 'failed' | 'closed'
 
 /** 处在「人工审批未决」状态的边视觉态权重（同一段边被多条链共享时取高者） */
 const EDGE_ACT_RANK: Record<EdgeState, number> = {
@@ -288,17 +282,16 @@ export function useTopologyGraph(
 
   /* ---------- 轴①的副作用：重新建连/已连上 → 撤销退场（含已移除的节点重新入场） ---------- */
   useEffect(() => {
-    const onState = (e: HostStateEvent): void => {
-      if (e.phase !== 'offline' && e.phase !== 'idle') {
-        setFading((prev) => (e.hostId in prev ? withoutKey(prev, e.hostId) : prev))
+    return useLinksStore.subscribe((next, previous) => {
+      for (const [hostId, state] of Object.entries(next.byHost)) {
+        if (
+          state !== previous.byHost[hostId] &&
+          state.phase !== 'offline' &&
+          state.phase !== 'idle'
+        )
+          setFading((prev) => (hostId in prev ? withoutKey(prev, hostId) : prev))
       }
-    }
-    const off = window.aterm.hosts.onState(onState)
-    const offAgent = window.aterm.hosts.onAgentState(onState)
-    return () => {
-      off()
-      offAgent()
-    }
+    })
   }, [])
 
   /* ---------- 轴②：AI 活动（正交于链路；最短 3s + 淡出）
@@ -312,7 +305,8 @@ export function useTopologyGraph(
     /** 工具调用的全局标识（sessionId 是 UUID，不含分隔符） */
     const callKey = (sessionId: string, toolCallId: string): string =>
       `${sessionId}\u0000${toolCallId}`
-    const ownsKey = (key: string, sessionId: string): boolean => key.startsWith(`${sessionId}\u0000`)
+    const ownsKey = (key: string, sessionId: string): boolean =>
+      key.startsWith(`${sessionId}\u0000`)
     const targets = new Map<string, string>() // callKey → 主机（'CENTER' 或 hostId）
     const entries = new Map<string, ActivityEntry>()
     const timers = new Map<string, ReturnType<typeof setTimeout>>()

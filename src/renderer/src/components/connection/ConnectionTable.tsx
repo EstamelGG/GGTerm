@@ -11,7 +11,6 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  ArrowUpDown,
   Bot,
   ChevronDown,
   ChevronUp,
@@ -65,12 +64,15 @@ import {
 const H_INSET = 16
 /** 复选框列（固定宽，不可拖拽调整，不参与列宽挤压分配） */
 const CHECKBOX_WIDTH = 28
-/** 为中英文连接按钮、两枚图标钮及间距预留空间，避免按钮挤入性能列。 */
-const ACTION_WIDTH = 160
+/** 主操作与更多菜单，编辑入口收拢至菜单。 */
+const ACTION_WIDTH = 112
 /** 行持续可见满 3s 才开始刷新性能/延迟；离开视口停止刷新（已载数据保留不卸载） */
 const SETTLE_MS = 3000
-/** 行步进高度（h-[72px] 含 border-b）：虚拟滚动按此计算窗口 */
-const ROW_STRIDE = 72
+/** 与 CSS 行高读取同一 AT token，确保虚拟滚动和定位一致。 */
+const ROW_STRIDE =
+  Number.parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue('--at-connection-row-height')
+  ) || 56
 /** 虚拟滚动上下额外渲染的行数 */
 const OVERSCAN = 6
 
@@ -229,7 +231,9 @@ export function ConnectionTable({
 
   // 最新列表镜像：稳定回调内按 id 取主机地址用（不作为 effect 依赖）
   const connectionsRef = useRef(connections)
-  connectionsRef.current = connections
+  useLayoutEffect(() => {
+    connectionsRef.current = connections
+  }, [connections])
   /** 每台主机独立的延迟探测周期（10s）：独立开始、独立刷新、结果逐台上屏 */
   const latencyTimers = useRef(new Map<string, ReturnType<typeof setInterval>>())
   const startLatencyCycle = useCallback(
@@ -361,10 +365,11 @@ export function ConnectionTable({
     window.aterm.perf.watch(perfEnabled ? settledIds : [])
   }, [settledIds, perfEnabled])
   useEffect(() => {
+    const timers = latencyTimers.current
     return () => {
       window.aterm.perf.watch([])
-      for (const timer of latencyTimers.current.values()) clearInterval(timer)
-      latencyTimers.current.clear()
+      for (const timer of timers.values()) clearInterval(timer)
+      timers.clear()
     }
   }, [])
 
@@ -373,7 +378,8 @@ export function ConnectionTable({
   const [scrollTop, setScrollTop] = useState(0)
   const [viewportH, setViewportH] = useState(600)
   /** 展开行明细实测高度（含收起动画期间，RO 实时跟随） */
-  const [expandedH, setExpandedH] = useState(0)
+  const [expandedSize, setExpandedSize] = useState<{ id: string; height: number } | null>(null)
+  const expandedH = expandedSize?.id === (expandedId ?? closingId) ? expandedSize.height : 0
   const expandedRef = useRef<HTMLDivElement | null>(null)
 
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>): void => {
@@ -396,13 +402,10 @@ export function ConnectionTable({
   // 展开行高度跟随：open 与 closing 都测量（收起动画期间下方行平滑回落）
   const measureKey = expandedId ?? closingId
   useEffect(() => {
-    if (!measureKey) {
-      setExpandedH(0)
-      return
-    }
+    if (!measureKey) return
     const el = expandedRef.current
     if (!el) return
-    const update = (): void => setExpandedH(el.offsetHeight)
+    const update = (): void => setExpandedSize({ id: measureKey, height: el.offsetHeight })
     update()
     const ro = new ResizeObserver(update)
     ro.observe(el)
@@ -487,7 +490,7 @@ export function ConnectionTable({
 
   const openEdit = useCallback((c: HostConnection) => onEdit(c), [onEdit])
   const openDelete = useCallback((c: HostConnection) => onDelete(c), [onDelete])
-  const openNote = useCallback((c: HostConnection) => setNoteTarget(c), [])
+  const openNote = useCallback((c: HostConnection) => setNoteTarget(c), [setNoteTarget])
   const handleToggleSelect = useCallback((id: string) => onToggleSelect(id), [onToggleSelect])
   const handleConnect = useCallback((c: HostConnection) => onConnect(c), [onConnect])
   const handleDuplicate = useCallback((c: HostConnection) => onDuplicate(c), [onDuplicate])
@@ -500,7 +503,7 @@ export function ConnectionTable({
 
   return (
     <div ref={containerRef} className="flex min-h-0 flex-1 flex-col overflow-x-auto">
-      <div className="flex h-8 min-w-[650px] shrink-0 items-center border-b border-line bg-surface px-4">
+      <div className="flex h-8 min-w-[650px] shrink-0 items-center border-b border-line bg-sidebar px-4">
         <div style={{ width: CHECKBOX_WIDTH }} className="flex shrink-0 justify-center">
           <button
             type="button"
@@ -539,7 +542,7 @@ export function ConnectionTable({
           />
         </div>
         <HeaderDivider />
-        <div className="shrink-0 px-2.5 text-caption text-muted" style={{ width: LIVE_WIDTH }}>
+        <div className="shrink-0 px-2.5 text-minor text-muted" style={{ width: LIVE_WIDTH }}>
           {t('conn.live.title')}
         </div>
         <HeaderDivider />
@@ -573,7 +576,7 @@ export function ConnectionTable({
         {showPerfCol && (
           <Fragment>
             <HeaderDivider />
-            <div className="flex min-w-[200px] flex-1 items-center gap-2 px-2.5 text-caption text-muted">
+            <div className="flex min-w-[200px] flex-1 items-center gap-2 px-2.5 text-minor text-muted">
               {t('conn.col.perf')}
               <IconButton
                 icon={RotateCw}
@@ -587,12 +590,15 @@ export function ConnectionTable({
           </Fragment>
         )}
         <HeaderDivider />
-        <div className="shrink-0 pl-2.5 text-caption text-muted" style={{ width: ACTION_WIDTH }}>
+        <div
+          className="shrink-0 pr-2.5 text-right text-minor text-muted"
+          style={{ width: ACTION_WIDTH }}
+        >
           {t('conn.col.actions')}
         </div>
       </div>
       {connectionSessions.error && (
-        <p role="status" className="px-4 py-1 text-caption text-danger">
+        <p role="status" className="px-4 py-1 text-minor text-danger">
           {t('conn.live.loadFailed')}
         </p>
       )}
@@ -718,24 +724,28 @@ const HostRow = memo(function HostRow({
   const expandable = items.length > 0
   // 连接计数（展开按钮与静态展示共用）
   const liveCounts = (
-    <span className="flex min-w-0 flex-col gap-1 text-minor">
+    <span className="flex min-w-0 items-center gap-3 text-minor">
       <span
+        title={t('session.connectionUser')}
+        aria-label={`${t('session.connectionUser')}: ${sessionsLoading ? '…' : userCount}`}
         className={cn(
-          'flex items-center gap-2 tabular-nums',
+          'flex items-center gap-1 tabular-nums',
           userCount ? 'text-info' : 'text-muted'
         )}
       >
         <UserRound size={14} className="shrink-0" />
-        {t('session.connectionUser')} {sessionsLoading ? '…' : userCount}
+        {sessionsLoading ? '…' : userCount}
       </span>
       <span
+        title="Agent"
+        aria-label={`Agent: ${sessionsLoading ? '…' : agentCount}`}
         className={cn(
-          'flex items-center gap-2 tabular-nums',
+          'flex items-center gap-1 tabular-nums',
           agentCount ? 'text-info' : 'text-muted'
         )}
       >
         <Bot size={14} className="shrink-0" />
-        Agent {sessionsLoading ? '…' : agentCount}
+        {sessionsLoading ? '…' : agentCount}
         {connecting > 0 && (
           <span className="ml-2 text-warn" title={t('conn.live.connecting', { count: connecting })}>
             ◌ {connecting}
@@ -761,7 +771,7 @@ const HostRow = memo(function HostRow({
       <div
         data-host-id={conn.id}
         className={cn(
-          'group relative flex h-[72px] items-center border-b border-line px-4 transition-colors duration-150 hover:bg-hover/60',
+          'group relative flex h-[var(--at-connection-row-height)] items-center border-b border-line px-4 transition-colors duration-150 hover:bg-hover/60',
           revealed && 'bg-info/10'
         )}
         onDoubleClick={(event) => {
@@ -771,7 +781,7 @@ const HostRow = memo(function HostRow({
         <span
           title={t(linkStateLabelKey(phase))}
           aria-label={t(linkStateLabelKey(phase))}
-          className="host-status-light pointer-events-none absolute inset-y-0 left-0 w-[4px]"
+          className="host-status-light pointer-events-none absolute inset-y-2 left-0 w-0.5 rounded-full"
           data-phase={phase ?? 'idle'}
           style={{
             backgroundColor: linkStateColor(phase),
@@ -815,7 +825,7 @@ const HostRow = memo(function HostRow({
               </button>
               {conn.deviceType && (
                 <span
-                  className="max-w-24 truncate text-caption text-muted"
+                  className="max-w-24 truncate text-minor text-muted"
                   title={DEVICE_TYPES[conn.deviceType]}
                 >
                   {DEVICE_TYPES[conn.deviceType]}
@@ -882,14 +892,9 @@ const HostRow = memo(function HostRow({
           <Button
             size="sm"
             title={t('common.connect')}
+            variant="text"
             className="shrink-0"
             onClick={() => onConnect(conn)}
-          />
-          <IconButton
-            icon={Pencil}
-            size={11.5}
-            aria-label={t('common.edit')}
-            onClick={() => onEdit(conn)}
           />
           <RowMenu
             conn={conn}
@@ -934,7 +939,7 @@ function CellBox({
 }
 
 function HeaderDivider(): React.JSX.Element {
-  return <div className="h-4 w-px shrink-0 bg-line/90" />
+  return <div className="h-3 w-px shrink-0 bg-line/40" />
 }
 
 /** 对照 SortHeaderCell：11px 标题（激活 bold）+ 方向箭头；hover/激活底色 + 右缘拖宽手柄 */
@@ -971,21 +976,18 @@ function SortHeaderCell({
       >
         <span
           className={cn(
-            'truncate text-caption',
+            'truncate text-minor',
             active ? 'font-semibold text-fg' : 'font-medium text-muted'
           )}
         >
           {title}
         </span>
-        {active ? (
-          ascending ? (
+        {active &&
+          (ascending ? (
             <ChevronUp size={8} strokeWidth={3} className="shrink-0 text-fg" />
           ) : (
             <ChevronDown size={8} strokeWidth={3} className="shrink-0 text-fg" />
-          )
-        ) : (
-          <ArrowUpDown size={8} strokeWidth={3} className="shrink-0 text-muted" />
-        )}
+          ))}
       </button>
       {resize && <ColumnResizeHandle {...resize} />}
     </div>

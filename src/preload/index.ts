@@ -15,7 +15,6 @@ import type {
   ConnectionSecrets,
   HostConnection,
   HostGroup,
-  HostLinkSnapshot,
   HostStateEvent,
   LocaleChangedEvent,
   LocalePref,
@@ -165,6 +164,11 @@ const api = {
     }
   },
   executions: {
+    onChanged: (cb: (sessionId: string) => void): (() => void) => {
+      const listener = (_event: unknown, sessionId: string): void => cb(sessionId)
+      ipcRenderer.on('execution:changed', listener)
+      return () => ipcRenderer.removeListener('execution:changed', listener)
+    },
     list: (sessionId: string, hostId?: string): Promise<ExecutionSnapshot[]> =>
       ipcRenderer.invoke('execution:list', sessionId, hostId),
     read: (sessionId: string, id: string, cursor: number): Promise<ExecutionSnapshot> =>
@@ -225,10 +229,15 @@ const api = {
   connections: {
     list: (): Promise<HostConnection[]> => ipcRenderer.invoke('conn:list'),
     create: (
-      input: Partial<HostConnection> & Pick<HostConnection, 'name' | 'host' | 'username'>
-    ): Promise<HostConnection> => ipcRenderer.invoke('conn:create', input),
-    update: (id: string, patch: Partial<HostConnection>): Promise<HostConnection | null> =>
-      ipcRenderer.invoke('conn:update', { id, patch }),
+      input: Partial<HostConnection> & Pick<HostConnection, 'name' | 'host' | 'username'>,
+      credentials?: Partial<ConnectionSecrets>
+    ): Promise<HostConnection> => ipcRenderer.invoke('conn:create', input, credentials),
+    update: (
+      id: string,
+      patch: Partial<HostConnection>,
+      credentials?: Partial<ConnectionSecrets>
+    ): Promise<HostConnection | null> =>
+      ipcRenderer.invoke('conn:update', { id, patch, credentials }),
     remove: (id: string): Promise<boolean> => ipcRenderer.invoke('conn:delete', id),
     setNote: (id: string, note: ServerNote): Promise<HostConnection | null> =>
       ipcRenderer.invoke('conn:setNote', { id, note }),
@@ -270,12 +279,12 @@ const api = {
       ipcRenderer.invoke('prefs:set', patch)
   },
   locale: {
+    /** Confirm language application, including menu and renderer notification. */
+    apply: (pref: LocalePref): Promise<{ pref: LocalePref; locale: Exclude<LocalePref, 'auto'> }> =>
+      ipcRenderer.invoke('locale:apply', pref),
     /** 初始语言：pref = 用户偏好（auto 跟随系统），locale = 解析后生效值 */
     get: (): Promise<{ pref: LocalePref; locale: Exclude<LocalePref, 'auto'> }> =>
       ipcRenderer.invoke('locale:get'),
-    /** 切换偏好；主进程换语言并广播 locale:changed */
-    set: (pref: LocalePref): Promise<{ pref: LocalePref; locale: Exclude<LocalePref, 'auto'> }> =>
-      ipcRenderer.invoke('locale:set', pref),
     onChanged: (cb: (payload: LocaleChangedEvent) => void): (() => void) => {
       const listener = (_e: unknown, payload: LocaleChangedEvent): void => cb(payload)
       ipcRenderer.on('locale:changed', listener)
@@ -337,13 +346,19 @@ const api = {
       inspectOnly = false
     ): Promise<{ awaiting: boolean; viewerOnly?: boolean; phase?: HostStateEvent['phase'] }> =>
       ipcRenderer.invoke('host:connect', conn, inspectOnly),
-    /** 全部链路状态快照（拓扑图初始化：phase + 进入时刻 + 重试次数 + 失败原因） */
-    listLinks: (): Promise<HostLinkSnapshot[]> => ipcRenderer.invoke('links:list'),
+    runtimeSnapshot: (): Promise<ConnectionStateSnapshot> =>
+      ipcRenderer.invoke('connections:runtime'),
+    onConnectionState: (cb: (event: ConnectionStateEvent) => void): (() => void) => {
+      const listener = (_e: unknown, event: ConnectionStateEvent): void => cb(event)
+      ipcRenderer.on('connections:state', listener)
+      return () => ipcRenderer.removeListener('connections:state', listener)
+    },
     submitAuth: (
       hostId: string,
       cred: { username: string; password?: string; privateKey?: string; passphrase?: string }
     ): void => ipcRenderer.send('host:submitAuth', { hostId, ...cred }),
     reconnect: (hostId: string): void => ipcRenderer.send('host:reconnect', hostId),
+    cancelConnect: (hostId: string): void => ipcRenderer.send('host:cancelConnect', hostId),
     restart: (hostId: string): void => ipcRenderer.send('host:restart', hostId),
     close: (hostId: string, agentConnectionIds: string[] = []): void =>
       ipcRenderer.send('host:close', hostId, agentConnectionIds),
@@ -356,11 +371,6 @@ const api = {
       const listener = (_e: unknown, payload: SshConnectionSession): void => cb(payload)
       ipcRenderer.on('agent:host:state', listener)
       return () => ipcRenderer.removeListener('agent:host:state', listener)
-    },
-    onState: (cb: (payload: HostStateEvent) => void): (() => void) => {
-      const listener = (_e: unknown, payload: HostStateEvent): void => cb(payload)
-      ipcRenderer.on('host:state', listener)
-      return () => ipcRenderer.removeListener('host:state', listener)
     }
   },
   logs: {
@@ -413,7 +423,8 @@ const api = {
     createSession: (): Promise<AiSessionSummary> => ipcRenderer.invoke('ai:createSession'),
     getMessages: (sessionId: string): Promise<AiUIMessage[]> =>
       ipcRenderer.invoke('ai:getMessages', { sessionId }),
-    closeSession: (sessionId: string): void => ipcRenderer.send('ai:closeSession', { sessionId }),
+    closeSession: (sessionId: string): Promise<void> =>
+      ipcRenderer.invoke('ai:closeSession', { sessionId }),
     run: (sessionId: string, messages: AiUIMessage[], turnId: string): Promise<void> =>
       ipcRenderer.invoke('ai:run', { sessionId, messages, turnId }),
     cancel: (sessionId: string, turnId?: string): Promise<AiUIMessage[]> =>
@@ -528,3 +539,4 @@ if (process.contextIsolated) {
   // @ts-ignore (define in dts)
   window.aterm = api
 }
+import type { ConnectionStateEvent, ConnectionStateSnapshot } from '../shared/connectionState'

@@ -10,9 +10,11 @@ import type {
   HostConnection,
   HostLinkSnapshot,
   HostStateEvent,
+  LinkPhase,
   SftpMeasureEvent,
   SftpStateEvent,
-  SftpTransferMirror
+  SftpTransferMirror,
+  ShellStatus
 } from '../../shared/types'
 import * as secretsStore from '../data/secrets'
 import { listConnections } from '../data/connections'
@@ -21,6 +23,10 @@ import { appLog } from '../log'
 import { t } from '../i18n'
 import { SftpSession, execCommand } from './sftp'
 import { OS_NAME_SCRIPT } from './remoteScripts'
+import { connectionRegistry } from './connectionRegistry'
+import { MAX_RECONNECTS, type ConnectionState } from '../../shared/connectionState'
+import { bindTransport, invalidateTransport, ResourceLifetime } from './resourceLifetime'
+import type { ResourceIdentity } from '../../shared/resource'
 
 /**
  * 对照 ATerminal-Swift Services/HostLink.swift + SSHTerminalController.swift：
@@ -33,22 +39,23 @@ import { OS_NAME_SCRIPT } from './remoteScripts'
  * 不再外露 RTT / 丢包计数。
  */
 
-export type LinkPhase = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'offline'
-
-export type ShellStatus = 'connecting' | 'connected' | 'disconnected' | 'ended' | 'error'
-
-export const MAX_RECONNECTS = 3
-export const RECONNECT_DELAY_MS = 2000
+const RECONNECT_DELAY_MS = 2000
 
 export interface HostLinkEvents {
   onHostState: (payload: HostStateEvent) => void
   onShellState: (payload: {
+    resource?: ResourceIdentity
     hostId: string
     shellId: string
     status: ShellStatus
     error?: string
   }) => void
-  onShellData: (payload: { hostId: string; shellId: string; data: string }) => void
+  onShellData: (payload: {
+    hostId: string
+    shellId: string
+    data: string
+    resource?: ResourceIdentity
+  }) => void
   onShellAnnounce: (payload: { hostId: string; shellId: string; text: string }) => void
   onSftpState: (payload: SftpStateEvent) => void
   onSftpTransfer: (payload: { hostId: string; transfer: SftpTransferMirror }) => void
@@ -72,12 +79,13 @@ export class ShellSession {
   /** 通道建立超时定时器（成员化：多次 start/断链可显式清理，防旧 timer 误杀新一轮连接） */
   private openTimer: NodeJS.Timeout | null = null
   /** 本次启动代际：断链/重启/新 start 递增，使旧 client.shell 回调与旧 timer 失效 */
-  private startEpoch = 0
+  private readonly lifetime: ResourceLifetime
 
   constructor(
     private readonly link: HostLink,
     bootstrap?: string
   ) {
+    this.lifetime = new ResourceLifetime(link.hostId, 'shell', this.id)
     this.bootstrap = bootstrap ?? null
     // 兜底：渲染层 3.5s 内未请求启动则自动开通道（正常路径 ~几十 ms）
     this.autoStartTimer = setTimeout(() => {
@@ -93,7 +101,6 @@ export class ShellSession {
       this.autoStartTimer = null
     }
     this.closedByUser = false
-    this.dropAnnounced = false
     this.writeTail = Promise.resolve()
     const client = this.link.activeClient
     if (!client) {
@@ -104,20 +111,22 @@ export class ShellSession {
     // 可能并发触发；重复 start 会开孤儿通道并把 connected 回跳成 connecting）
     if (this.status === 'connecting' || this.status === 'connected') return
 
+    this.lifetime.reset()
+    const lease = this.lifetime.capture(client)
     this.setStatus('connecting')
-    const epoch = ++this.startEpoch
     this.clearOpenTimer()
     // 通道建立超时（对照 Swift：connecting 卡死无重连入口的死角）
     const timeoutMs = Math.min(10_000, Math.max(5_000, this.link.connection.connectTimeout))
     this.openTimer = setTimeout(() => {
-      if (this.startEpoch !== epoch || this.status !== 'connecting') return
+      if (!lease.current() || this.status !== 'connecting') return
       this.openTimer = null
+      this.lifetime.reset()
       this.chan = null
       this.setStatus('error', t('announce.channelTimeout'))
     }, timeoutMs)
     client.shell({ term: 'xterm-256color', cols: this.cols, rows: this.rows }, (err, chan) => {
       // 过期回调（断链/重启后旧 client 的迟到回调）：丢弃并关闭孤儿通道，防串扰
-      if (this.startEpoch !== epoch) {
+      if (!lease.current()) {
         if (chan) {
           try {
             chan.close()
@@ -141,19 +150,30 @@ export class ShellSession {
       this.deliverBootstrap()
 
       chan.on('data', (d: Buffer) => {
-        if (this.chan !== chan) return
+        if (!lease.current() || this.chan !== chan) return
         const text = d.toString('utf8')
-        this.link.events.onShellData({ hostId: this.link.hostId, shellId: this.id, data: text })
+        this.link.events.onShellData({
+          hostId: this.link.hostId,
+          shellId: this.id,
+          data: text,
+          resource: lease.identity
+        })
       })
       chan.stderr.on('data', (d: Buffer) => {
-        if (this.chan !== chan) return
+        if (!lease.current() || this.chan !== chan) return
         const text = d.toString('utf8')
-        this.link.events.onShellData({ hostId: this.link.hostId, shellId: this.id, data: text })
+        this.link.events.onShellData({
+          hostId: this.link.hostId,
+          shellId: this.id,
+          data: text,
+          resource: lease.identity
+        })
       })
       chan.on('close', () => {
         // 旧通道的 close（this.chan 已被新通道接管）忽略，避免误清/误报
         if (this.chan !== chan) return
         this.chan = null
+        this.lifetime.reset()
         if (this.closedByUser) {
           this.setStatus('disconnected')
           return
@@ -161,7 +181,7 @@ export class ShellSession {
         // 通道干净关闭且主机链路仍活 = shell 正常退出（exit）
         if (this.link.isActive) {
           this.setStatus('ended')
-          this.announce('会话已结束')
+          this.announce(t('announce.sessionEnded'))
         } else {
           this.setStatus('disconnected')
         }
@@ -175,10 +195,11 @@ export class ShellSession {
       clearTimeout(this.autoStartTimer)
       this.autoStartTimer = null
     }
-    this.startEpoch += 1 // 作废进行中的通道回调，防迟到回调误置状态
+    this.lifetime.reset()
     this.clearOpenTimer()
-    this.chan?.close()
+    const channel = this.chan
     this.chan = null
+    channel?.close()
     this.setStatus('disconnected')
   }
 
@@ -195,9 +216,11 @@ export class ShellSession {
   /** 链路失效的公共处理：作废通道回调、释放通道、播报一次、置为断开态 */
   private dropLink(message: string): void {
     if (this.closedByUser) return
-    this.startEpoch += 1 // 作废进行中的通道回调，防断链后迟到回调把状态拉回 connected
+    this.lifetime.reset()
     this.clearOpenTimer()
+    const channel = this.chan
     this.chan = null
+    channel?.close()
     this.writeTail = Promise.resolve()
     if (!this.dropAnnounced) {
       this.dropAnnounced = true
@@ -213,17 +236,34 @@ export class ShellSession {
 
   noteOffline(): void {
     if (this.closedByUser) return
-    this.announce('连接已断线，等待手动重连')
+    this.announce(t('announce.offlineManual'))
   }
 
   write(data: string): void {
     if (!this.chan || data === '') return
+    const channel = this.chan
+    const lease = this.lifetime.capture(this.link.activeClient)
     // 串行化 stdin 写入（对照 writeTail：乱序会拆散 bracketed-paste 标记）
     this.writeTail = this.writeTail.then(
       () =>
         new Promise<void>((resolve) => {
-          this.chan?.write(data, () => resolve())
-          setTimeout(resolve, 2000)
+          if (!lease.current() || this.chan !== channel) {
+            resolve()
+            return
+          }
+          const finish = (): void => {
+            clearTimeout(timer)
+            lease.signal.removeEventListener('abort', finish)
+            resolve()
+          }
+          const timer = setTimeout(finish, 2000)
+          lease.signal.addEventListener('abort', finish, { once: true })
+          try {
+            channel.write(data, finish)
+          } catch (error) {
+            finish()
+            if (lease.current()) this.setStatus('error', errorMessage(error))
+          }
         })
     )
   }
@@ -252,8 +292,9 @@ export class ShellSession {
     const command = this.bootstrap
     if (!command) return
     this.bootstrap = null
+    const lease = this.lifetime.capture(this.link.activeClient)
     setTimeout(() => {
-      if (this.closedByUser || !this.chan) return
+      if (!lease.current() || this.closedByUser || !this.chan) return
       this.write(command.endsWith('\n') ? command : `${command}\n`)
     }, 400)
   }
@@ -276,7 +317,8 @@ export class ShellSession {
       hostId: this.link.hostId,
       shellId: this.id,
       status,
-      error: error || undefined
+      error: error || undefined,
+      resource: this.lifetime.capture(this.link.activeClient).identity
     })
   }
 }
@@ -306,7 +348,9 @@ export class HostLink {
   /** 最后一次**实际建立**成功的跳板链 id（connected 及断开后保持 —— 图的事实来源） */
   private establishedIds: string[] = []
   private generation = 0
-  private reconnectTimer: NodeJS.Timeout | null = null
+  private connectAbort = new AbortController()
+  private disposed = false
+  private transportResources = new Set<() => void>()
   /** 日志去重：上次已记录的 phase（emitState 会被重复调用） */
   private loggedPhase: LinkPhase | null = null
 
@@ -314,9 +358,43 @@ export class HostLink {
     readonly hostId: string,
     private conn: HostConnection,
     readonly events: HostLinkEvents,
-    private readonly options: { probeOs?: boolean } = {}
+    private readonly options: { probeOs?: boolean; sessionId?: string } = {}
   ) {
     this.sftp = new SftpSession(this, events)
+    connectionRegistry.register(this.runtimeState())
+  }
+
+  private runtimeState(): Omit<ConnectionState, 'revision'> {
+    return {
+      hostId: this.hostId,
+      connectionId: this.connectionId,
+      owner: this.options.sessionId ? 'agent' : 'user',
+      sessionId: this.options.sessionId,
+      generation: this.generation,
+      closed: this.disposed,
+      phase: this.phase,
+      since: this.phaseSince,
+      attempt: this.phase === 'reconnecting' ? this.attempt : undefined,
+      reason: this.phase === 'offline' ? this.offlineReason : undefined,
+      awaiting: this.awaitingCredentials,
+      jumpIds: this.effectiveJumpIds
+    }
+  }
+
+  /** Borrowed channels belong to this transport generation, never to the saved host ID. */
+  ownTransportResource(dispose: () => void): () => void {
+    if (this.disposed) {
+      dispose()
+      return () => {}
+    }
+    this.transportResources.add(dispose)
+    return () => this.transportResources.delete(dispose)
+  }
+
+  private nextGeneration(): void {
+    this.generation += 1
+    this.connectAbort.abort()
+    this.connectAbort = new AbortController()
   }
 
   get isActive(): boolean {
@@ -349,15 +427,34 @@ export class HostLink {
 
   /** 连接（或 offline 后手动重连）；运行中为 no-op */
   start(): void {
+    if (this.disposed) throw new Error('Connection has been closed')
+    connectionRegistry.assertAvailable(this.hostId)
     if (this.phase === 'connecting' || this.phase === 'connected' || this.phase === 'reconnecting')
       return
-    this.generation += 1
+    this.nextGeneration()
+    this.offlineReason = ''
     void this.connectLoop(0)
+  }
+
+  /** Cancel dialing without disposing the workspace or its shell identities. */
+  cancelConnect(): void {
+    if (this.phase !== 'connecting' && this.phase !== 'reconnecting') return
+    this.nextGeneration()
+    this.teardownClient()
+    for (const shell of this.shells.values()) shell.hostClosed()
+    this.sftp.hostLinkLost()
+    this.offlineReason = ''
+    this.setPhase('idle')
+    this.emitState()
   }
 
   /** 拆链重连（连接参数变更时） */
   restart(): void {
-    this.generation += 1
+    if (this.disposed) throw new Error('Connection has been closed')
+    connectionRegistry.assertAvailable(this.hostId)
+    this.nextGeneration()
+    for (const shell of this.shells.values()) shell.hostLinkLost()
+    this.sftp.hostLinkLost()
     this.teardownClient()
     void this.connectLoop(0)
   }
@@ -389,16 +486,17 @@ export class HostLink {
   }
 
   shutdown(): void {
-    this.generation += 1
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
-    this.reconnectTimer = null
+    if (this.disposed) return
+    this.disposed = true
+    this.nextGeneration()
     // 先通知存活会话：终端因此立即进入断开态并播报（否则只会"卡死且毫无提示"）
     for (const s of this.shells.values()) s.hostClosed()
     this.sftp.stop()
     this.teardownClient()
     this.setPhase('idle')
+    this.phaseSince = Date.now()
     this.loggedPhase = null
-    // 手动关闭也广播终态（拓扑图等依赖 host:state 的视图据此转入"已断开"态）
+    // 手动关闭也广播终态（连接状态镜像据此转入"已断开"态）
     this.emitState()
     appLog('ssh', `Connection "${this.conn.name}" closed`)
   }
@@ -430,9 +528,13 @@ export class HostLink {
   }
 
   private teardownClient(): void {
+    const resources = [...this.transportResources]
+    this.transportResources.clear()
+    for (const dispose of resources) dispose()
     const client = this.client
     this.client = null
     if (client) {
+      invalidateTransport(client)
       client.removeAllListeners()
       client.end()
     }
@@ -450,7 +552,10 @@ export class HostLink {
 
   private async connectLoop(startingAttempt: number): Promise<void> {
     let attempt = startingAttempt
+    const gen = this.generation
+    const signal = this.connectAbort.signal
     for (;;) {
+      if (gen !== this.generation || this.disposed) return
       this.attempt = attempt
       // 相位广播前先采样本次拨号链：connecting 一刻拓扑图就画「正在拨的路由」（事实，非配置）
       this.lastDialedIds = this.previewDialedIds()
@@ -460,14 +565,15 @@ export class HostLink {
         for (const s of this.shells.values()) s.noteReconnectAttempt(attempt)
       }
 
-      const gen = this.generation
       try {
-        const client = await this.connectOnce()
+        const client = await this.connectOnce(gen, signal)
         if (gen !== this.generation) {
           client.end()
           return
         }
         this.client = client
+        bindTransport(client, this.connectionId, gen)
+        this.offlineReason = ''
         this.setPhase('connected')
         this.emitState()
         client.on('close', () => this.handleDisconnect(gen))
@@ -484,19 +590,32 @@ export class HostLink {
         if (this.options.probeOs !== false) void this.probeOsName(client)
         return
       } catch (err) {
+        if (gen !== this.generation || this.disposed) return
         const message = errorMessage(err)
         // 记录最新失败原因（重连中 waitForActive/connect 工具可读取），最终 offline 时亦复用
         this.offlineReason = message
         attempt += 1
-        if (attempt > MAX_RECONNECTS || (err as { code?: string }).code === 'HOST_KEY_CHANGED') {
+        const failure = err as { code?: string; level?: string }
+        const authFailed = failure.level === 'client-authentication'
+        if (attempt > MAX_RECONNECTS || failure.code === 'HOST_KEY_CHANGED' || authFailed) {
+          if (authFailed && this.conn.authType === 'manual') this.sessionSecrets = null
           this.setPhase('offline')
           this.offlineReason = message
           this.emitState()
           for (const s of this.shells.values()) s.noteOffline()
           return
         }
+        this.attempt = attempt
+        this.setPhase('reconnecting')
+        this.emitState()
         await new Promise<void>((resolve) => {
-          this.reconnectTimer = setTimeout(resolve, RECONNECT_DELAY_MS)
+          const finish = (): void => {
+            clearTimeout(timer)
+            signal.removeEventListener('abort', finish)
+            resolve()
+          }
+          const timer = setTimeout(finish, RECONNECT_DELAY_MS)
+          signal.addEventListener('abort', finish, { once: true })
         })
         if (gen !== this.generation) return
       }
@@ -522,7 +641,8 @@ export class HostLink {
   private connectHop(
     hop: HostConnection,
     secretsOverride: ConnectionSecrets | null | undefined,
-    sock?: ClientChannel
+    sock: ClientChannel | undefined,
+    signal: AbortSignal
   ): Promise<Client> {
     return new Promise((resolve, reject) => {
       const verifier = createHostVerifier(hop.host, hop.port)
@@ -535,43 +655,81 @@ export class HostLink {
           : secretsStore.loadSecrets(hop.id)
       const conn = new Client()
       let settled = false
+      const cleanup = (): void => {
+        signal.removeEventListener('abort', onAbort)
+        conn.removeListener('ready', onReady)
+        conn.removeListener('error', onError)
+        conn.removeListener('close', onClose)
+        // Keep late errors handled until the connection owner installs its listeners.
+        conn.on('error', () => {})
+      }
       const onReady = (): void => {
         if (settled) return
         settled = true
         // 关 Nagle：SFTP/PTY 是小包请求-应答模式，Nagle×延迟ACK 每往返多 ~40-80ms（延迟换吞吐，交互场景划算）
         conn.setNoDelay(true)
-        conn.removeAllListeners('error')
+        cleanup()
         resolve(conn)
       }
       const onError = (err: Error): void => {
         if (settled) return
         settled = true
+        cleanup()
         conn.end()
         reject(verifier.error() ?? err)
       }
+      const onAbort = (): void => onError(new Error('Connection attempt canceled'))
+      const onClose = (): void => onError(new Error('SSH transport closed during handshake'))
       conn.once('ready', onReady)
       conn.once('error', onError)
+      conn.once('close', onClose)
+      signal.addEventListener('abort', onAbort, { once: true })
+      if (signal.aborted) {
+        onAbort()
+        return
+      }
 
       // 心跳交给 ssh2 内置 keepalive（每跳独立配置，随跳板连接自身参数）
-      conn.connect({
-        algorithms: sshAlgorithms(hop.strictKex),
-        host: hop.host,
-        port: hop.port,
-        username: hop.username,
-        readyTimeout: Math.max(500, hop.connectTimeout),
-        keepaliveInterval: hop.keepaliveInterval,
-        keepaliveCountMax: 3,
-        hostVerifier: verifier.verify,
-        ...(sock ? { sock } : {}),
-        ...selectAuth(hasOverride ? 'manual' : hop.authType, secrets ?? {})
-      })
+      try {
+        conn.connect({
+          algorithms: sshAlgorithms(hop.strictKex),
+          host: hop.host,
+          port: hop.port,
+          username: hop.username,
+          readyTimeout: Math.max(500, hop.connectTimeout),
+          keepaliveInterval: hop.keepaliveInterval,
+          keepaliveCountMax: 3,
+          hostVerifier: verifier.verify,
+          ...(sock ? { sock } : {}),
+          ...selectAuth(hasOverride ? 'manual' : hop.authType, secrets ?? {})
+        })
+      } catch (error) {
+        onError(error instanceof Error ? error : new Error(String(error)))
+      }
     })
   }
 
   /** 经上一跳转发到下一跳的 host:port（ssh 协议 direct-tcpip 通道） */
-  private forwardOut(client: Client, host: string, port: number): Promise<ClientChannel> {
+  private forwardOut(
+    client: Client,
+    host: string,
+    port: number,
+    signal: AbortSignal
+  ): Promise<ClientChannel> {
     return new Promise((resolve, reject) => {
+      const abort = (): void => reject(new Error('Connection attempt canceled'))
+      signal.addEventListener('abort', abort, { once: true })
+      if (signal.aborted) {
+        signal.removeEventListener('abort', abort)
+        abort()
+        return
+      }
       client.forwardOut('127.0.0.1', 0, host, port, (err, chan) => {
+        signal.removeEventListener('abort', abort)
+        if (signal.aborted) {
+          chan?.close()
+          return
+        }
         if (err || !chan) reject(err ?? new Error('forwardOut failed'))
         else resolve(chan)
       })
@@ -579,17 +737,26 @@ export class HostLink {
   }
 
   /** 建链：[跳板1, …, 跳板N, 目标] 逐跳握手（forwardOut channel 作为下一跳 sock）；任一跳失败关闭全部已建连接 */
-  private async connectOnce(): Promise<Client> {
+  private async connectOnce(gen: number, signal: AbortSignal): Promise<Client> {
     const chain = [...this.resolveJumpHops(), this.conn]
     const jumpClients: Client[] = []
     try {
       let sock: ClientChannel | undefined
       for (let i = 0; i < chain.length - 1; i++) {
-        const hopClient = await this.connectHop(chain[i], undefined, sock)
+        const hopClient = await this.connectHop(chain[i], undefined, sock, signal)
         jumpClients.push(hopClient)
-        sock = await this.forwardOut(hopClient, chain[i + 1].host, chain[i + 1].port)
+        sock = await this.forwardOut(hopClient, chain[i + 1].host, chain[i + 1].port, signal)
       }
-      const target = await this.connectHop(this.conn, this.sessionSecrets, sock)
+      const target = await this.connectHop(
+        chain[chain.length - 1],
+        this.sessionSecrets,
+        sock,
+        signal
+      )
+      if (gen !== this.generation) {
+        target.end()
+        throw new Error('Connection attempt canceled')
+      }
       this.jumpClients = jumpClients
       // 建链成功：记录实际建立的链（图的事实来源；此后即使配置被改，未重连前图不切换）
       this.establishedIds = chain.slice(0, -1).map((c) => c.id)
@@ -613,6 +780,7 @@ export class HostLink {
       return
     try {
       const out = await execCommand(client, OS_NAME_SCRIPT)
+      if (client !== this.activeClient || this.disposed) return
       const line = out
         .split('\n')
         .map((l) => l.trim())
@@ -635,7 +803,7 @@ export class HostLink {
   /** 链路死亡唯一漏斗：通知会话，再固定次数重试，超限停车等手动 */
   private declareLossAndReconnect(reason: string): void {
     if (this.phase === 'offline' || this.phase === 'idle') return
-    this.generation += 1
+    this.nextGeneration()
     this.offlineReason = reason
     this.teardownClient()
     for (const s of this.shells.values()) s.hostLinkLost()
@@ -644,6 +812,7 @@ export class HostLink {
   }
 
   private emitState(): void {
+    connectionRegistry.update(this.runtimeState())
     this.events.onHostState({
       hostId: this.hostId,
       phase: this.phase,
@@ -687,6 +856,7 @@ export class HostLink {
   async waitForActive(timeoutMs = 15_000): Promise<void> {
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
+      if (this.disposed) throw new Error('Connection has been closed')
       if (this.isActive) return
       // 已判定离线：无需等满超时，直接带原因失败
       if (this.phase === 'offline') {
@@ -706,15 +876,7 @@ export class HostLink {
 /** 主机注册表：hostId → HostLink */
 const registry = new Map<string, HostLink>()
 
-/**
- * 已断开链路的墓碑（hostId → 断开时刻）：removeLink 会清掉 registry，但拓扑图在刷新后
- * 仍需区分「本次运行从未连接」与「已断开」——故保留断开时刻。仅对仍存在的连接生效，
- * 连接被删除即自动消失（下次 getOrCreateLink 也会清掉）。
- */
-const closedSince = new Map<string, number>()
-
 export function getOrCreateLink(conn: HostConnection, events: HostLinkEvents): HostLink {
-  closedSince.delete(conn.id)
   let link = registry.get(conn.id)
   if (link) {
     link.update(conn)
@@ -729,37 +891,9 @@ export function getLink(hostId: string): HostLink | undefined {
   return registry.get(hostId)
 }
 
-/** 已断开链路在拓扑图上的保留时长（与渲染层 OFFLINE_RING_MS / CSS topo-countdown 300s 对齐） */
-const CLOSED_TTL_MS = 5 * 60 * 1000
-
-/** 全部链路状态快照（拓扑图 / 连接列表状态列初始化用）：phase + 进入时刻 + 重试次数 + 失败原因 */
+/** Compatibility projection; lifecycle state and tombstones come from the unified registry. */
 export function listLinks(): HostLinkSnapshot[] {
-  const now = Date.now()
-  const out: HostLinkSnapshot[] = []
-  for (const [hostId, link] of registry) {
-    // 保留态（软断开）超过 TTL 不再上报：与拓扑「断开 5 分钟后退场」一致，避免刷新后又冒出来
-    if (link.phase === 'idle' && now - link.phaseSince >= CLOSED_TTL_MS) continue
-    out.push({
-      hostId,
-      phase: link.phase,
-      since: link.phaseSince,
-      attempt: link.phase === 'reconnecting' ? link.attempt : undefined,
-      reason: link.phase === 'offline' ? link.offlineReason : undefined,
-      jumpIds: link.effectiveJumpIds
-    })
-  }
-  // 已断开（registry 已清）：仍存在的连接补一条 idle 记录，刷新后拓扑得以分辨「从未连接 / 已断开」。
-  // 超过 TTL 或连接已删除的墓碑顺手清理 —— 渲染层因此无需自行判断「打开时就已过期」。
-  const saved = new Set(listConnections().map((c) => c.id))
-  for (const [hostId, since] of [...closedSince]) {
-    if (!saved.has(hostId) || Date.now() - since >= CLOSED_TTL_MS) {
-      closedSince.delete(hostId)
-      continue
-    }
-    if (registry.has(hostId)) continue
-    out.push({ hostId, phase: 'idle', since })
-  }
-  return out
+  return connectionRegistry.snapshot().connections.filter((state) => state.owner === 'user')
 }
 
 /** 对指定主机触发系统名单次采集并广播 os:sample（拓扑图等无缓存时兜底）；链路不在位则跳过 */
@@ -774,9 +908,7 @@ export function probeLinksOsName(hostIds: string[]): void {
 export function removeLink(hostId: string): void {
   const link = registry.get(hostId)
   if (link) {
-    link.shutdown()
     registry.delete(hostId)
-    // 记下断开时刻：刷新/重进页面后拓扑仍显示「已断开 + 倒计时环」，而非退回「从未连接」
-    closedSince.set(hostId, Date.now())
+    link.shutdown()
   }
 }

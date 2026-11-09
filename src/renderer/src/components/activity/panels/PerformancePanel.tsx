@@ -269,39 +269,41 @@ export function PerformancePanel({ hostId }: { hostId: string }): React.JSX.Elem
           <span className="text-caption text-muted">{t('activity.perfMemTotal')}</span>
           <span className="font-mono text-body text-fg">{fmtBytes(sample.memTotal)}</span>
         </div>
-        <div className="h-24">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={memPie}
-                dataKey="value"
-                nameKey="name"
-                innerRadius={26}
-                outerRadius={40}
-                paddingAngle={2}
-                strokeWidth={0}
-                isAnimationActive={false}
-              >
-                {memPie.map((d) => (
-                  <Cell key={d.name} fill={d.color} />
-                ))}
-              </Pie>
-              <Tooltip
-                formatter={(v) => fmtBytes(Number(v))}
-                contentStyle={TOOLTIP_STYLE}
-                labelStyle={{ color: '#949ba3' }}
-              />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
-        <div className="flex flex-col gap-1">
-          {memPie.map((d) => (
-            <div key={d.name} className="flex items-center gap-2">
-              <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: d.color }} />
-              <span className="text-caption text-muted">{d.name}</span>
-              <span className="ml-auto font-mono text-caption text-fg">{fmtBytes(d.value)}</span>
-            </div>
-          ))}
+        <div className="grid grid-cols-[var(--at-memory-chart-size)_minmax(0,1fr)] items-center gap-3">
+          <div className="h-[var(--at-memory-chart-size)]">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={memPie}
+                  dataKey="value"
+                  nameKey="name"
+                  innerRadius={26}
+                  outerRadius={40}
+                  paddingAngle={2}
+                  strokeWidth={0}
+                  isAnimationActive={false}
+                >
+                  {memPie.map((d) => (
+                    <Cell key={d.name} fill={d.color} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  formatter={(v) => fmtBytes(Number(v))}
+                  contentStyle={TOOLTIP_STYLE}
+                  labelStyle={{ color: '#949ba3' }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="flex flex-col gap-1">
+            {memPie.map((d) => (
+              <div key={d.name} className="flex items-center gap-2">
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: d.color }} />
+                <span className="text-caption text-muted">{d.name}</span>
+                <span className="ml-auto font-mono text-caption text-fg">{fmtBytes(d.value)}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </Section>
 

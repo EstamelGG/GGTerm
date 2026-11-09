@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Pencil, Play, Trash2 } from 'lucide-react'
+import { Pencil, Play, Trash2, SquareTerminal } from 'lucide-react'
 import { errorMessage } from '@shared/error'
 import { useLocalTerminalStore } from '@/stores/localTerminal'
 import { useSessionStore } from '@/stores/session'
@@ -8,6 +8,7 @@ import { useCommandsStore } from '@/stores/commands'
 import { IconButton } from '@/components/ui/IconButton'
 import { Button } from '@/components/form/Buttons'
 import { ATTextField, ATTextArea } from '@/components/form/Fields'
+import { PanelEmptyState } from '../PanelEmptyState'
 
 /**
  * 快捷指令库由本地与 SSH 终端共用，写入与各自键盘输入走同一通道。
@@ -77,7 +78,9 @@ export function CommandsPanel({
   return (
     <div className="flex flex-col gap-2">
       {/* 工具行 */}
-      <div className="flex items-center gap-2">
+      <div
+        className={commands.length === 0 && editing === null ? 'hidden' : 'flex items-center gap-2'}
+      >
         <Button
           variant="text"
           title={t('activity.commandsAdd')}
@@ -85,7 +88,7 @@ export function CommandsPanel({
           onClick={startNew}
         />
         <div className="flex-1" />
-        <span className="text-caption text-muted/60">
+        <span className="text-caption text-muted">
           {runnable ? t('activity.commandsRun') : t('activity.commandsNoTarget')}
         </span>
       </div>
@@ -133,10 +136,13 @@ export function CommandsPanel({
 
       {/* 列表 */}
       {commands.length === 0 && editing === null ? (
-        <div className="flex flex-col items-center gap-1.5 py-8 text-center">
-          <p className="text-minor text-muted">{t('activity.commandsEmpty')}</p>
-          <p className="text-caption text-muted/60">{t('activity.commandsEmptyHint')}</p>
-        </div>
+        <PanelEmptyState
+          icon={SquareTerminal}
+          title={t('activity.commandsEmpty')}
+          description={t('activity.commandsEmptyHint')}
+        >
+          <Button size="sm" title={t('activity.commandsAdd')} onClick={startNew} />
+        </PanelEmptyState>
       ) : (
         <div className="flex flex-col">
           {commands.map((c) => (
@@ -145,7 +151,7 @@ export function CommandsPanel({
               className="flex items-center gap-1 rounded-lg px-1.5 py-1.5 hover:bg-hover/30"
             >
               <div className="min-w-0 flex-1">
-                <div className="truncate text-caption text-fg">{c.name}</div>
+                <div className="truncate text-minor font-medium text-fg">{c.name}</div>
                 <div className="truncate font-mono text-caption text-muted/75" title={c.command}>
                   {c.command}
                 </div>

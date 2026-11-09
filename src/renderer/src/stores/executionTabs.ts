@@ -36,27 +36,7 @@ export const useExecutionTabs = create<State>((set, get) => ({
       if (!reveal && known.has(task.executionId) && !store.hosts.some((h) => h.id === task.hostId))
         continue
       if (!store.hosts.some((host) => host.id === task.hostId)) {
-        // Viewer-only workspace: never create a user SSH transport just to watch an agent.
-        useSessionStore.setState((s) => ({
-          hosts: [
-            ...s.hosts,
-            {
-              viewerOnly: true,
-              id: conn.id,
-              conn,
-              title: conn.name,
-              phase: 'idle',
-              attempt: 0,
-              offlineReason: '',
-              awaiting: false,
-              pendingSecrets: null,
-              shells: [],
-              files: [],
-              focusFileId: null,
-              focusShellId: task.executionId
-            }
-          ]
-        }))
+        store.restoreViewer(conn, task.executionId)
       }
       if (reveal) {
         store.focusShell(task.hostId, task.executionId)

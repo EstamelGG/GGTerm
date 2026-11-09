@@ -1,5 +1,6 @@
 import { expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
+import { posixTool } from './posix-tools'
 vi.mock('electron', () => ({ app: {}, dialog: {}, shell: {}, utilityProcess: { fork: vi.fn() } }))
 vi.mock('../src/main/log', () => ({ appLog: vi.fn() }))
 import { buildDisks } from '../src/main/ssh/perf'
@@ -36,7 +37,7 @@ it('keeps device-backed volumes when lsblk has no corresponding nodes', () => {
 it('collects mapper filesystems without depending on lsblk mountpoint output', () => {
   const line = PERF_SCRIPT.split('\n').find((line) => line.startsWith('df -PTk'))!
   const program = line.split("awk '")[1].slice(0, -1)
-  const result = execFileSync('awk', [program], {
+  const result = execFileSync(posixTool('awk'), [program], {
     input:
       'Filesystem Type 1024-blocks Used Available Capacity Mounted on\n/dev/mapper/ubuntu--vg-ubuntu--lv ext4 194000 29000 156000 16% /\ntmpfs tmpfs 100 0 100 0% /run\n/dev/sda2 ext4 2000 259 1600 15% /boot\n',
     encoding: 'utf8'

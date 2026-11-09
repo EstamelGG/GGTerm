@@ -1,3 +1,5 @@
+import { ResourceLifetime, type ResourceLease } from './resourceLifetime'
+import { connectionRegistry } from './connectionRegistry'
 import { isNetworkDevice } from '../../shared/device'
 import { listConnections } from '../data/connections'
 import { BrowserWindow } from 'electron'
@@ -29,7 +31,14 @@ const GPU_PROC_LIMIT = 5
 let watched: string | null = null
 let timer: NodeJS.Timeout | null = null
 /** 上轮未归（远端卡顿）时跳过本轮，防堆积 */
-let sampling = false
+let sampling: ResourceLease | null = null
+let lifetime = new ResourceLifetime('', 'gpu')
+connectionRegistry.subscribe(({ state }) => {
+  if (state.hostId === watched) {
+    lifetime.reset()
+    sampling = null
+  }
+})
 /** 同一段故障只记一条日志（成功后重置） */
 let loggedFail = false
 
@@ -42,8 +51,12 @@ export function sessionGpuWatch(hostId: string | null): void {
   if (watched === hostId) return
   if (timer) clearInterval(timer)
   timer = null
+  lifetime.reset()
+  sampling = null
+  loggedFail = false
   watched = hostId
-  if (!hostId || !getResourceLink(hostId)) return
+  lifetime = new ResourceLifetime(hostId ?? '', 'gpu')
+  if (!hostId) return
   void sample(hostId)
   timer = setInterval(() => void sample(hostId), GPU_INTERVAL_MS)
 }
@@ -56,9 +69,12 @@ async function sample(hostId: string): Promise<void> {
   if (sampling || watched !== hostId) return
   const client = getResourceLink(hostId)?.activeClient
   if (!client) return
-  sampling = true
+  const lease = lifetime.capture(client)
+  sampling = lease
   try {
-    const out = await execCommand(client, GPU_SCRIPT)
+    const out = await execCommand(client, GPU_SCRIPT, 65536, lease.signal)
+    if (!lease.current() || watched !== hostId || getResourceLink(hostId)?.activeClient !== client)
+      return
     const lines = out.split('\n')
     // 计算进程行（A）按 uuid 归并到对应卡：每卡只留显存占用前 GPU_PROC_LIMIT 个
     const procsByUuid = new Map<string, PerfGpuProc[]>()
@@ -80,14 +96,15 @@ async function sample(hostId: string): Promise<void> {
           .slice(0, GPU_PROC_LIMIT)
       }))
     loggedFail = false
-    if (watched === hostId) broadcast({ hostId, gpus, t: Date.now() })
+    if (watched === hostId) broadcast({ hostId, gpus, t: Date.now(), resource: lease.identity })
   } catch (err) {
+    if (!lease.current()) return
     if (!loggedFail) {
       loggedFail = true
       const label = getResourceLink(hostId)?.connection.name ?? hostId
       appLog('ssh', `GPU sampling failed "${label}": ${(err as Error).message}`, 'error')
     }
   } finally {
-    sampling = false
+    if (sampling === lease) sampling = null
   }
 }

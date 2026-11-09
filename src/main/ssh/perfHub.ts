@@ -11,6 +11,7 @@ import * as secretsStore from '../data/secrets'
 import { getPreferences } from '../data/prefs'
 import { getResourceLink } from './resourceLink'
 import { PerfMonitor, HUB_INTERVAL_MS } from './perf'
+import { connectionRegistry } from './connectionRegistry'
 
 /**
  * 性能探测枢纽（连接列表页"可见行"驱动）——hub 是唯一监控者，生命周期独立于终端会话：
@@ -33,6 +34,7 @@ interface HubEntry {
 }
 
 const entries = new Map<string, HubEntry>()
+connectionRegistry.subscribe(({ state }) => entries.get(state.hostId)?.monitor.invalidate())
 /** 当前 watch 的 hostId 集合（perfInvalidate 重建条目用） */
 const watched = new Set<string>()
 /**
@@ -123,6 +125,17 @@ async function clientFor(hostId: string): Promise<Client | null> {
   e.building = true
   try {
     const client = await connectProbeClient(e.conn, secrets)
+    // The watcher may have been removed/replaced while dialing. Never retain its socket.
+    if (entries.get(hostId) !== e) {
+      client.end()
+      return null
+    }
+    const shared = getResourceLink(hostId)?.activeClient
+    if (shared) {
+      authFailedHosts.delete(hostId)
+      client.end()
+      return shared
+    }
     client.once('close', () => {
       const cur = entries.get(hostId)
       if (cur?.client === client) cur.client = null // 意外断开：下轮采样时重建
@@ -131,6 +144,8 @@ async function clientFor(hostId: string): Promise<Client | null> {
     e.failLogged = false
     return client
   } catch (err) {
+    // An obsolete failure must not poison the replacement watcher's authentication state.
+    if (entries.get(hostId) !== e) return null
     const message = (err as Error).message
     // ssh2 认证失败带结构化标记 err.level === 'client-authentication'（正则兜底文案变化）
     const isAuthFailure =
@@ -239,6 +254,7 @@ function createEntry(hostId: string): void {
     monitor: null as unknown as PerfMonitor
   }
   entry.monitor = new PerfMonitor(hostId, () => clientFor(hostId), broadcast, conn.name, {
+    isClientCurrent: (client) => (getResourceLink(hostId)?.activeClient ?? entry.client) === client,
     intervalMs: HUB_INTERVAL_MS,
     collectNet: false,
     shouldSample: () => !isNetworkDevice(connections.listConnections().find((c) => c.id === hostId))
@@ -260,8 +276,10 @@ export function perfInvalidate(hostId: string): void {
   createEntry(hostId)
 }
 
-/** 连接被删除：清理停等标记（配合 watch diff 的条目销毁） */
+/** 连接被删除：立即释放探测连接，并清理订阅与认证停等状态。 */
 export function perfForget(hostId: string): void {
+  watched.delete(hostId)
+  disposeEntry(hostId)
   authFailedHosts.delete(hostId)
 }
 

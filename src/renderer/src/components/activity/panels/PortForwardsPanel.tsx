@@ -25,6 +25,7 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
+import { PanelEmptyState } from '../PanelEmptyState'
 
 const active = (rule: PortForward): boolean => !['stopped', 'error'].includes(rule.status)
 const bytes = (value: number): string =>
@@ -254,7 +255,7 @@ function ForwardRow({
           </>
         }
       >
-        <p className="p-4 text-body text-fg">{t('forward.deleteHint')}</p>
+        <p className="text-body text-fg">{t('forward.deleteHint')}</p>
       </DialogShell>
     </div>
   )
@@ -344,7 +345,7 @@ function ForwardEditor({
         </>
       }
     >
-      <div className="space-y-4 p-4">
+      <div className="space-y-3">
         <ATField title={t('forward.name')}>
           <ATTextField value={input.name} onChange={(v) => set('name', v)} disabled={busy} />
         </ATField>
@@ -473,15 +474,18 @@ export function PortForwardsPanel(): React.JSX.Element {
           ))}
         </div>
       ) : (
-        <div className="space-y-3 py-8 text-center">
-          <p className="text-body text-fg">{t('forward.empty')}</p>
-          <p className="text-minor text-muted">{t('forward.emptyHint')}</p>
+        <PanelEmptyState
+          icon={PlugZap}
+          title={t('forward.empty')}
+          description={t('forward.emptyHint')}
+        >
           <Button
+            size="sm"
             title={t('forward.new')}
             disabled={!hosts.length}
             onClick={() => open(filter, true)}
           />
-        </div>
+        </PanelEmptyState>
       )}
       {editor && (
         <ForwardEditor

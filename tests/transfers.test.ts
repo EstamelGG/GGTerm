@@ -125,7 +125,9 @@ describe('real transfer cancellation', () => {
     const fixture = session((event, s) => {
       if (event.transfer.bytes >= 65536) s.cancelTransfer(event.transfer.id)
     })
-    await fixture.s.upload([join(root, 'large.bin')], '/upload')
+    await expect(fixture.s.upload([join(root, 'large.bin')], '/upload')).rejects.toThrow(
+      'Transfer canceled'
+    )
     expect(fixture.events.at(-1)?.transfer.status).toBe('canceled')
     expect(
       fixture.events.some(

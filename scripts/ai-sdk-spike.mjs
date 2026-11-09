@@ -21,13 +21,7 @@ const apiKey = process.env.SPIKE_API_KEY ?? ''
 let baseURL = process.env.SPIKE_BASE_URL ?? ''
 let model = process.env.SPIKE_MODEL ?? argModel
 if (!baseURL || !model) {
-  const prefsPath = join(
-    homedir(),
-    'Library',
-    'Application Support',
-    'ggterm',
-    'preferences.json'
-  )
+  const prefsPath = join(homedir(), 'Library', 'Application Support', 'ggterm', 'preferences.json')
   if (existsSync(prefsPath)) {
     const ai = JSON.parse(readFileSync(prefsPath, 'utf8')).ai ?? {}
     const chat = ai.scenarios?.chat

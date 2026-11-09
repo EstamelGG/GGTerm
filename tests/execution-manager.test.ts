@@ -28,6 +28,22 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers())
 
 describe('execution lifecycle', () => {
+  it('notifies lifecycle changes without streaming output through the change channel', async () => {
+    const changed = vi.fn()
+    const off = manager.onChanged(changed)
+    start()
+    await Promise.resolve()
+    expect(changed).toHaveBeenCalledTimes(2)
+    events.data('some output')
+    expect(changed).toHaveBeenCalledTimes(2)
+    events.exit(0)
+    expect(changed).toHaveBeenCalledTimes(3)
+    expect(changed.mock.calls).toEqual([['owner'], ['owner'], ['owner']])
+    off()
+    start()
+    await Promise.resolve()
+    expect(changed).toHaveBeenCalledTimes(3)
+  })
   it('returns a switch password-change confirmation as ordinary input, then protects the real password prompt', async () => {
     const requests: HumanInputRequest[] = []
     manager.onHumanInputRequest((request) => requests.push(request))
@@ -191,7 +207,7 @@ describe('execution lifecycle', () => {
       sensitiveInput: true
     })
     expect(settled).toHaveLength(0)
-    expect(() => manager.input('owner', id, 'model-secret\n')).toThrow('敏感输入')
+    expect(() => manager.input('owner', id, 'model-secret\n')).toThrow('Sensitive input')
     expect(transport.write).not.toHaveBeenCalled()
   })
 
@@ -238,10 +254,10 @@ describe('execution lifecycle', () => {
 
   it('rejects premature input, wrong owners, and invalid cursors', () => {
     const id = start()
-    expect(() => manager.input('owner', id, 'lost\n')).toThrow('尚未就绪')
-    expect(() => manager.snapshot('other-owner', id)).toThrow('不属于')
-    expect(() => manager.cancel('other-owner', id)).toThrow('不属于')
-    expect(() => manager.snapshot('owner', id, 10)).toThrow('游标')
+    expect(() => manager.input('owner', id, 'lost\n')).toThrow('Execution channel not ready')
+    expect(() => manager.snapshot('other-owner', id)).toThrow('not owned by this AI session')
+    expect(() => manager.cancel('other-owner', id)).toThrow('not owned by this AI session')
+    expect(() => manager.snapshot('owner', id, 10)).toThrow('Invalid output cursor')
     expect(transport.write).not.toHaveBeenCalled()
   })
 

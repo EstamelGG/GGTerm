@@ -55,6 +55,7 @@ export function DialogShell({
         />
         <DialogPrimitive.Content
           data-slot="dialog-shell"
+          aria-describedby={undefined}
           className="fixed top-[50%] left-[50%] z-50 flex max-h-[calc(100%-3rem)] w-full translate-x-[-50%] translate-y-[-50%] flex-col gap-0 overflow-hidden rounded-xl border border-line bg-modal shadow-lg duration-200 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
           style={{ width, maxWidth: 'calc(100% - 2rem)' }}
           onOpenAutoFocus={(e) => {
@@ -71,8 +72,11 @@ export function DialogShell({
           }}
         >
           {/* 顶栏 */}
-          <div className="flex h-10 shrink-0 items-center gap-2 border-b border-line bg-sidebar px-3.5">
-            <DialogPrimitive.Title className="min-w-0 truncate text-title font-semibold text-fg">
+          <div
+            data-slot="dialog-shell-header"
+            className="flex min-h-[var(--at-chrome-row-height)] shrink-0 items-center gap-2 border-b border-line bg-sidebar px-3 py-1"
+          >
+            <DialogPrimitive.Title className="min-w-0 break-words text-title font-semibold text-fg">
               {title}
             </DialogPrimitive.Title>
             <div className="flex-1" />
@@ -89,15 +93,23 @@ export function DialogShell({
           </div>
 
           {/* 内容区（默认 p-4；自定义布局经 contentClassName 覆盖） */}
-          <div className={cn('min-h-0 flex-1 overflow-y-auto p-4', contentClassName)}>
+          <div
+            data-slot="dialog-shell-body"
+            className={cn(
+              '@container/dialog min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-3 [overflow-wrap:anywhere]',
+              contentClassName
+            )}
+          >
             {children}
           </div>
 
           {/* 底栏：左侧次要动作 + 右侧主操作 */}
           {(footer || footerAside) && (
-            <div className="flex h-10 shrink-0 items-center gap-2 border-t border-line bg-sidebar px-3.5">
-              {footerAside}
-              <div className="flex-1" />
+            <div
+              data-slot="dialog-shell-footer"
+              className="flex min-h-[var(--at-chrome-row-height)] shrink-0 flex-wrap items-center justify-end gap-2 border-t border-line bg-sidebar px-3 py-2 [&>button]:max-w-full [&>button]:whitespace-normal"
+            >
+              {footerAside && <div className="mr-auto min-w-0 max-w-full">{footerAside}</div>}
               {footer}
             </div>
           )}

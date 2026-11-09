@@ -1,5 +1,6 @@
 {
   "browser": {
+    "agentControlling": "Agent is controlling this page",
     "bookmarks": "Bookmarks",
     "saveBookmark": "Bookmark this page",
     "editBookmark": "Edit bookmark",
@@ -218,6 +219,8 @@
     "deleteConnTitle": "Delete Host",
     "deleteConnMessage": "Are you sure you want to delete \"{{name}}\"? Saved credentials will also be removed.",
     "groups": "Groups",
+    "hideDirectory": "Hide host directory",
+    "showDirectory": "Show host directory",
     "newGroup": "New Group",
     "collapseAll": "Collapse All",
     "renameGroup": "Rename Group",
@@ -470,6 +473,9 @@
     "consoleTitle": "Console {{n}}",
     "newTerminal": "New Terminal",
     "reconnect": "Reconnect",
+    "restartTerminal": "Restart terminal",
+    "cancelConnect": "Cancel connection",
+    "recoveryHint": "Terminals will reopen when the connection recovers.",
     "noSessions": "No sessions",
     "closeFileMessage": "\"{{name}}\" has unsaved changes. Close it anyway?",
     "manualLoginTitle": "Manual Login",
@@ -763,6 +769,9 @@
       "reason": "Reason",
       "since": "Since",
       "fit": "Fit view",
+      "zoomIn": "Zoom in",
+      "zoomOut": "Zoom out",
+      "viewOptions": "View options",
       "spacing": "Link spacing",
       "nodeSize": "Node size"
     },
@@ -795,5 +804,13 @@
     "NO_RELEASE": "No release is available yet.",
     "RATE_LIMITED": "GitHub rate limit reached. Please try again later.",
     "RELEASE_NOT_READY": "Release installers are still being prepared. Please try again later."
+  },
+  "workspaceErrors": {
+    "recovery": "Workspace state could not be restored",
+    "shell": "Terminal could not be created",
+    "credentials": "Login details could not be saved",
+    "preferences": "Preferences could not be loaded",
+    "retry": "Retry",
+    "dismiss": "Dismiss"
   }
 }

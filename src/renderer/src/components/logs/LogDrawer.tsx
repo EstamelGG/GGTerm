@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, ChevronUp, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { ResizeHandle } from '@/components/ui/ResizeHandle'
+import { lockResizeCursor } from '@/lib/resizeCursor'
 import { IconButton } from '@/components/ui/IconButton'
 import { Button } from '@/components/form/Buttons'
 import { ChoiceChip } from '@/components/ui/ChoiceChip'
@@ -98,8 +100,25 @@ export function LogDrawer(): React.JSX.Element | null {
   const dragOrigin = useRef<{ startY: number; startPct: number; containerH: number } | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const dragging = previewPct !== null
+  const pendingPct = useRef<number | null>(null)
+  const releaseCursor = useRef<(() => void) | null>(null)
+  useEffect(() => () => releaseCursor.current?.(), [])
+  useEffect(
+    () =>
+      useLogStore.subscribe((state) => {
+        if (!state.open || state.collapsed) {
+          releaseCursor.current?.()
+          releaseCursor.current = null
+          dragOrigin.current = null
+          pendingPct.current = null
+          setPreviewPct(null)
+        }
+      }),
+    []
+  )
 
   const beginDrag = (e: React.PointerEvent): void => {
+    if (e.button !== 0 || dragOrigin.current) return
     e.preventDefault()
     const rect = rootRef.current?.parentElement?.getBoundingClientRect()
     dragOrigin.current = {
@@ -107,22 +126,30 @@ export function LogDrawer(): React.JSX.Element | null {
       startPct: previewPct ?? pct,
       containerH: Math.max(rect?.height ?? window.innerHeight, 1)
     }
+    pendingPct.current = pct
+    setPreviewPct(pct)
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    releaseCursor.current = lockResizeCursor('y', endDrag)
   }
   const moveDrag = (e: React.PointerEvent): void => {
     const base = dragOrigin.current
     if (!base) return
     const dy = base.startY - e.clientY
     const next = (((base.startPct / 100) * base.containerH + dy) / base.containerH) * 100
-    setPreviewPct(Math.min(PCT_MAX, Math.max(PCT_MIN, next)))
+    pendingPct.current = Math.min(PCT_MAX, Math.max(PCT_MIN, next))
+    setPreviewPct(pendingPct.current)
   }
   const endDrag = (): void => {
-    if (previewPct !== null) {
-      setPct(previewPct)
-      localStorage.setItem(H_KEY, String(previewPct))
-    }
+    const next = pendingPct.current
+    pendingPct.current = null
+    releaseCursor.current?.()
+    releaseCursor.current = null
     setPreviewPct(null)
     dragOrigin.current = null
+    if (next !== null) {
+      setPct(next)
+      localStorage.setItem(H_KEY, String(next))
+    }
   }
 
   if (!open) return null
@@ -138,11 +165,15 @@ export function LogDrawer(): React.JSX.Element | null {
     >
       {/* 上沿拖拽调高（展开态） */}
       {!collapsed && (
-        <div
-          className="absolute inset-x-0 -top-1 z-10 h-2 cursor-row-resize touch-none"
+        <ResizeHandle
+          axis="y"
+          edge="start"
+          active={dragging}
           onPointerDown={beginDrag}
           onPointerMove={moveDrag}
           onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+          onLostPointerCapture={endDrag}
         />
       )}
       <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-line px-3">

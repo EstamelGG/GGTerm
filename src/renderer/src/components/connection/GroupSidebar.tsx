@@ -14,6 +14,7 @@ import {
   Pencil,
   Plug,
   Plus,
+  PanelLeftClose,
   RotateCw,
   Server,
   ServerPlus,
@@ -79,7 +80,8 @@ export function GroupSidebar({
   onEdit,
   onCopyAddress,
   onLocate,
-  onDelete
+  onDelete,
+  onCollapse
 }: {
   pick: SidebarPick
   onPick: (pick: SidebarPick) => void
@@ -98,6 +100,7 @@ export function GroupSidebar({
   onCopyAddress: (c: HostConnection) => void
   onLocate: (c: HostConnection) => void
   onDelete: (c: HostConnection) => void
+  onCollapse?: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
@@ -239,8 +242,18 @@ export function GroupSidebar({
   return (
     <aside className="flex h-full w-full flex-col bg-sidebar">
       <ChromeRow>
-        <span className="flex-1 text-caption font-semibold text-muted">{t('conn.groups')}</span>
+        <span className="flex-1 text-minor font-semibold text-muted">{t('conn.groups')}</span>
         <span className="flex items-center gap-1">
+          {onCollapse && (
+            <IconButton
+              variant="toolbar"
+              icon={PanelLeftClose}
+              frame={24}
+              title={t('conn.hideDirectory')}
+              aria-expanded={true}
+              onClick={onCollapse}
+            />
+          )}
           <IconButton
             variant="toolbar"
             icon={RotateCw}
@@ -495,11 +508,11 @@ function SideRow({
       />
       <span className="flex min-w-0 items-baseline gap-1.5">
         <span
-          className={cn('min-w-0 truncate text-minor', on ? 'font-semibold text-fg' : 'text-muted')}
+          className={cn('min-w-0 truncate text-body', on ? 'font-semibold text-fg' : 'text-muted')}
         >
           {title}
         </span>
-        <span className="shrink-0 text-caption font-medium tabular-nums text-muted">{count}</span>
+        <span className="shrink-0 text-minor font-medium tabular-nums text-muted">{count}</span>
       </span>
     </button>
   )
@@ -592,7 +605,7 @@ function ConnRow({
           />
           <span
             className={cn(
-              'min-w-0 flex-1 truncate text-minor',
+              'min-w-0 flex-1 truncate text-body',
               selected ? 'font-medium text-fg' : 'text-muted'
             )}
           >

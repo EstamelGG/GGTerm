@@ -1,7 +1,13 @@
+vi.mock('../src/main/ipc/delivery', () => ({ broadcast: vi.fn() }))
 import { expect, it, vi } from 'vitest'
 import { registerExecutionIpc } from '../src/main/ai/executionIpc'
 const handle = vi.hoisted(() => vi.fn())
-const executions = vi.hoisted(() => ({ list: vi.fn(), snapshot: vi.fn(), close: vi.fn() }))
+const executions = vi.hoisted(() => ({
+  list: vi.fn(),
+  snapshot: vi.fn(),
+  close: vi.fn(),
+  onChanged: vi.fn()
+}))
 vi.mock('electron', () => ({ ipcMain: { handle } }))
 vi.mock('../src/main/ai/exec', () => ({ executions }))
 
@@ -9,9 +15,9 @@ it('exposes only session-scoped reading and explicit termination, never input or
   registerExecutionIpc()
   const handlers = new Map(handle.mock.calls)
   expect([...handlers.keys()]).toEqual(['execution:list', 'execution:read', 'execution:terminate'])
-  expect(() => handlers.get('execution:list')({}, undefined)).toThrow('AI 会话')
+  expect(() => handlers.get('execution:list')({}, undefined)).toThrow('AI session id is required')
   handlers.get('execution:list')({}, 'owner')
-  expect(executions.list).toHaveBeenCalledWith('owner')
+  expect(executions.list).toHaveBeenCalledWith('owner', undefined)
   handlers.get('execution:read')({}, 'owner', 'task', 5)
   expect(executions.snapshot).toHaveBeenCalledWith('owner', 'task', 5, true)
   handlers.get('execution:terminate')({}, 'owner', 'task')

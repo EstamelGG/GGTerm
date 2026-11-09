@@ -6,6 +6,7 @@ import type { ChatState, ChatStatus, ChatTransport, UIMessageChunk } from 'ai'
 import { buildPayload } from '@/lib/aiInput'
 import { useConnectionsStore } from '@/stores/connections'
 import { useLinksStore } from '@/stores/links'
+import { useWorkspaceIssues } from './workspaceIssues'
 import type {
   AiContextUsage,
   AiRecoveryState,
@@ -49,7 +50,7 @@ interface AiState {
   viewChatRequest: number
   init: () => Promise<void>
   newSession: () => Promise<void>
-  closeSession: (id: string) => void
+  closeSession: (id: string) => Promise<void>
   activate: (id: string) => void
   send: (text: string) => void
   cancel: () => void
@@ -110,6 +111,7 @@ interface Receiver {
 const receivers = new Map<string, Receiver>()
 const completed = new Map<string, { promise: Promise<void>; resolve: () => void }>()
 const paused = new Set<string>()
+const closingSessions = new Set<string>()
 const revisions = new Map<string, number>()
 
 function openStream(
@@ -465,31 +467,30 @@ export const useAiStore = create<AiState>((set, get) => ({
     }
   },
 
-  closeSession: (id) => {
-    window.aterm.ai.closeSession(id)
+  closeSession: async (id) => {
+    if (closingSessions.has(id)) return
+    closingSessions.add(id)
+    const scope = `ai:close:${id}`
+    try {
+      await window.aterm.ai.closeSession(id)
+    } catch (error) {
+      useWorkspaceIssues.getState().report(scope, error, 'recovery', () => get().closeSession(id))
+      return
+    } finally {
+      closingSessions.delete(id)
+    }
+    useWorkspaceIssues.getState().clear(scope)
     chats.delete(id)
     pendingNotify.delete(id)
     paused.delete(id)
     revisions.set(id, (revisions.get(id) ?? 0) + 1)
     const sessions = get().sessions.filter((s) => s.id !== id)
-    if (sessions.length === 0) {
-      void window.aterm.ai
-        .createSession()
-        .then((s) => set({ sessions: [{ ...emptySession(s), loaded: true }], activeId: s.id }))
-        .catch((err: unknown) => {
-          set({
-            initError: String(err instanceof Error ? err.message : err),
-            sessions: [],
-            activeId: null
-          })
-        })
-      return
-    }
     set({
       sessions,
       // 列表按 updatedAt 降序（最新在前）：关掉当前会话后回到最近的那个，而不是列表末位的最老会话
-      activeId: get().activeId === id ? sessions[0].id : get().activeId
+      activeId: get().activeId === id ? (sessions[0]?.id ?? null) : get().activeId
     })
+    if (sessions.length === 0) await get().newSession()
   },
 
   activate: (id) => {

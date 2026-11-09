@@ -5,6 +5,7 @@ import icon from '../../resources/icon.png?asset'
 import {
   installLocalTerminals,
   disposeLocalTerminals,
+  waitForLocalTerminalCleanup,
   registerLocalTerminalIpc
 } from './localTerminal'
 import { registerAppUpdateIpc } from './appUpdate'
@@ -154,9 +155,14 @@ app.on('window-all-closed', () => {
   }
 })
 
+let cleanupStarted = false
 app.on('will-quit', (event) => {
-  disposeLocalTerminals()
-  // 本地 PTY 已清理；挂起审批随进程结束由拒绝语义结算
   event.preventDefault()
-  app.exit(0)
+  if (cleanupStarted) return
+  cleanupStarted = true
+  disposeLocalTerminals()
+  // Windows console enumeration is asynchronous; do not exit before PTYs are released.
+  void waitForLocalTerminalCleanup()
+    .catch((error) => appLog('main', String(error), 'error'))
+    .finally(() => app.exit(0))
 })

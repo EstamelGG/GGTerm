@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { ArrowDownUp, Bot, Gauge, Zap, Network, Plus } from 'lucide-react'
 import { useResizePreview } from '@/lib/useResizePreview'
 import { cn } from '@/lib/utils'
+import { ResizeHandle } from '@/components/ui/ResizeHandle'
 import { IconButton } from '@/components/ui/IconButton'
 import { useSftpStore } from '@/stores/sftp'
 import { useLocalTerminalStore } from '@/stores/localTerminal'
@@ -25,7 +26,7 @@ const MAX_WIDTH = 720
 function loadWidth(): number {
   const raw = localStorage.getItem(WIDTH_KEY)
   const value = raw === null ? NaN : Number(raw)
-  return Number.isFinite(value) ? Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, value)) : 460
+  return Number.isFinite(value) ? Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, value)) : 360
 }
 
 const PANELS = [
@@ -58,6 +59,9 @@ export function ActivityRail(): React.JSX.Element {
   const aiInput = useHumanInputStore((s) => Object.keys(s.pending).length > 0)
   const forwardsRunning = usePortForwardsStore((s) => s.rules.some((r) => r.status === 'running'))
   const forwardFilter = usePortForwardsStore((s) => s.filterHostId)
+  const forwardHasRules = usePortForwardsStore((s) =>
+    s.rules.some((rule) => !s.filterHostId || rule.hostId === s.filterHostId)
+  )
 
   useEffect(() => {
     let subscribed = true
@@ -107,12 +111,9 @@ export function ActivityRail(): React.JSX.Element {
           'relative h-full shrink-0 overflow-hidden border-l border-line bg-surface',
           !open && 'hidden'
         )}
-        style={{ width, maxWidth: '50vw' }}
+        style={{ width, maxWidth: '40vw' }}
       >
-        <div
-          className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize touch-none"
-          {...resize.handleProps}
-        />
+        <ResizeHandle edge="start" active={resize.preview !== null} {...resize.handleProps} />
         {/* AI 始终挂载，切换面板与折叠保留输入草稿、滚动位置和对话状态。 */}
         <div className={cn('h-full', active !== 'ai' && 'hidden')}>
           <Suspense fallback={null}>
@@ -142,7 +143,7 @@ export function ActivityRail(): React.JSX.Element {
                       : host?.title}
                   </span>
                 )}
-                {active === 'forwards' && (
+                {active === 'forwards' && forwardHasRules && (
                   <div className="ml-auto">
                     <IconButton
                       icon={Plus}
@@ -152,7 +153,7 @@ export function ActivityRail(): React.JSX.Element {
                   </div>
                 )}
               </ActivityPanelHeader>
-              <div className="min-h-0 flex-1 overflow-y-auto p-3">
+              <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
                 {active === 'forwards' ? (
                   <PortForwardsPanel />
                 ) : active === 'transfers' ? (
@@ -171,7 +172,7 @@ export function ActivityRail(): React.JSX.Element {
           )
         )}
       </div>
-      <div className="flex w-10 shrink-0 flex-col items-center gap-1.5 border-l border-line bg-sidebar py-3">
+      <div className="flex w-10 shrink-0 flex-col items-center gap-1.5 border-l border-line bg-sidebar py-2">
         {PANELS.map((panel) => (
           <span key={panel.id} className="relative">
             <IconButton

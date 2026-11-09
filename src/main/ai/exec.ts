@@ -63,7 +63,8 @@ export function connectRemoteExecution(
         events.data(stdout.end() + stderr.end())
         events.exit(exitCode, exitSignal)
       })
-      if (command) channel.write(/[\r\n]$/.test(command) ? command : `${command}\n`)
+      // PTY Enter is CR: LF alone is a continuation key in Windows interactive shells.
+      if (command) channel.write(/[\r\n]$/.test(command) ? command : `${command}\r`)
       resolve({
         write: (data) => {
           if (closed || !channel.writable)

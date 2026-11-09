@@ -64,13 +64,15 @@ export function InputPromptDialog({
         </p>
       )}
       <ATTextField
+        aria-label={title}
         className="font-mono"
         value={value}
         onChange={setValue}
         placeholder={placeholder}
         autoFocus
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && value.trim() !== '') onConfirm(value)
+          if (e.key === 'Enter' && !e.nativeEvent.isComposing && value.trim() !== '')
+            onConfirm(value)
         }}
       />
     </DialogShell>
@@ -88,6 +90,7 @@ function PermToggle({
   return (
     <button
       type="button"
+      aria-pressed={checked}
       className="flex items-center justify-center rounded-[4px] p-0.5 outline-none focus-visible:ring-1 focus-visible:ring-at-accent"
       onClick={onToggle}
     >
@@ -355,6 +358,7 @@ export function UploadDestinationDialog({
       <p className="break-all text-body text-muted">{summary}</p>
       <ATTextField
         className="mt-2 font-mono"
+        aria-label={t('sftp.destDirHint')}
         value={dest}
         onChange={setDest}
         placeholder={t('sftp.destDirHint')}
@@ -507,7 +511,7 @@ function SftpInfoContent({
       onOpenChange={(o) => !o && onClose()}
       title={t('sftp.info')}
       width={420}
-      contentClassName="p-4 select-text"
+      contentClassName="select-text"
     >
       {/* 身份头部：类型图标 + 名称 + 类型/大小副标题（entry 即可渲染，不依赖 stat，加载态也在） */}
       <div className="flex items-start gap-3">

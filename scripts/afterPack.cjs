@@ -159,9 +159,7 @@ function uuidSlots(buf) {
     for (let i = 0; i < nArch; i++) {
       const entry = 8 + i * entrySize
       if (entry + entrySize > buf.length) break
-      const offset = is64
-        ? Number(buf.readBigUInt64BE(entry + 8))
-        : buf.readUInt32BE(entry + 8)
+      const offset = is64 ? Number(buf.readBigUInt64BE(entry + 8)) : buf.readUInt32BE(entry + 8)
       collectThin(buf, offset, slots)
     }
     return slots
@@ -199,7 +197,10 @@ async function patchMachO(file, uuid) {
  */
 function deterministicUuid(seed) {
   const uuid = Buffer.from(
-    createHash('sha256').update(SEED_PREFIX + seed).digest().subarray(0, 16)
+    createHash('sha256')
+      .update(SEED_PREFIX + seed)
+      .digest()
+      .subarray(0, 16)
   )
   uuid[6] = (uuid[6] & 0x0f) | 0x40 // version 4
   uuid[8] = (uuid[8] & 0x3f) | 0x80 // RFC 4122 variant
@@ -244,7 +245,9 @@ async function afterPack(context) {
     }
   }
 
-  console.log(`  • afterPack: 为 ${appName} 写入唯一 Mach-O UUID（消除与其它 Electron 应用的身份冲突）`)
+  console.log(
+    `  • afterPack: 为 ${appName} 写入唯一 Mach-O UUID（消除与其它 Electron 应用的身份冲突）`
+  )
 
   for (const file of executables) {
     const relative = path.relative(appPath, file)

@@ -1,28 +1,21 @@
-import { promises as fsp, createReadStream, createWriteStream } from 'fs'
-import { pipeline } from 'node:stream/promises'
-import { Transform } from 'node:stream'
-import { join as joinLocal, basename, parse } from 'path'
 import { app, dialog, shell } from 'electron'
+import { createReadStream, createWriteStream, promises as fsp } from 'fs'
+import { Transform } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
+import { basename, join as joinLocal, parse } from 'path'
 import type { Client, SFTPWrapper } from 'ssh2'
-import { receiveArchive, extractArchive } from './archiveDownload'
-import type {
-  SftpEditPayload,
-  SftpEntry,
-  SftpListing,
-  SftpStateEvent,
-  SftpStat,
-  SftpTransferMirror
-} from '../../shared/types'
-import { joinPath, linkTargetFromLongname, shellQuote } from '../../shared/sftpPath'
 import { errorMessage } from '../../shared/error'
-import { appLog } from '../log'
-import type { HostLink, HostLinkEvents } from './link'
-import { removeDirCommand } from './remoteScripts'
-import type { EncodingMode, FileEncoding } from '../../shared/encoding'
-import { decodeFile, encodeFile } from './textEncoding'
-import { writeRemoteAtomic } from './atomicFile'
-import { TransferTask } from './transferTask'
+import { joinPath, shellQuote } from '../../shared/sftpPath'
+import type { SftpEntry, SftpStateEvent, SftpTransferMirror } from '../../shared/types'
 import { localAccessDeniedError } from '../localAccess'
+import { appLog } from '../log'
+import { extractArchive, receiveArchive } from './archiveDownload'
+import { DirectoryMeasure } from './directoryMeasure'
+import type { HostLink, HostLinkEvents } from './link'
+import { ResourceLifetime } from './resourceLifetime'
+import { SftpFiles, entryFrom, type SftpStats, type SftpFileEntry } from './sftpFiles'
+import { TransferTask } from './transferTask'
+export { execCommand } from './sftpFiles'
 
 /**
  * 对照 ATerminal-Swift Services/SftpController.swift：
@@ -32,22 +25,6 @@ import { localAccessDeniedError } from '../localAccess'
  */
 
 type SftpEvents = Pick<HostLinkEvents, 'onSftpState' | 'onSftpTransfer' | 'onSftpMeasure'>
-
-/** ssh2 Stats 的子集（结构兼容；权限位在 mode） */
-interface SftpStats {
-  size: number
-  uid: number
-  gid: number
-  mode: number
-  atime: number
-  mtime: number
-}
-
-interface SftpFileEntry {
-  filename: string
-  longname: string
-  attrs: SftpStats
-}
 
 /** 统一 ssh2 回调风格（err 可为 undefined）为 Promise */
 function p<T>(fn: (cb: (err: Error | null | undefined, res?: T) => void) => void): Promise<T> {
@@ -59,28 +36,9 @@ function p<T>(fn: (cb: (err: Error | null | undefined, res?: T) => void) => void
   })
 }
 
-/** 在共享连接上执行命令并收集输出（对照 executeCommand；目录删除用） */
-export function execCommand(client: Client, command: string, maxBytes = 65536): Promise<string> {
-  return new Promise((resolve, reject) => {
-    client.exec(command, (err, stream) => {
-      if (err || !stream) {
-        reject(err ?? new Error('exec failed'))
-        return
-      }
-      let out = ''
-      stream.on('data', (d: Buffer) => {
-        if (out.length < maxBytes) out += d.toString('utf8')
-      })
-      stream.stderr.on('data', (d: Buffer) => {
-        if (out.length < maxBytes) out += d.toString('utf8')
-      })
-      stream.on('close', () => resolve(out))
-      stream.on('error', reject)
-    })
-  })
-}
-
 export class SftpSession {
+  private readonly files: SftpFiles
+  private readonly measurement: DirectoryMeasure
   private sftp: SFTPWrapper | null = null
   private started = false
   private transfers: SftpTransferMirror[] = []
@@ -88,9 +46,6 @@ export class SftpSession {
   private tickAt = new Map<string, { at: number; bytes: number }>()
   /** 进度事件节流标记：xfer.id → 上次 emit 时刻 */
   private lastEmitAt = new Map<string, number>()
-  private measureAbort: AbortController | null = null
-  /** 当前测度的任务队列引用：取消时直接清空，worker 立即断供（不再发起 readdir） */
-  private measureQueue: string[] | null = null
   private readonly tasks = new Map<string, TransferTask>()
   private readonly cleanupPaths = new Map<string, Set<string>>()
   private readonly cleaning = new Set<string>()
@@ -131,19 +86,39 @@ export class SftpSession {
     emit()
   }
   private channelLock: Promise<SFTPWrapper> | null = null
-  private channelLifetime = new AbortController()
-  /** realpath 结果缓存（同路径重复浏览零往返；仅成功结果入缓存） */
-  private realpathCache = new Map<string, string>()
+  private readonly channelLifetime: ResourceLifetime
 
   constructor(
     private readonly link: HostLink,
     private readonly events: SftpEvents
-  ) {}
+  ) {
+    this.channelLifetime = new ResourceLifetime(link.hostId, 'sftp')
+    this.files = new SftpFiles(
+      () => this.ensureChannel(),
+      (channel, fn) => this.request(channel, fn),
+      () => this.client,
+      this.channelLifetime
+    )
+    this.measurement = new DirectoryMeasure(
+      link.hostId,
+      (path) => this.files.listEntries(path),
+      (event) => this.events.onSftpMeasure(event)
+    )
+  }
 
   /** 渲染层面板激活时调用：链路未活则等待（≤15s），再开通道 —— 首连事件竞态兜底 */
   async start(): Promise<void> {
     this.started = true
-    if (!this.client) await this.link.waitForActive()
+    const lifetime = this.channelLifetime.capture(this.client)
+    if (!this.client) {
+      try {
+        await this.link.waitForActive()
+      } catch (error) {
+        if (lifetime.signal.aborted) return
+        throw error
+      }
+    }
+    if (lifetime.signal.aborted || !this.started) return
     await this.ensureChannel()
   }
 
@@ -159,7 +134,7 @@ export class SftpSession {
     this.emitState('disconnected')
   }
 
-  /** 主机链路（重）建立 —— 重开通道；目录刷新由渲染层监听 host:state 驱动 */
+  /** 主机链路（重）建立 —— 重开通道；目录刷新由渲染层监听 sftp:state 驱动 */
   hostLinkRestored(): void {
     if (!this.started) return
     void this.ensureChannel().catch(() => {})
@@ -177,8 +152,8 @@ export class SftpSession {
     const client = this.client
     if (!client) throw new Error('host link not active')
     this.emitState('connecting')
-    const lifetime = this.channelLifetime
-    const opening = this.request<SFTPWrapper>((cb) =>
+    const lifetime = this.channelLifetime.capture(this.client)
+    const opening = this.request<SFTPWrapper>(null, (cb) =>
       client.sftp((error, channel) => {
         if (lifetime.signal.aborted || client !== this.client) {
           channel?.destroy()
@@ -187,7 +162,10 @@ export class SftpSession {
       })
     )
       .then((sftp) => {
-        lifetime.signal.throwIfAborted()
+        if (!lifetime.current()) {
+          sftp.destroy()
+          throw new Error('SFTP connection changed; retry the operation')
+        }
         this.sftp = sftp
         const lost = (): void => {
           if (this.sftp !== sftp) return
@@ -201,7 +179,7 @@ export class SftpSession {
         return sftp
       })
       .catch((err: Error) => {
-        if (lifetime === this.channelLifetime) {
+        if (lifetime.current()) {
           this.teardown()
           this.emitState('error', err.message)
         }
@@ -216,9 +194,10 @@ export class SftpSession {
 
   /** Bound callback requests to the current channel, including Agent-only sessions. */
   private request<T>(
+    channel: SFTPWrapper | null,
     fn: (cb: (err: Error | null | undefined, res?: T) => void) => void
   ): Promise<T> {
-    const lifetime = this.channelLifetime
+    const lifetime = this.channelLifetime.capture(this.client)
     return new Promise((resolve, reject) => {
       let settled = false
       const finish = (err?: Error | null, value?: T): void => {
@@ -232,9 +211,13 @@ export class SftpSession {
       const abort = (): void => finish(new Error('SFTP connection lost; retry after reconnecting'))
       const timer = setTimeout(() => {
         finish(new Error('SFTP request timed out after 30 seconds; retry to reopen the channel'))
-        if (lifetime === this.channelLifetime) this.teardown()
+        if (lifetime.current()) this.teardown()
       }, 30000)
       lifetime.signal.addEventListener('abort', abort, { once: true })
+      if (!lifetime.current() || (channel && channel !== this.sftp)) {
+        abort()
+        return
+      }
       try {
         fn((err, value) =>
           finish(err ? (err instanceof Error ? err : new Error(errorMessage(err))) : null, value)
@@ -246,13 +229,12 @@ export class SftpSession {
   }
 
   private teardown(): void {
-    const lifetime = this.channelLifetime
-    this.channelLifetime = new AbortController()
+    this.abortMeasure()
     const current = this.sftp
     this.sftp = null
     this.channelLock = null
-    this.realpathCache.clear()
-    lifetime.abort()
+    this.files.clearCache()
+    this.channelLifetime.reset()
     for (const task of this.tasks.values()) task.cancel()
     if (current) {
       try {
@@ -264,176 +246,71 @@ export class SftpSession {
   }
 
   private emitState(status: SftpStateEvent['status'], error?: string): void {
-    this.events.onSftpState({ hostId: this.link.hostId, status, error })
+    this.events.onSftpState({
+      hostId: this.link.hostId,
+      status,
+      error,
+      resource: this.channelLifetime.capture(this.client).identity
+    })
+  }
+  list(...args: Parameters<SftpFiles['list']>): ReturnType<SftpFiles['list']> {
+    return this.files.list(...args)
   }
 
-  /* ---------------- 查询操作 ---------------- */
-
-  /** readdir + realpath（符号链接目录解析为真实路径；对照 load() 的取数部分） */
-  async list(path: string): Promise<SftpListing> {
-    const sftp = await this.ensureChannel()
-    const [raw, resolved] = await Promise.all([
-      this.request<SftpFileEntry[]>((cb) => sftp.readdir(path, cb)),
-      this.request<string>((cb) => sftp.realpath(path, cb)).catch(() => path)
-    ])
-    const entries = raw.map((f) => entryFrom(f, resolved)).filter((e): e is SftpEntry => e !== null)
-    appLog('sftp', `List directory "${path}" → ${entries.length} entries`)
-    return { resolved, entries }
+  realpath(...args: Parameters<SftpFiles['realpath']>): ReturnType<SftpFiles['realpath']> {
+    return this.files.realpath(...args)
   }
 
-  /** 仅 readdir（测量专用：省去 realpath 往返，取消后在途请求减半） */
-  private async listEntries(path: string): Promise<SftpEntry[]> {
-    const sftp = await this.ensureChannel()
-    const raw = await this.request<SftpFileEntry[]>((cb) => sftp.readdir(path, cb))
-    const entries = raw.map((f) => entryFrom(f, path)).filter((e): e is SftpEntry => e !== null)
-    appLog('sftp', `List directory "${path}" → ${entries.length} entries`)
-    return entries
+  readlink(...args: Parameters<SftpFiles['readlink']>): ReturnType<SftpFiles['readlink']> {
+    return this.files.readlink(...args)
   }
 
-  async realpath(path: string): Promise<string> {
-    const hit = this.realpathCache.get(path)
-    if (hit) return hit
-    const sftp = await this.ensureChannel()
-    const resolved = await this.request<string>((cb) => sftp.realpath(path, cb)).catch(() => null)
-    if (resolved === null) return path // 通道暂时不可用不缓存，避免固化错误结果
-    this.realpathCache.set(path, resolved)
-    return resolved
+  stat(...args: Parameters<SftpFiles['stat']>): ReturnType<SftpFiles['stat']> {
+    return this.files.stat(...args)
   }
 
-  async readlink(path: string): Promise<string> {
-    const sftp = await this.ensureChannel()
-    return this.request<string>((cb) => sftp.readlink(path, cb)).catch(() => '')
+  itemDetail(...args: Parameters<SftpFiles['itemDetail']>): ReturnType<SftpFiles['itemDetail']> {
+    return this.files.itemDetail(...args)
   }
 
-  async stat(path: string): Promise<SftpStat> {
-    const sftp = await this.ensureChannel()
-    const attrs = await this.request<SftpStats>((cb) => sftp.stat(path, cb))
-    return {
-      size: attrs.size ?? 0,
-      permissions: attrs.mode ?? null,
-      uid: attrs.uid ?? null,
-      gid: attrs.gid ?? null,
-      accessed: attrs.atime ? attrs.atime * 1000 : null,
-      modified: attrs.mtime ? attrs.mtime * 1000 : null,
-      childFiles: null,
-      childDirs: null
-    }
+  exists(...args: Parameters<SftpFiles['exists']>): ReturnType<SftpFiles['exists']> {
+    return this.files.exists(...args)
   }
 
-  /** 目录详情：stat + 子项计数（对照 itemDetail） */
-  async itemDetail(path: string): Promise<SftpStat> {
-    const base = await this.stat(path)
-    try {
-      const kids = await this.list(path)
-      return {
-        ...base,
-        childFiles: kids.entries.filter((e) => !e.isDir).length,
-        childDirs: kids.entries.filter((e) => e.isDir).length
-      }
-    } catch {
-      return base
-    }
+  isDirectory(...args: Parameters<SftpFiles['isDirectory']>): ReturnType<SftpFiles['isDirectory']> {
+    return this.files.isDirectory(...args)
   }
 
-  async exists(path: string): Promise<boolean> {
-    try {
-      await this.stat(path)
-      return true
-    } catch {
-      return false
-    }
+  mkdir(...args: Parameters<SftpFiles['mkdir']>): ReturnType<SftpFiles['mkdir']> {
+    return this.files.mkdir(...args)
   }
 
-  async isDirectory(path: string): Promise<boolean> {
-    const sftp = await this.ensureChannel()
-    try {
-      const attrs = await this.request<SftpStats>((cb) => sftp.stat(path, cb))
-      return (attrs.mode & 0o170000) === 0o040000
-    } catch {
-      return false
-    }
+  touch(...args: Parameters<SftpFiles['touch']>): ReturnType<SftpFiles['touch']> {
+    return this.files.touch(...args)
   }
 
-  /* ---------------- 变更操作 ---------------- */
-
-  async mkdir(path: string): Promise<void> {
-    const sftp = await this.ensureChannel()
-    await this.request<null>((cb) => sftp.mkdir(path, cb))
+  rename(...args: Parameters<SftpFiles['rename']>): ReturnType<SftpFiles['rename']> {
+    return this.files.rename(...args)
   }
 
-  async touch(path: string): Promise<void> {
-    const sftp = await this.ensureChannel()
-    const handle = await this.request<Buffer>((cb) => sftp.open(path, 'w', cb))
-    await this.request<null>((cb) => sftp.close(handle, cb))
+  chmod(...args: Parameters<SftpFiles['chmod']>): ReturnType<SftpFiles['chmod']> {
+    return this.files.chmod(...args)
   }
 
-  async rename(src: string, dest: string): Promise<void> {
-    const sftp = await this.ensureChannel()
-    await this.request<null>((cb) => sftp.rename(src, dest, cb))
+  readForEdit(...args: Parameters<SftpFiles['readForEdit']>): ReturnType<SftpFiles['readForEdit']> {
+    return this.files.readForEdit(...args)
   }
 
-  async chmod(path: string, mode: number): Promise<void> {
-    const sftp = await this.ensureChannel()
-    await this.request<null>((cb) => sftp.chmod(path, mode, cb))
+  writeText(...args: Parameters<SftpFiles['writeText']>): ReturnType<SftpFiles['writeText']> {
+    return this.files.writeText(...args)
   }
 
-  /* ---------------- 远程编辑（阶段⑤，对照 readForEdit/writeText） ---------------- */
-
-  private static readonly EDIT_MAX_BYTES = 10 * 1024 * 1024
-
-  async readForEdit(
-    path: string,
-    _knownSize: number,
-    encoding: EncodingMode = 'auto'
-  ): Promise<SftpEditPayload> {
-    const limit = SftpSession.EDIT_MAX_BYTES
-    const sftp = await this.ensureChannel()
-    const handle = await this.request<Buffer>((cb) => sftp.open(path, 'r', cb))
-    try {
-      const chunks: Buffer[] = []
-      let offset = 0
-      for (;;) {
-        const buf = Buffer.alloc(64_000)
-        const n = await this.request<number>((cb) =>
-          sftp.read(handle, buf, 0, buf.length, offset, (err, bytesRead) => cb(err, bytesRead))
-        )
-        if (n <= 0) break
-        chunks.push(n === buf.length ? buf : buf.subarray(0, n))
-        offset += n
-        if (offset > limit) return { kind: 'tooLarge' }
-      }
-      return { kind: 'text', ...decodeFile(Buffer.concat(chunks), encoding), size: offset }
-    } finally {
-      await this.request<null>((cb) => sftp.close(handle, cb)).catch(() => {})
-    }
+  unlink(...args: Parameters<SftpFiles['unlink']>): ReturnType<SftpFiles['unlink']> {
+    return this.files.unlink(...args)
   }
 
-  async writeText(
-    path: string,
-    text: string,
-    encoding: FileEncoding = 'utf8',
-    bom = false
-  ): Promise<void> {
-    const data = encodeFile(text, encoding, bom)
-    const sftp = await this.ensureChannel()
-    await writeRemoteAtomic(sftp, path, data)
-  }
-
-  async unlink(path: string): Promise<void> {
-    const sftp = await this.ensureChannel()
-    await this.request<null>((cb) => sftp.unlink(path, cb))
-  }
-
-  /** 删除：文件走 unlink；目录走共享连接 exec rm -rf（对照 remove()） */
-  async remove(entry: SftpEntry): Promise<void> {
-    if (entry.isDir) {
-      const client = this.client
-      if (!client) throw new Error('host link not active')
-      const resolved = await this.realpath(entry.path)
-      await execCommand(client, removeDirCommand(resolved))
-      return
-    }
-    await this.unlink(entry.path)
+  remove(...args: Parameters<SftpFiles['remove']>): ReturnType<SftpFiles['remove']> {
+    return this.files.remove(...args)
   }
 
   /* ---------------- 传输（对照 upload/download + SftpTransfer） ---------------- */
@@ -453,6 +330,7 @@ export class SftpSession {
         )
       })
       if (!completed) {
+        if (xfer.status === 'canceled') throw new Error('Transfer canceled')
         throw new Error(xfer.error ?? `Upload failed: ${basename(local)}`)
       }
     }
@@ -937,110 +815,12 @@ export class SftpSession {
     task.cancel()
     this.events.onSftpTransfer({ hostId: this.link.hostId, transfer: { ...xfer } })
   }
-
-  /* ---------------- 目录测量（对照 measureDirectory，120ms 节流 + 可取消） ---------------- */
-
-  async measure(path: string): Promise<void> {
-    this.abortMeasure()
-    const abort = new AbortController()
-    this.measureAbort = abort
-    const hostId = this.link.hostId
-    let last = 0
-    const acc = { bytes: 0, files: 0, dirs: 0, skipped: 0, skippedPaths: [] as string[] }
-    const emit = (done: boolean, error?: string): void => {
-      this.events.onSftpMeasure({ hostId, path, ...acc, done, error })
-    }
-    try {
-      await this.accumulate(path, acc, abort.signal, () => {
-        const now = Date.now()
-        if (now - last >= 120) {
-          last = now
-          emit(false)
-        }
-      })
-      emit(true)
-    } catch (err) {
-      if (abort.signal.aborted) return
-      appLog('sftp', `Measure "${path}" failed: ${errorMessage(err)}`, 'error')
-      emit(true, errorMessage(err))
-    }
-  }
-
-  /**
-   * 目录测量（对照 measureDirectory，120ms 节流 + 可取消）。
-   * 并发遍历：任务队列 + 32 个 worker（SFTP 单通道支持多请求在途）。
-   * 错误语义对齐 du：根目录不可读 → 整体失败；子目录不可读（如 root
-   * 属主的 0700 目录）→ 计入 skipped 并继续测量其余部分。
-   */
-  private static readonly MEASURE_CONCURRENCY = 32
-
-  private async accumulate(
-    root: string,
-    acc: { bytes: number; files: number; dirs: number; skipped: number; skippedPaths: string[] },
-    signal: AbortSignal,
-    progress: () => void
-  ): Promise<void> {
-    const queue: string[] = [root]
-    this.measureQueue = queue
-    let failed = false
-    const worker = async (): Promise<void> => {
-      while (!failed && queue.length > 0) {
-        if (signal.aborted) throw new Error('aborted')
-        const dir = queue.shift()
-        if (dir === undefined) break
-        let kids: SftpEntry[]
-        try {
-          kids = await this.listEntries(dir)
-        } catch (err) {
-          if (signal.aborted) throw new Error('aborted')
-          if (dir === root) throw err
-          acc.skipped += 1
-          if (acc.skippedPaths.length < 5) acc.skippedPaths.push(dir.split('/').pop() || dir)
-          appLog(
-            'sftp',
-            `Measure skipped unreadable directory "${dir}": ${errorMessage(err)}`,
-            'error'
-          )
-          progress()
-          continue
-        }
-        for (const kid of kids) {
-          if (signal.aborted) throw new Error('aborted')
-          if (kid.isDir) {
-            acc.dirs += 1
-            queue.push(kid.path)
-          } else {
-            acc.files += 1
-            acc.bytes += kid.size
-          }
-          progress()
-        }
-      }
-    }
-    try {
-      const workers = Array.from({ length: SftpSession.MEASURE_CONCURRENCY }, () =>
-        worker().catch((err: unknown) => {
-          failed = true // 首个失败清场：其余 worker 快速退出，错误向上冒泡
-          queue.length = 0
-          throw err
-        })
-      )
-      await Promise.all(workers)
-    } finally {
-      if (this.measureQueue === queue) this.measureQueue = null
-    }
+  measure(path: string): Promise<void> {
+    return this.measurement.measure(path)
   }
 
   abortMeasure(): void {
-    this.measureAbort?.abort()
-    this.measureAbort = null
-    // 硬止损：清空任务队列，所有 worker 在当前在途 readdir 返回后立即退出，
-    // 不再发起新请求（ssh2 无按请求取消 API，在途 ≤ 并发数且只含 readdir）
-    if (this.measureQueue !== null) {
-      this.measureQueue.length = 0
-      this.measureQueue = null
-      appLog('sftp', 'Directory measurement canceled')
-    }
+    this.measurement.abortMeasure()
   }
 }
 
@@ -1057,29 +837,6 @@ export async function pickLocalPaths(
     : await dialog.showOpenDialog({ properties })
   if (res.canceled) return []
   return res.filePaths
-}
-
-/** ssh2 FileEntry → SftpEntry（对照 SftpController.entry） */
-function entryFrom(f: SftpFileEntry, dir: string): SftpEntry | null {
-  if (f.filename === '.' || f.filename === '..') return null
-  const mode = f.attrs.mode ?? 0
-  const type = mode & 0o170000
-  const isDir = type === 0o040000 || f.longname.startsWith('d')
-  const isLink = type === 0o120000 || f.longname.startsWith('l')
-  return {
-    name: f.filename,
-    path: joinPath(dir, f.filename),
-    isDir,
-    isLink,
-    size: f.attrs.size ?? 0,
-    permissions: f.attrs.mode ?? null,
-    uid: f.attrs.uid ?? null,
-    gid: f.attrs.gid ?? null,
-    accessed: f.attrs.atime ? f.attrs.atime * 1000 : null,
-    modified: f.attrs.mtime ? f.attrs.mtime * 1000 : null,
-    longname: f.longname,
-    linkTarget: isLink ? linkTargetFromLongname(f.longname) : null
-  }
 }
 
 /** 下载目标重名自动加 "(n)"（对照 SftpController.unique） */

@@ -50,6 +50,7 @@ beforeEach(() => {
   Object.defineProperty(window, 'aterm', {
     configurable: true,
     value: {
+      hosts: { onAgentState: vi.fn(() => () => {}), listAgentLinks: vi.fn(async () => []) },
       perf: { watchSession: watch },
       shells: { input },
       sftp: { cancelTransfer: cancel, stop, revealDownloads: vi.fn() },
@@ -166,7 +167,7 @@ it('keeps AI mounted when switching and collapsing, and host references reopen A
 it('requires a shell host, follows it for performance and commands, and stops targeting it on close', () => {
   render(<ActivityRail />)
   fireEvent.click(screen.getByRole('button', { name: 'activity.performance' }))
-  expect(screen.getByText('activity.noFocusedHost')).toBeTruthy()
+  expect(screen.getByText('activity.selectHostHint')).toBeTruthy()
   act(() => useSessionStore.getState().setTab({ kind: 'host', id: 'a' }))
   expect(screen.getByText('performance:a')).toBeTruthy()
   expect(watch).toHaveBeenLastCalledWith('a')

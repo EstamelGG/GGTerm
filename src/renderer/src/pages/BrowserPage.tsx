@@ -72,6 +72,9 @@ export function BrowserPage({
   const addressKey = `${selected ?? ''}:${current?.url ?? ''}`
   const address = draft?.key === addressKey ? draft.value : blank ? '' : (current?.url ?? '')
   const setAddress = (value: string): void => setDraft({ key: addressKey, value })
+  useEffect(() => {
+    if (active && blank) addressInput.current?.focus()
+  }, [active, blank, selected])
   const run = (operation: Promise<unknown>): void => {
     void operation.catch((error) => onToast(errorMessage(error), true))
   }
@@ -221,7 +224,7 @@ export function BrowserPage({
         />
       </ChromeRow>
       <form
-        className="flex h-10 shrink-0 items-center gap-1.5 border-b border-line px-3"
+        className="flex h-[var(--at-chrome-row-height)] min-w-0 shrink-0 items-center gap-1.5 border-b border-line px-[var(--at-chrome-row-padding-inline)]"
         onSubmit={(event) => {
           event.preventDefault()
           submit()
@@ -249,7 +252,7 @@ export function BrowserPage({
               run(window.aterm.browser.control(current.id, current.loading ? 'stop' : 'reload'))
             }
           />
-          <div className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-full border border-line bg-raised px-3 transition-colors focus-within:border-at-accent/60">
+          <div className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-[var(--at-control-radius)] border border-line bg-raised px-2 transition-colors focus-within:border-at-accent/60">
             {current?.loading ? (
               <LoaderCircle
                 size={12}
@@ -267,14 +270,17 @@ export function BrowserPage({
               placeholder={t('browser.address')}
               value={address}
               onChange={(event) => setAddress(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  setDraft(null)
+                  event.currentTarget.blur()
+                }
+              }}
             />
+            {address.trim() && (blank || address !== current?.url) && (
+              <IconButton icon={ArrowRight} frame={22} title={t('browser.open')} onClick={submit} />
+            )}
           </div>
-          <IconButton
-            icon={ArrowRight}
-            title={t('browser.open')}
-            disabled={!address.trim()}
-            onClick={submit}
-          />
           <div className="mx-1 h-4 w-px shrink-0 bg-line" />
           <IconButton
             icon={MessageSquarePlus}
@@ -286,7 +292,7 @@ export function BrowserPage({
             icon={MousePointer2}
             title={t(picking ? 'browser.cancelPick' : 'browser.pickElement')}
             selected={picking}
-            disabled={pageBlocked}
+            disabled={pageBlocked && !picking}
             onClick={() => run(pick())}
           />
         </fieldset>
@@ -306,6 +312,15 @@ export function BrowserPage({
           </span>
           <CopyIconButton value={notification.text} label={t('common.copy')} />
           <IconButton icon={X} title={t('common.close')} onClick={onDismissNotification} />
+        </div>
+      )}
+      {current?.controlling && !pageBlocked && (
+        <div
+          role="status"
+          className="flex shrink-0 items-center gap-2 border-b border-line bg-at-accent/5 px-3 py-1.5 text-minor text-at-accent"
+        >
+          <LoaderCircle size={12} className="animate-spin motion-reduce:animate-none" />
+          {t('browser.agentControlling')}
         </div>
       )}
       {picking && (
@@ -347,7 +362,7 @@ export function BrowserPage({
           >
             <div className="flex items-center gap-2 rounded-xl border border-line bg-raised px-5 py-3 text-body text-fg shadow-lg">
               <LoaderCircle size={16} className="animate-spin motion-reduce:animate-none" />
-              Agent 正在控制
+              {t('browser.agentControlling')}
             </div>
           </div>
         )}

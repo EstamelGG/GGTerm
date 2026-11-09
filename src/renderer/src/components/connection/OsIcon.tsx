@@ -60,8 +60,8 @@ export function OsIcon({
   onLight?: boolean
 }): React.JSX.Element {
   const hit = osIconOf(osName)
-  // badge 的白底与 onLight 的浅色底都需要深灰兜底图标 —— 浅灰（--at-muted）在浅底上不可见
-  const light = badge || onLight
+  // 品牌图标保留浅底；未知系统使用低对比底，避免整列白块抢走主机名称的注意力。
+  const light = (badge && !!hit) || onLight
   const icon = hit ? (
     <svg width={size} height={size} viewBox="0 0 24 24" role="img" aria-hidden="true">
       <path d={hit.path} fill={`#${hit.hex}`} />
@@ -71,7 +71,9 @@ export function OsIcon({
   )
   if (!badge) return icon
   return (
-    <span className="flex h-[24px] w-[24px] shrink-0 items-center justify-center rounded-md bg-white">
+    <span
+      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${hit ? 'bg-white' : 'bg-raised ring-1 ring-inset ring-line'}`}
+    >
       {icon}
     </span>
   )

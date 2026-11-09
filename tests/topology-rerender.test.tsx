@@ -67,7 +67,6 @@ beforeEach(() => {
       hosts: {
         onState: noop,
         onAgentState: noop,
-        listLinks: async () => [],
         listAgentLinks: async () => []
       },
       perf: { probeOs: () => {} },
@@ -150,7 +149,12 @@ it('组件层：关闭 b 只重绘 b 的节点组件，DOM 也只动 b', async (
       touched.push(el.closest?.('[data-id]')?.getAttribute('data-id') ?? '(canvas)')
     }
   })
-  observer.observe(container, { subtree: true, childList: true, attributes: true, characterData: true })
+  observer.observe(container, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    characterData: true
+  })
 
   await act(async () => closeB())
   await act(async () => {})

@@ -272,7 +272,7 @@ export function NoteEditorDialog({
         </>
       }
     >
-      <div className="flex max-h-[62vh] flex-col overflow-y-auto py-0.5 pr-3">
+      <div className="flex min-w-0 flex-col gap-1 py-0.5">
         {/* meta：名称 / 主机（对照 vscode #meta 表）；名称行右端 = Agent 代填入口 */}
         <div className="mb-3 flex flex-col gap-0.5 border-b border-line pb-2.5">
           <div className="flex items-center gap-2">
@@ -289,7 +289,7 @@ export function NoteEditorDialog({
               {t('conn.note.agentFill')}
             </button>
           </div>
-          <span className="font-mono text-minor text-muted">{hostAddress}</span>
+          <span className="break-all font-mono text-minor text-muted">{hostAddress}</span>
         </div>
 
         {error && (

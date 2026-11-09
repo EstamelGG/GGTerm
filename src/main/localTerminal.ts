@@ -12,10 +12,12 @@ interface Session {
   ready: boolean
   pending: string
   exitCode?: number
+  exited: Promise<void>
 }
 
 const sessions = new Map<string, Session>()
 const owners = new Set<WebContents>()
+const closing = new Set<Promise<void>>()
 
 export function installLocalTerminals(owner: WebContents): void {
   owners.add(owner)
@@ -42,12 +44,32 @@ function close(id: string): void {
   const session = sessions.get(id)
   if (!session) return
   sessions.delete(id)
-  if (session.exitCode === undefined) session.process.kill()
+  if (session.exitCode === undefined) {
+    closing.add(session.exited)
+    void session.exited.then(() => closing.delete(session.exited))
+    session.process.kill()
+  }
 }
 
 export function disposeLocalTerminals(owner?: WebContents): void {
   for (const [id, session] of sessions) {
     if (!owner || session.owner === owner) close(id)
+  }
+}
+
+/** Window destruction can initiate cleanup before will-quit. Wait for those PTYs too. */
+export async function waitForLocalTerminalCleanup(timeoutMs = 6000): Promise<void> {
+  if (!closing.size) return
+  let timer: NodeJS.Timeout | undefined
+  try {
+    await Promise.race([
+      Promise.all([...closing]),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('Local terminal cleanup timed out')), timeoutMs)
+      })
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
   }
 }
 
@@ -70,7 +92,11 @@ export function registerLocalTerminalIpc(): void {
       cwd,
       env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' }
     })
-    const session: Session = { owner, process: child, ready: false, pending: '' }
+    let resolveExit!: () => void
+    const exited = new Promise<void>((resolve) => {
+      resolveExit = resolve
+    })
+    const session: Session = { owner, process: child, ready: false, pending: '', exited }
     sessions.set(id, session)
     child.onData((data) => {
       if (!sessions.has(id)) return
@@ -82,6 +108,7 @@ export function registerLocalTerminalIpc(): void {
     })
     child.onExit(({ exitCode }) => {
       session.exitCode = exitCode
+      resolveExit()
       if (sessions.has(id) && session.ready) send(owner, { type: 'exit', id, exitCode })
     })
     return { id, cwd, shell: basename(shell) }

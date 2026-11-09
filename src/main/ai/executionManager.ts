@@ -90,6 +90,18 @@ interface Task {
 
 /** Owns processes independently of SDK requests, React mounts, and polling. */
 export class ExecutionManager {
+  private changeListeners = new Set<(sessionId: string) => void>()
+
+  onChanged(listener: (sessionId: string) => void): () => void {
+    this.changeListeners.add(listener)
+    return () => {
+      this.changeListeners.delete(listener)
+    }
+  }
+
+  private changed(sessionId: string): void {
+    for (const listener of this.changeListeners) listener(sessionId)
+  }
   private tasks = new Map<string, Task>()
   /** 会话级空闲回调：该会话无未完结执行时触发（登记时已空闲则立即触发） */
   private idleCallbacks = new Map<string, Set<() => void>>()
@@ -165,6 +177,7 @@ export class ExecutionManager {
       controller: new AbortController()
     }
     this.tasks.set(id, task)
+    this.changed(sessionId)
     const end = (
       status: ExecutionStatus,
       code: number | null,
@@ -190,6 +203,7 @@ export class ExecutionManager {
       for (const notify of [...task.listeners]) notify()
       if (!waiting) this.onBackgroundFinish?.(this.snapshot(sessionId, id))
       this.flushIdle(sessionId)
+      this.changed(sessionId)
     }
     void this.connect(
       input,
@@ -216,6 +230,7 @@ export class ExecutionManager {
         if (!finished(task.view.status)) {
           task.transport = transport
           task.view.status = 'running'
+          this.changed(sessionId)
         }
         if (task.view.terminationRequested) transport.close()
       })
@@ -319,6 +334,7 @@ export class ExecutionManager {
     task.controller.abort()
     task.view.terminationRequested = true
     task.view.cancelRequested = true
+    this.changed(sessionId)
   }
 
   /**

@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import type { HumanInputRequest, HumanInputResolved } from '@shared/execution'
+import { watchSnapshot } from '@/lib/watchSnapshot'
+import { useWorkspaceIssues } from './workspaceIssues'
 
 /**
  * 人工输入待办（渲染层镜像）：主进程 human-input:request / resolved 实时推送；
@@ -12,13 +14,13 @@ interface HumanInputState {
   request: (request: HumanInputRequest) => void
   resolve: (info: HumanInputResolved) => void
   replaceAll: (list: HumanInputRequest[]) => void
+  watch: (notify?: (request: HumanInputRequest) => void) => () => void
 }
 
 export const useHumanInputStore = create<HumanInputState>((set) => ({
   pending: {},
 
-  request: (request) =>
-    set((s) => ({ pending: { ...s.pending, [request.executionId]: request } })),
+  request: (request) => set((s) => ({ pending: { ...s.pending, [request.executionId]: request } })),
 
   resolve: ({ executionId }) =>
     set((s) => {
@@ -28,6 +30,34 @@ export const useHumanInputStore = create<HumanInputState>((set) => ({
       return { pending }
     }),
 
-  replaceAll: (list) =>
-    set({ pending: Object.fromEntries(list.map((r) => [r.executionId, r])) })
+  replaceAll: (list) => set({ pending: Object.fromEntries(list.map((r) => [r.executionId, r])) }),
+  watch: (notify) =>
+    watchSnapshot({
+      load: () => window.aterm.humanInput.list(),
+      key: (request) => request.executionId,
+      replace: (items) => useHumanInputStore.getState().replaceAll(items),
+      upsert: (request) => {
+        useHumanInputStore.getState().request(request)
+        notify?.(request)
+      },
+      remove: (executionId) =>
+        set((s) => {
+          const pending = { ...s.pending }
+          delete pending[executionId]
+          return { pending }
+        }),
+      listen: (upsert, remove) => {
+        const offRequest = window.aterm.humanInput.onRequest(upsert)
+        const offResolved = window.aterm.humanInput.onResolved(({ executionId }) =>
+          remove(executionId)
+        )
+        return () => {
+          offRequest()
+          offResolved()
+        }
+      },
+      failed: (error, retry) =>
+        useWorkspaceIssues.getState().report('human-input', error, 'recovery', retry),
+      restored: () => useWorkspaceIssues.getState().clear('human-input')
+    })
 }))

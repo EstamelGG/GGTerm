@@ -1,87 +1,120 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from 'vitest'
 import { useLinksStore } from '../src/renderer/src/stores/links'
-import type { HostLinkSnapshot, HostStateEvent, SshConnectionSession } from '../src/shared/types'
+import type {
+  ConnectionState,
+  ConnectionStateEvent,
+  ConnectionStateSnapshot
+} from '../src/shared/connectionState'
 
-afterEach(() => useLinksStore.setState({ byHost: {} }))
-
+const state = (revision: number, patch: Partial<ConnectionState> = {}): ConnectionState => ({
+  hostId: 'host',
+  connectionId: 'user-1',
+  owner: 'user',
+  phase: 'connected',
+  since: revision,
+  generation: 1,
+  revision,
+  closed: false,
+  ...patch
+})
+const stops: (() => void)[] = []
+afterEach(() => {
+  for (const stop of stops.splice(0)) stop()
+  useLinksStore.setState({ byHost: {}, userByHost: {}, connections: [] })
+})
 function setup(): {
-  emit: (event: HostStateEvent) => void
-  emitAgent: (event: SshConnectionSession) => void
-  resolve: (snapshot: HostLinkSnapshot[]) => void
+  emit: (event: ConnectionStateEvent) => void
+  resolve: (snapshot: ConnectionStateSnapshot) => void
   off: ReturnType<typeof vi.fn>
+  subscribe: ReturnType<typeof vi.fn>
 } {
-  let emit!: (event: HostStateEvent) => void
-  let emitAgent!: (event: SshConnectionSession) => void
-  let resolve!: (snapshot: HostLinkSnapshot[]) => void
+  let emit!: (event: ConnectionStateEvent) => void
+  let resolve!: (snapshot: ConnectionStateSnapshot) => void
   const off = vi.fn()
+  const subscribe = vi.fn((listener: typeof emit) => {
+    emit = listener
+    return off
+  })
   Object.defineProperty(window, 'aterm', {
     configurable: true,
     value: {
       hosts: {
-        onAgentState: (listener: typeof emitAgent) => {
-          emitAgent = listener
-          return () => {}
-        },
-        listAgentLinks: async () => [],
-        onState: (listener: typeof emit) => {
-          emit = listener
-          return off
-        },
-        listLinks: () =>
-          new Promise<HostLinkSnapshot[]>((r) => {
+        onConnectionState: subscribe,
+        runtimeSnapshot: () =>
+          new Promise<ConnectionStateSnapshot>((r) => {
             resolve = r
           })
       }
     }
   })
-  return {
-    emit: (event) => emit(event),
-    emitAgent: (event) => emitAgent(event),
-    resolve: (snapshot) => resolve(snapshot),
-    off
-  }
+  return { emit: (event) => emit(event), resolve: (snapshot) => resolve(snapshot), off, subscribe }
 }
-
-it('does not overwrite a live event with a delayed initial snapshot', async () => {
-  const fixture = setup()
+function watch(): () => void {
   const stop = useLinksStore.getState().watch()
-  fixture.emit({ hostId: 'host', phase: 'connected', since: 2 } as HostStateEvent)
-  fixture.resolve([{ hostId: 'host', phase: 'connecting', since: 1 } as HostLinkSnapshot])
+  stops.push(stop)
+  return stop
+}
+it('replays newer events over a delayed snapshot and rejects older events afterward', async () => {
+  const fixture = setup()
+  watch()
+  fixture.emit({ state: state(3) })
+  fixture.resolve({ revision: 2, connections: [state(2, { phase: 'connecting' })] })
   await Promise.resolve()
+  fixture.emit({ state: state(1, { phase: 'offline' }) })
   expect(useLinksStore.getState().byHost.host.phase).toBe('connected')
-  stop()
-  expect(fixture.off).toHaveBeenCalledOnce()
 })
-
-it('ignores snapshot replies after unsubscribe', async () => {
+it('ignores snapshot replies and queued events after unsubscribe', async () => {
   const fixture = setup()
-  const stop = useLinksStore.getState().watch()
-  stop()
-  fixture.resolve([{ hostId: 'host', phase: 'connected', since: 1 } as HostLinkSnapshot])
+  watch()()
+  fixture.resolve({ revision: 1, connections: [state(1)] })
+  fixture.emit({ state: state(2) })
   await Promise.resolve()
   expect(useLinksStore.getState().byHost).toEqual({})
 })
-
-it('keeps the host online until both user and Agent transports have closed', () => {
+it('keeps the host online until both user and Agent transports close', () => {
   const fixture = setup()
-  const stop = useLinksStore.getState().watch()
-  fixture.emit({ hostId: 'host', phase: 'connected', since: 1 })
-  const agent: SshConnectionSession = {
-    hostId: 'host',
-    connectionId: 'agent-1',
-    owner: 'agent',
-    sessionId: 'a',
-    phase: 'connected',
-    since: 2
-  }
-  fixture.emitAgent(agent)
-  fixture.emit({ hostId: 'host', phase: 'idle', since: 3 })
+  watch()
+  fixture.emit({ state: state(1) })
+  fixture.emit({ state: state(2, { connectionId: 'agent', owner: 'agent', sessionId: 'chat' }) })
+  fixture.emit({ state: state(3, { phase: 'idle', closed: true }) })
   expect(useLinksStore.getState().byHost.host.phase).toBe('connected')
-  fixture.emitAgent({ ...agent, phase: 'idle', since: 4 })
+  fixture.emit({
+    state: state(4, {
+      connectionId: 'agent',
+      owner: 'agent',
+      sessionId: 'chat',
+      phase: 'idle',
+      closed: true
+    })
+  })
   expect(useLinksStore.getState().byHost.host.phase).toBe('idle')
-  fixture.emit({ hostId: 'host', phase: 'connected', since: 5 })
-  fixture.emitAgent({ ...agent, phase: 'offline', since: 6 })
-  expect(useLinksStore.getState().byHost.host.phase).toBe('connected')
-  stop()
+})
+it('does not resurrect a removed host from a delayed snapshot or event', async () => {
+  const fixture = setup()
+  watch()
+  fixture.emit({ state: state(3), removed: true })
+  fixture.resolve({ revision: 2, connections: [state(2)] })
+  await Promise.resolve()
+  fixture.emit({ state: state(2) })
+  expect(useLinksStore.getState().byHost).toEqual({})
+})
+it('does not let a late old connection close its replacement', () => {
+  const fixture = setup()
+  watch()
+  fixture.emit({ state: state(3, { connectionId: 'replacement' }) })
+  fixture.emit({ state: state(2, { phase: 'idle', closed: true }) })
+  expect(useLinksStore.getState().connections[0].connectionId).toBe('replacement')
+  expect(useLinksStore.getState().connections).toHaveLength(1)
+})
+it('shares a single subscription and releases it only after the last consumer', () => {
+  const fixture = setup()
+  const first = watch()
+  const second = watch()
+  expect(fixture.subscribe).toHaveBeenCalledOnce()
+  first()
+  first()
+  expect(fixture.off).not.toHaveBeenCalled()
+  second()
+  expect(fixture.off).toHaveBeenCalledOnce()
 })

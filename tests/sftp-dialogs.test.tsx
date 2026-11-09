@@ -23,6 +23,8 @@ it('resets the input on reopening while preserving edits during rerenders', () =
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'edited' } })
   view.rerender(<InputPromptDialog {...props} />)
   expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe('edited')
+  fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter', isComposing: true })
+  expect(props.onConfirm).not.toHaveBeenCalled()
   fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' })
   expect(props.onConfirm).toHaveBeenCalledWith('edited')
   view.rerender(<InputPromptDialog {...props} open={false} />)

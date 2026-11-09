@@ -22,7 +22,7 @@ describe('SSH trust on first use', () => {
     expect(createHostVerifier('server', 22).verify(Buffer.from('key A'))).toBe(true)
     const changed = createHostVerifier('server', 22)
     expect(changed.verify(Buffer.from('key B'))).toBe(false)
-    expect(changed.error()?.message).toMatch(/Host key changed.*server:22/)
+    expect(changed.error()?.message).toMatch(/host key changed.*server:22/i)
     expect(createHostVerifier('server', 22).verify(Buffer.from('key A'))).toBe(true)
     expect(Object.keys(data.hosts)).toHaveLength(1)
   })

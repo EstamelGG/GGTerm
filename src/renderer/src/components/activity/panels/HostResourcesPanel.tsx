@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { SshConnectionSession } from '@shared/types'
+import { useLinksStore } from '@/stores/links'
 import { isNetworkDevice } from '@shared/device'
 import { errorMessage } from '@shared/error'
 import { useAiStore } from '@/stores/ai'
@@ -19,35 +19,14 @@ export function HostResourcesPanel({ visible }: { visible: boolean }): React.JSX
   const hosts = useSessionStore((s) => s.hosts)
   const focusedId = useWorkspaceStore((s) => s.focusedHostId)
   const sessionId = useAiStore((s) => s.activeId)
-  const [links, setLinks] = useState<SshConnectionSession[]>([])
+  const runtime = useLinksStore((s) => s.connections)
+  const links = runtime.filter((link) => link.owner === 'agent' && !link.closed)
   const [notice, setNotice] = useState<string | null>(null)
   const [retry, setRetry] = useState(0)
   const hostId = resourceHostId(connections, links, sessionId, focusedId)
   const conn = connections.find((c) => c.id === hostId)
   const host = hosts.find((h) => h.id === hostId)
   const unsupported = isNetworkDevice(conn)
-
-  useEffect(() => {
-    let live = true
-    let changed = false
-    const off = window.aterm.hosts.onAgentState((next) => {
-      changed = true
-      setLinks((previous) => [
-        ...previous.filter((link) => link.connectionId !== next.connectionId),
-        next
-      ])
-    })
-    void window.aterm.hosts
-      .listAgentLinks()
-      .then((next) => {
-        if (live && !changed) setLinks(next)
-      })
-      .catch(() => {})
-    return () => {
-      live = false
-      off()
-    }
-  }, [])
 
   useEffect(() => {
     if (!visible || !conn || unsupported) return

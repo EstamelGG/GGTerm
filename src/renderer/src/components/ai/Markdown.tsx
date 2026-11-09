@@ -158,7 +158,11 @@ export const Markdown = memo(function Markdown({
 }): React.JSX.Element {
   const components = useMemo(() => buildComponents({ decorator, muted }), [decorator, muted])
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={components}>
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      rehypePlugins={[rehypeHighlight]}
+      components={components}
+    >
       {children}
     </ReactMarkdown>
   )

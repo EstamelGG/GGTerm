@@ -1,88 +1,110 @@
 import { create } from 'zustand'
-import type { HostLinkSnapshot, HostStateEvent, SshConnectionSession } from '@shared/types'
+import { useWorkspaceIssues } from './workspaceIssues'
+import type { HostStateEvent } from '@shared/types'
+import {
+  connectionSlot,
+  type ConnectionState,
+  type ConnectionStateEvent
+} from '@shared/connectionState'
 
-/**
- * 主机链路相位（全局单例）：连接列表的状态列与 AI 拓扑图共用同一份数据。
- * 主进程是唯一权威 —— 启动拉一次全量快照（listLinks），此后由 host:state 增量更新；
- * 因此即使拓扑图未挂载，也能随时回答"这台现在连没连上"。
- */
 interface LinksState {
-  byHost: Record<string, HostLinkSnapshot>
-  /** App 启动时接线一次（幂等）：拉快照 + 订阅增量，返回取消订阅函数 */
+  byHost: Record<string, HostStateEvent>
+  userByHost: Record<string, ConnectionState>
+  connections: ConnectionState[]
   watch: () => () => void
 }
 
-function toSnapshot(e: HostStateEvent): HostLinkSnapshot {
-  return {
-    hostId: e.hostId,
-    phase: e.phase,
-    since: e.since,
-    attempt: e.attempt,
-    reason: e.reason,
-    // 实际建立/正在拨的跳板链（事实）：拓扑图按它画边
-    jumpIds: e.jumpIds
-  }
-}
+const rank = { connected: 0, connecting: 1, reconnecting: 2, offline: 3, idle: 4 }
+let watching: { users: number; stop: () => void } | undefined
 
+/** One subscription and one ordered snapshot for every connection owner. */
 export const useLinksStore = create<LinksState>((set) => ({
   byHost: {},
-
+  userByHost: {},
+  connections: [],
   watch: () => {
-    let active = true
-    const userLinks: Record<string, HostLinkSnapshot> = {}
-    const agentLinks = new Map<string, SshConnectionSession>()
-    const updatedAgents = new Set<string>()
-    const rank = { connected: 0, connecting: 1, reconnecting: 2, offline: 3, idle: 4 }
-    const publish = (): void => {
-      const byHost = { ...userLinks }
-      for (const link of agentLinks.values()) {
-        const current = byHost[link.hostId]
-        if (
-          !current ||
-          rank[link.phase] < rank[current.phase] ||
-          (link.phase === current.phase && link.since > current.since)
-        )
-          byHost[link.hostId] = link
+    if (!watching) {
+      let active = true
+      let request = 0
+      let floor = 0
+      let pending: ConnectionStateEvent[] | undefined = []
+      const slots = new Map<string, ConnectionState>()
+      const versions = new Map<string, number>()
+      const apply = (event: ConnectionStateEvent): void => {
+        const slot = connectionSlot(event.state)
+        if (event.state.revision <= Math.max(floor, versions.get(slot) ?? 0)) return
+        versions.set(slot, event.state.revision)
+        if (event.removed) slots.delete(slot)
+        else slots.set(slot, event.state)
       }
-      set({ byHost })
-    }
-    const updated = new Set<string>()
-    const off = window.aterm.hosts.onState((e: HostStateEvent) => {
-      updated.add(e.hostId)
-      userLinks[e.hostId] = toSnapshot(e)
-      publish()
-    })
-    const offAgent = window.aterm.hosts.onAgentState((event) => {
-      updatedAgents.add(event.connectionId)
-      agentLinks.set(event.connectionId, event)
-      publish()
-    })
-    void window.aterm.hosts
-      .listAgentLinks()
-      .then((snapshot) => {
-        if (!active) return
-        for (const link of snapshot)
-          if (!updatedAgents.has(link.connectionId)) agentLinks.set(link.connectionId, link)
-        publish()
-      })
-      .catch(() => {})
-    void window.aterm.hosts
-      .listLinks()
-      .then((snapshot) => {
-        if (!active) return
-        // 快照请求期间收到的实时事件比快照新，不能被迟到的快照覆盖。
-        for (const link of snapshot) {
-          if (!updated.has(link.hostId)) userLinks[link.hostId] = link
+      const publish = (): void => {
+        const byHost: LinksState['byHost'] = {}
+        const userByHost: LinksState['userByHost'] = {}
+        const connections = [...slots.values()]
+        for (const state of connections) {
+          if (state.owner === 'user') userByHost[state.hostId] = state
+          const current = byHost[state.hostId]
+          if (
+            !current ||
+            rank[state.phase] < rank[current.phase] ||
+            (state.phase === current.phase && state.since > current.since)
+          )
+            byHost[state.hostId] = state
         }
+        set({ byHost, userByHost, connections })
+      }
+      const off = window.aterm.hosts.onConnectionState((event) => {
+        if (!active) return
+        pending?.push(event)
+        apply(event)
         publish()
       })
-      .catch(() => {
-        // 初始化失败时仍保留实时订阅，后续状态事件可以恢复镜像。
-      })
+      const restore = (): Promise<void> => {
+        if (!active) return Promise.resolve()
+        const version = ++request
+        pending = []
+        return window.aterm.hosts
+          .runtimeSnapshot()
+          .then((snapshot) => {
+            if (!active || version !== request) return
+            slots.clear()
+            versions.clear()
+            for (const state of snapshot.connections) {
+              slots.set(connectionSlot(state), state)
+              versions.set(connectionSlot(state), state.revision)
+            }
+            floor = snapshot.revision
+            for (const event of pending ?? []) apply(event)
+            pending = undefined
+            publish()
+            useWorkspaceIssues.getState().clear('connections')
+          })
+          .catch((error) => {
+            if (!active || version !== request) return
+            // Live events still recover the mirror if the initial snapshot fails.
+            pending = undefined
+            useWorkspaceIssues.getState().report('connections', error, 'recovery', restore)
+          })
+      }
+      void restore()
+      watching = {
+        users: 0,
+        stop: () => {
+          active = false
+          off()
+        }
+      }
+    }
+    const subscription = watching
+    subscription.users++
+    let released = false
     return () => {
-      active = false
-      off()
-      offAgent()
+      if (released) return
+      released = true
+      if (--subscription.users === 0) {
+        subscription.stop()
+        watching = undefined
+      }
     }
   }
 }))

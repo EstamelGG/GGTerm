@@ -1,22 +1,28 @@
 import { isNetworkDevice } from '@shared/device'
-import { useWorkspaceStore } from './workspace'
-import { create } from 'zustand'
-import i18next from 'i18next'
+import { shellDirectoryCommand } from '@shared/sftpPath'
 import type {
   HostConnection,
   HostStateEvent,
-  LinkPhase,
-  SftpEntry,
   ShellAnnounceEvent,
   ShellDataEvent,
   ShellStateEvent,
   ShellStatus
 } from '@shared/types'
-import { errorMessage } from '@shared/error'
-import { shellDirectoryCommand } from '@shared/sftpPath'
-import type { EncodingMode, FileEncoding } from '@shared/encoding'
-import { useSftpStore } from './sftp'
+import { create } from 'zustand'
 import { useConnectionsStore } from './connections'
+import { useLinksStore } from './links'
+import { createRemoteFilesSlice } from './session/remoteFiles'
+import type { HostWorkspaceMirror, SessionState, WorkspaceTab } from './session/types'
+import { useSftpStore } from './sftp'
+import { useWorkspaceStore } from './workspace'
+import { useWorkspaceIssues } from './workspaceIssues'
+export type {
+  HostShell,
+  HostWorkspaceMirror,
+  PendingManualSecrets,
+  RemoteFileDoc,
+  WorkspaceTab
+} from './session/types'
 
 /**
  * xterm 注册表按需加载：@xterm/* 体积大且只有终端会话才需要，动态 import
@@ -25,111 +31,21 @@ import { useConnectionsStore } from './connections'
 let registrySync: typeof import('@/terminal/registry') | null = null
 let registryPromise: Promise<typeof import('@/terminal/registry')> | null = null
 function loadRegistry(): Promise<typeof import('@/terminal/registry')> {
-  return (registryPromise ??= import('@/terminal/registry').then((m) => {
-    registrySync = m
-    return m
-  }))
+  return (registryPromise ??= import('@/terminal/registry')
+    .then((m) => {
+      registrySync = m
+      return m
+    })
+    .catch((error) => {
+      registryPromise = null
+      throw error
+    }))
 }
 
 /** 就绪直写；未就绪排队（同一 promise 的 then 回调按注册顺序执行） */
 function writeViaRegistry(key: string, data: string): void {
   if (registrySync) registrySync.writeTerminal(key, data)
   else void loadRegistry().then((r) => r.writeTerminal(key, data))
-}
-
-/** 对照 ATerminal-Swift SessionCenter.WorkspaceTab */
-export type WorkspaceTab =
-  | { kind: 'local' }
-  | { kind: 'browser' }
-  | { kind: 'connections' }
-  | { kind: 'ai' }
-  | { kind: 'host'; id: string }
-  /** section：打开设置页时定位的分区（对话页「管理模型」等深链入口） */
-  | { kind: 'settings'; section?: 'general' | 'host' | 'ai' | 'about' }
-/** 对照 SSHTerminalController 镜像（进程与通道在主进程） */
-export interface HostShell {
-  id: string
-  number: number
-  status: ShellStatus
-  error?: string
-}
-
-/** 对照 RemoteDocument：远程编辑文档（读写经 SFTP） */
-export interface RemoteFileDoc {
-  encoding: FileEncoding
-  encodingMode: EncodingMode
-  bom: boolean
-  confidence: number
-  readOnly: boolean
-  id: string
-  path: string
-  name: string
-  /** 远端文件大小（readForEdit 超限判断/下载入口用） */
-  size: number
-  text: string
-  /** 上次保存内容；dirty = text !== saved */
-  saved: string
-  loading: boolean
-  saving: boolean
-  error: string | null
-}
-
-/** 手动登录勾选"保存"时暂存的凭据；connected 后落盘并清空 */
-export interface PendingManualSecrets {
-  authType: 'password' | 'privateKey'
-  password?: string
-  privateKey?: string
-  passphrase?: string
-}
-
-/** 对照 HostWorkspace 镜像：主机工作区渲染层状态 */
-export interface HostWorkspaceMirror {
-  viewerOnly?: boolean
-  id: string
-  conn: HostConnection
-  title: string
-  phase: LinkPhase
-  attempt: number
-  offlineReason: string
-  awaiting: boolean
-  pendingSecrets: PendingManualSecrets | null
-  shells: HostShell[]
-  focusShellId: string | null
-  /** 上部编辑区打开的远程编辑文档（上下分栏：与 shell 区独立展示） */
-  files: RemoteFileDoc[]
-  focusFileId: string | null
-}
-
-interface SessionState {
-  tab: WorkspaceTab
-  hosts: HostWorkspaceMirror[]
-  setTab: (tab: WorkspaceTab) => void
-  connect: (conn: HostConnection, enter?: boolean) => Promise<void>
-  closeHost: (id: string, agentConnectionIds?: string[]) => void
-  detachHost: (id: string) => void
-  addShell: (hostId: string, bootstrap?: string) => void
-  closeShell: (hostId: string, shellId: string) => void
-  focusShell: (hostId: string, shellId: string) => void
-  openFile: (hostId: string, entry: SftpEntry) => void
-  saveFile: (hostId: string, fileId: string) => Promise<boolean>
-  reloadFile: (hostId: string, fileId: string, encoding?: EncodingMode) => void
-  closeFile: (hostId: string, fileId: string) => void
-  focusFile: (hostId: string, fileId: string) => void
-  setFileText: (hostId: string, fileId: string, text: string) => void
-  reconnectHost: (hostId: string) => void
-  reconnectShell: (hostId: string, shellId: string) => void
-  submitAuth: (
-    hostId: string,
-    cred: {
-      username: string
-      password?: string
-      privateKey?: string
-      passphrase?: string
-      persist?: boolean
-    }
-  ) => void
-  applyHostState: (e: HostStateEvent) => void
-  applyShellState: (e: ShellStateEvent) => void
 }
 
 export const isTab = (a: WorkspaceTab, b: WorkspaceTab): boolean =>
@@ -151,7 +67,7 @@ function nextConsoleNumber(used: number[]): number {
 }
 
 /**
- * 早于镜像落地到达的 host:state 事件缓冲（hostId → 最新一条）：
+ * 早于镜像落地到达的 连接状态 事件缓冲（hostId → 最新一条）：
  * hosts:connect 的 handler 在返回前 emitCurrentState，该事件可跑赢 invoke 回复到达，
  * 此时镜像未入 store 会被丢弃——已连接 link 重开 tab 时唯一一次 connected 事件即在此窗口被丢，
  * 镜像永久停在初始 connecting。同通道 IPC 保序，latest 覆盖即可；镜像落地同 tick replay，
@@ -161,22 +77,33 @@ const pendingHostStates = new Map<string, HostStateEvent>()
 
 /**
  * 早于镜像落地到达的 shell:state 事件缓冲（`${hostId}:${shellId}` → 最新一条）：
- * 与 host:state 同源竞态——addShell 的镜像落库要等 `await loadRegistry()`（首次动态 import xterm），
+ * 与 连接状态 同源竞态——addShell 的镜像落库要等 `await loadRegistry()`（首次动态 import xterm），
  * 期间主进程 connectLoop 重建循环 / autoStart 3.5s 兜底可能先发起 start 并发出
  * connecting→connected 事件，渲染层此刻还没有该 shellId 条目，applyShellState 会静默丢弃。
  * latest 覆盖即可；镜像落库同 tick replay；closeShell/closeHost 清项防残留。
  */
 const pendingShellStates = new Map<string, ShellStateEvent>()
 
-/** 文档异步操作只更新仍然打开的目标文件，不重新创建已关闭的文档。 */
-function patchFile(hostId: string, fileId: string, patch: Partial<RemoteFileDoc>): void {
-  useSessionStore.setState((s) => ({
-    hosts: s.hosts.map((h) =>
-      h.id === hostId
-        ? { ...h, files: h.files.map((f) => (f.id === fileId ? { ...f, ...patch } : f)) }
-        : h
-    )
-  }))
+// Incremented on detach so replies for a previous workspace cannot attach to a reopened one.
+const workspaceVersions = new Map<string, number>()
+const credentialVersions = new Map<string, number>()
+let navigationVersion = 0
+
+function workspaceFor(conn: HostConnection): HostWorkspaceMirror {
+  return {
+    id: conn.id,
+    conn,
+    title: conn.name,
+    phase: 'idle',
+    attempt: 0,
+    offlineReason: '',
+    awaiting: false,
+    pendingSecrets: null,
+    shells: [],
+    focusShellId: null,
+    files: [],
+    focusFileId: null
+  }
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -184,12 +111,29 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   hosts: [],
 
   setTab: (tab) => {
+    navigationVersion++
     if (tab.kind === 'host') useWorkspaceStore.getState().focusHost(tab.id)
     else if (tab.kind === 'local') useWorkspaceStore.setState({ terminalTarget: 'local' })
     set({ tab })
   },
 
   connect: async (conn, enter = true) => {
+    const version = workspaceVersions.get(conn.id)
+    const navigation = enter ? ++navigationVersion : navigationVersion
+    const current = (): boolean => workspaceVersions.get(conn.id) === version
+    const focus = (): void => {
+      if (enter && navigation === navigationVersion) get().setTab({ kind: 'host', id: conn.id })
+    }
+    const request = async (): Promise<Awaited<
+      ReturnType<typeof window.aterm.hosts.connect>
+    > | null> => {
+      try {
+        return await window.aterm.hosts.connect(conn, !enter)
+      } catch (error) {
+        if (current()) throw error
+        return null
+      }
+    }
     const existing = get().hosts.find((h) => h.id === conn.id)
     if (existing) {
       // 已打开：刷新快照并加开一个 shell（对照 SessionCenter.connect 复用分支）
@@ -197,7 +141,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         hosts: s.hosts.map((h) => (h.id === conn.id ? { ...h, conn, title: conn.name } : h))
       }))
       if (existing.viewerOnly) {
-        const { awaiting, viewerOnly, phase } = await window.aterm.hosts.connect(conn, !enter)
+        const reply = await request()
+        if (!current() || !reply) return
+        const { awaiting, viewerOnly, phase } = reply
         set((s) => ({
           hosts: s.hosts.map((h) =>
             h.id === conn.id
@@ -219,34 +165,27 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         get().reconnectHost(conn.id)
       }
       if (enter) get().addShell(conn.id)
-      if (enter) get().setTab({ kind: 'host', id: conn.id })
+      focus()
       return
     }
-    const { awaiting, viewerOnly, phase } = await window.aterm.hosts.connect(conn, !enter)
+    const reply = await request()
+    if (!current() || !reply) return
+    const { awaiting, viewerOnly, phase } = reply
     // 同一主机的并发请求可能一起通过前面的存在性检查；IPC 返回后再次检查。
     // 保留重复连接新增 shell 的既有行为，但工作区只创建一次。
     if (get().hosts.some((h) => h.id === conn.id)) {
       if (enter) get().addShell(conn.id)
-      if (enter) get().setTab({ kind: 'host', id: conn.id })
+      focus()
       return
     }
     const host: HostWorkspaceMirror = {
-      id: conn.id,
-      conn,
-      title: conn.name,
+      ...workspaceFor(conn),
       phase: phase ?? 'connecting',
       viewerOnly,
-      attempt: 0,
-      offlineReason: '',
-      awaiting,
-      pendingSecrets: null,
-      shells: [],
-      focusShellId: null,
-      files: [],
-      focusFileId: null
+      awaiting
     }
     set((s) => ({ hosts: [...s.hosts, host] }))
-    if (enter) get().setTab({ kind: 'host', id: conn.id })
+    focus()
     // 镜像落地：replay 缓冲里早到的事件（同步执行，必先于后续任何新事件到达）
     const pending = pendingHostStates.get(conn.id)
     if (pending) {
@@ -256,12 +195,29 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (enter) get().addShell(conn.id)
   },
 
+  restoreViewer: (conn, focusShellId) => {
+    if (get().hosts.some((h) => h.id === conn.id)) return
+    const state = useLinksStore.getState().byHost[conn.id]
+    const host = {
+      ...workspaceFor(conn),
+      viewerOnly: true,
+      focusShellId,
+      phase: state?.phase ?? 'idle',
+      attempt: state?.attempt ?? 0,
+      offlineReason: state?.reason ?? ''
+    }
+    set((s) => ({ hosts: [...s.hosts, host] }))
+  },
+
   closeHost: (id, agentConnectionIds = []) => {
     window.aterm.hosts.close(id, agentConnectionIds)
     get().detachHost(id)
   },
 
   detachHost: (id) => {
+    useWorkspaceIssues.getState().clear(`shell:${id}`)
+    useWorkspaceIssues.getState().clear(`credentials:${id}`)
+    workspaceVersions.set(id, (workspaceVersions.get(id) ?? 0) + 1)
     if (useWorkspaceStore.getState().focusedHostId === id)
       useWorkspaceStore.getState().focusHost(null)
     pendingHostStates.delete(id) // 清残留缓冲，防旧会话事件 replay 到下次重开
@@ -273,7 +229,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const host = get().hosts.find((h) => h.id === id)
     if (host) {
       const keys = host.shells.map((sh) => `${id}:${sh.id}`)
-      void loadRegistry().then((r) => keys.forEach((k) => r.disposeTerminal(k)))
+      if (registrySync) keys.forEach((key) => registrySync!.disposeTerminal(key))
     }
     set((s) => ({
       hosts: s.hosts.filter((h) => h.id !== id),
@@ -281,50 +237,80 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }))
   },
 
-  addShell: (hostId, bootstrap) => {
+  addShell: async (hostId, bootstrap) => {
     const host = get().hosts.find((h) => h.id === hostId)
     if (!host) return
+    const version = workspaceVersions.get(hostId)
+    const isCurrent = (): boolean =>
+      workspaceVersions.get(hostId) === version && get().hosts.some((h) => h.id === hostId)
     // 初始执行优先级：显式 bootstrap（SFTP"在此打开终端"的 cd）> 连接级 initCommand > initDir 的 cd
     const boot = bootstrap ?? shellInitCommand(host.conn)
-    void window.aterm.shells.create(hostId, boot).then(async ({ shellId }) => {
-      // 延迟启动协议（对齐本地控制台）：先建 xterm 实例与镜像，再请求主进程开通道
-      // —— 之后到达的 state/data 事件必然晚于注册，无竞态
-      const { createTerminal } = await loadRegistry()
-      createTerminal(`${hostId}:${shellId}`, {
-        onData: (d) => window.aterm.shells.input(hostId, shellId, d),
-        onResize: (cols, rows) => window.aterm.shells.resize(hostId, shellId, cols, rows)
-      })
-      const number = nextConsoleNumber(
-        get()
-          .hosts.find((h) => h.id === hostId)
-          ?.shells.map((s) => s.number) ?? []
-      )
-      set((s) => ({
-        hosts: s.hosts.map((h) =>
-          h.id === hostId
-            ? {
-                ...h,
-                shells: [...h.shells, { id: shellId, number, status: 'connecting' as ShellStatus }],
-                focusShellId: shellId
-              }
-            : h
+    let createdShellId: string | undefined
+    await window.aterm.shells
+      .create(hostId, boot)
+      .then(async ({ shellId }) => {
+        createdShellId = shellId
+        const discardIfClosed = (): boolean => {
+          if (isCurrent()) return false
+          pendingShellStates.delete(`${hostId}:${shellId}`)
+          window.aterm.shells.close(hostId, shellId)
+          return true
+        }
+        if (discardIfClosed()) return
+        // 延迟启动协议（对齐本地控制台）：先建 xterm 实例与镜像，再请求主进程开通道
+        // —— 之后到达的 state/data 事件必然晚于注册，无竞态
+        const { createTerminal } = await loadRegistry()
+        if (discardIfClosed()) return
+        createTerminal(`${hostId}:${shellId}`, {
+          onData: (d) => window.aterm.shells.input(hostId, shellId, d),
+          onResize: (cols, rows) => window.aterm.shells.resize(hostId, shellId, cols, rows)
+        })
+        const number = nextConsoleNumber(
+          get()
+            .hosts.find((h) => h.id === hostId)
+            ?.shells.map((s) => s.number) ?? []
         )
-      }))
-      // 镜像落地：replay 早到缓冲（主进程重建/兜底可能先发状态，此时镜像已落库可正确吸收）
-      const pendingKey = `${hostId}:${shellId}`
-      const pending = pendingShellStates.get(pendingKey)
-      if (pending) {
-        pendingShellStates.delete(pendingKey)
-        get().applyShellState(pending)
-      }
-      window.aterm.shells.start(hostId, shellId)
-    })
+        set((s) => ({
+          hosts: s.hosts.map((h) =>
+            h.id === hostId
+              ? {
+                  ...h,
+                  shells: [
+                    ...h.shells,
+                    { id: shellId, number, status: 'connecting' as ShellStatus }
+                  ],
+                  focusShellId: shellId
+                }
+              : h
+          )
+        }))
+        // 镜像落地：replay 早到缓冲（主进程重建/兜底可能先发状态，此时镜像已落库可正确吸收）
+        const pendingKey = `${hostId}:${shellId}`
+        const pending = pendingShellStates.get(pendingKey)
+        if (pending) {
+          pendingShellStates.delete(pendingKey)
+          get().applyShellState(pending)
+        }
+        window.aterm.shells.start(hostId, shellId)
+        useWorkspaceIssues.getState().clear(`shell:${hostId}`)
+      })
+      .catch((error) => {
+        if (createdShellId) {
+          window.aterm.shells.close(hostId, createdShellId)
+          registrySync?.disposeTerminal(`${hostId}:${createdShellId}`)
+          pendingShellStates.delete(`${hostId}:${createdShellId}`)
+        }
+        if (isCurrent())
+          useWorkspaceIssues
+            .getState()
+            .report(`shell:${hostId}`, error, 'shell', () => get().addShell(hostId, bootstrap))
+      })
   },
 
   closeShell: (hostId, shellId) => {
     window.aterm.shells.close(hostId, shellId)
     pendingShellStates.delete(`${hostId}:${shellId}`) // 清残留缓冲，防旧会话事件 replay 到下次
-    void loadRegistry().then((r) => r.disposeTerminal(`${hostId}:${shellId}`))
+    registrySync?.disposeTerminal(`${hostId}:${shellId}`)
     set((s) => ({
       hosts: s.hosts.map((h) => {
         if (h.id !== hostId) return h
@@ -347,184 +333,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   /** 对照 SessionCenter.openFile：已开聚焦；binary/tooLarge 转下载并提示 */
-  openFile: (hostId, entry) => {
-    if (entry.isDir) return
-    const host = get().hosts.find((h) => h.id === hostId)
-    if (!host) return
-    const existing = host.files.find((f) => f.path === entry.path)
-    if (existing) {
-      set((s) => ({
-        hosts: s.hosts.map((h) => (h.id === hostId ? { ...h, focusFileId: existing.id } : h))
-      }))
-      return
-    }
-    const doc: RemoteFileDoc = {
-      encoding: 'utf8',
-      encodingMode: 'auto',
-      bom: false,
-      confidence: 100,
-      readOnly: true,
-      id: crypto.randomUUID(),
-      path: entry.path,
-      name: entry.name,
-      size: entry.size,
-      text: '',
-      saved: '',
-      loading: true,
-      saving: false,
-      error: null
-    }
-    set((s) => ({
-      hosts: s.hosts.map((h) =>
-        h.id === hostId ? { ...h, files: [...h.files, doc], focusFileId: doc.id } : h
-      )
-    }))
-    void (async () => {
-      try {
-        const res = await window.aterm.sftp.readForEdit(hostId, entry.path, entry.size)
-        if (res.kind === 'text') {
-          set((s) => ({
-            hosts: s.hosts.map((h) =>
-              h.id === hostId
-                ? {
-                    ...h,
-                    files: h.files.map((f) =>
-                      f.id === doc.id
-                        ? {
-                            ...f,
-                            text: res.text,
-                            saved: res.text,
-                            loading: false,
-                            encoding: res.encoding,
-                            bom: res.bom,
-                            confidence: res.confidence,
-                            size: res.size,
-                            readOnly: res.lossy || res.binary,
-                            error: res.binary
-                              ? i18next.t('editor.binaryReadOnly')
-                              : res.lossy
-                                ? i18next.t('editor.lossyReadOnly')
-                                : null
-                          }
-                        : f
-                    )
-                  }
-                : h
-            )
-          }))
-          return
-        }
-        // 兜底（>10MB 已在 SftpPane 弹窗拦截）：移除标签页并提示改走下载，不自动下载
-        set((s) => ({
-          hosts: s.hosts.map((h) => {
-            if (h.id !== hostId) return h
-            const files = h.files.filter((f) => f.id !== doc.id)
-            return {
-              ...h,
-              files,
-              focusFileId:
-                h.focusFileId === doc.id ? (files[files.length - 1]?.id ?? null) : h.focusFileId
-            }
-          })
-        }))
-        useSftpStore.getState().setBanner(hostId, i18next.t('sftp.tooLargeBanner', { limit: 10 }))
-      } catch (err) {
-        const message = errorMessage(err)
-        set((s) => ({
-          hosts: s.hosts.map((h) =>
-            h.id === hostId
-              ? {
-                  ...h,
-                  files: h.files.map((f) =>
-                    f.id === doc.id ? { ...f, loading: false, error: message } : f
-                  )
-                }
-              : h
-          )
-        }))
-      }
-    })()
-  },
-
-  /** 对照 SessionCenter.saveFile：writeText + saved/error 状态 */
-  saveFile: async (hostId, fileId) => {
-    const host = get().hosts.find((h) => h.id === hostId)
-    const doc = host?.files.find((f) => f.id === fileId)
-    if (!host || !doc || doc.saving || doc.loading || doc.readOnly) return false
-    if (doc.text === doc.saved) return true
-    const text = doc.text
-    patchFile(hostId, fileId, { saving: true, error: null })
-    try {
-      await window.aterm.sftp.writeText(hostId, doc.path, text, doc.encoding, doc.bom)
-      patchFile(hostId, fileId, { saving: false, saved: text, error: null })
-      return true
-    } catch (err) {
-      patchFile(hostId, fileId, { saving: false, error: errorMessage(err) })
-      return false
-    }
-  },
-
-  /** 重新拉取远端内容（编辑器"刷新"按钮；dirty 由 UI 层先行确认） */
-  reloadFile: (hostId, fileId, encoding) => {
-    const host = get().hosts.find((h) => h.id === hostId)
-    const doc = host?.files.find((f) => f.id === fileId)
-    if (!host || !doc || doc.loading || doc.saving) return
-    const patch = (p: Partial<RemoteFileDoc>): void => patchFile(hostId, fileId, p)
-    patch({ loading: true, error: null })
-    void (async () => {
-      try {
-        const mode = encoding ?? doc.encodingMode
-        const res = await window.aterm.sftp.readForEdit(hostId, doc.path, doc.size, mode)
-        if (res.kind === 'text') {
-          patch({
-            text: res.text,
-            saved: res.text,
-            loading: false,
-            encoding: res.encoding,
-            encodingMode: mode,
-            bom: res.bom,
-            confidence: res.confidence,
-            size: res.size,
-            readOnly: res.lossy || res.binary,
-            error: res.binary
-              ? i18next.t('editor.binaryReadOnly')
-              : res.lossy
-                ? i18next.t('editor.lossyReadOnly')
-                : null
-          })
-          return
-        }
-        patch({ loading: false, error: i18next.t('sftp.tooLargeBanner', { limit: 10 }) })
-      } catch (err) {
-        patch({ loading: false, error: errorMessage(err) })
-      }
-    })()
-  },
-
-  /** 对照 SessionCenter.closeFile：焦点回退到最后一个文件或 shell */
-  closeFile: (hostId, fileId) => {
-    set((s) => ({
-      hosts: s.hosts.map((h) => {
-        if (h.id !== hostId) return h
-        const files = h.files.filter((f) => f.id !== fileId)
-        return {
-          ...h,
-          files,
-          focusFileId:
-            h.focusFileId === fileId ? (files[files.length - 1]?.id ?? null) : h.focusFileId
-        }
-      })
-    }))
-  },
-
-  focusFile: (hostId, fileId) => {
-    // 上下分栏：文件焦点与会话焦点独立，不再互相清空
-    set((s) => ({
-      hosts: s.hosts.map((h) => (h.id === hostId ? { ...h, focusFileId: fileId } : h))
-    }))
-  },
-
-  setFileText: (hostId, fileId, text) => patchFile(hostId, fileId, { text }),
+  ...createRemoteFilesSlice(set, get),
 
   reconnectHost: (hostId) => {
     window.aterm.hosts.reconnect(hostId)
@@ -535,6 +344,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   submitAuth: (hostId, { username, password, privateKey, passphrase, persist }) => {
+    credentialVersions.set(hostId, (credentialVersions.get(hostId) ?? 0) + 1)
+    useWorkspaceIssues.getState().clear(`credentials:${hostId}`)
     window.aterm.hosts.submitAuth(hostId, { username, password, privateKey, passphrase })
     set((s) => ({
       hosts: s.hosts.map((h) =>
@@ -568,16 +379,33 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (e.phase === 'connected' && target?.pendingSecrets) {
       const { username } = target.conn
       const p = target.pendingSecrets
-      void (async () => {
-        await useConnectionsStore.getState().update(e.hostId, { authType: p.authType, username })
-        // 只写本次手动登录用到的凭据字段，不覆盖另一侧已存内容
-        await window.aterm.secrets.save(
-          e.hostId,
-          p.authType === 'password'
-            ? { password: p.password ?? '' }
-            : { privateKey: p.privateKey ?? '', passphrase: p.passphrase ?? '' }
-        )
-      })()
+      const version = workspaceVersions.get(e.hostId)
+      const credentials = credentialVersions.get(e.hostId)
+      const current = (): boolean =>
+        workspaceVersions.get(e.hostId) === version &&
+        credentialVersions.get(e.hostId) === credentials
+      const persist = async (): Promise<void> => {
+        if (!current()) return
+        try {
+          // Persist metadata and only the credentials used in this login together.
+          await useConnectionsStore
+            .getState()
+            .update(
+              e.hostId,
+              { authType: p.authType, username },
+              p.authType === 'password'
+                ? { password: p.password ?? '' }
+                : { privateKey: p.privateKey ?? '', passphrase: p.passphrase ?? '' }
+            )
+          if (current()) useWorkspaceIssues.getState().clear(`credentials:${e.hostId}`)
+        } catch (error) {
+          if (current())
+            useWorkspaceIssues
+              .getState()
+              .report(`credentials:${e.hostId}`, error, 'credentials', persist)
+        }
+      }
+      void persist()
     }
     set((s) => ({
       hosts: s.hosts.map((h) =>
@@ -585,8 +413,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           ? {
               ...h,
               phase: e.phase,
-              attempt: e.attempt ?? h.attempt,
-              offlineReason: e.reason ?? h.offlineReason,
+              attempt: e.attempt ?? 0,
+              offlineReason: e.reason ?? '',
               awaiting: e.awaiting ?? h.awaiting,
               pendingSecrets: e.phase === 'connected' ? null : h.pendingSecrets,
               conn:
